@@ -5,21 +5,27 @@
 (in-package #:cave)
 
 (defvar *db-connected* nil)
+(defvar *db-spec* nil
+  "Connection spec list for postmodern: (name user password host :port port :pooled-p t).")
 
 (defun connect-db (&key (host (config-value :db-host))
                         (port (config-value :db-port))
                         (name (config-value :db-name))
                         (user (config-value :db-user))
                         (password (config-value :db-password)))
-  "Connect to the PostgreSQL database."
+  "Connect to the database.
+   Sets up both a toplevel connection (for CLI commands) and a pool spec
+   (for per-request connections in the HTTP server)."
+  (setf *db-spec* (list name user password host :port port :pooled-p t))
   (postmodern:connect-toplevel name user password host :port port)
   (setf *db-connected* t)
   (llog:info "Connected to database" :db name :host host :port port))
 
 (defun disconnect-db ()
-  "Disconnect from the database."
+  "Disconnect and clear the connection pool."
   (when *db-connected*
     (postmodern:disconnect-toplevel)
+    (postmodern:clear-connection-pool)
     (setf *db-connected* nil)
     (llog:info "Disconnected from database")))
 

@@ -16,11 +16,12 @@
   (:documentation "Cave HTTP acceptor with per-request auth."))
 
 (defmethod hunchentoot:acceptor-dispatch-request ((acceptor cave-acceptor) request)
-  "Wrap every request with auth context."
-  (let ((*current-user* nil)
-        (*current-user-id* nil))
-    (authenticate-request)
-    (call-next-method)))
+  "Wrap every request with a pooled DB connection and auth context."
+  (postmodern:with-connection *db-spec*
+    (let ((*current-user* nil)
+          (*current-user-id* nil))
+      (authenticate-request)
+      (call-next-method))))
 
 (defun app-root ()
   "Return the application root directory."
@@ -29,11 +30,15 @@
 ;; ----------------------------------------------------------------------------
 ;; Static files
 
-(defparameter *static-dispatch-table*
-  (list
-   (hunchentoot:create-folder-dispatcher-and-handler
-    "/static/" (fad:pathname-as-directory
-                (merge-pathnames "static/" (app-root))))))
+(defvar *static-dispatch-table* nil)
+
+(defun init-static-dispatch ()
+  "Initialize the static file dispatch table from the current working directory."
+  (setf *static-dispatch-table*
+        (list
+         (hunchentoot:create-folder-dispatcher-and-handler
+          "/static/" (fad:pathname-as-directory
+                      (merge-pathnames "static/" (app-root)))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Response helpers
@@ -564,6 +569,7 @@
   (setf hunchentoot:*rewrite-for-session-urls* nil)
   ;; Suppress the "No session" log noise
   (setf hunchentoot:*log-lisp-warnings-p* nil)
+  (init-static-dispatch)
   (setf hunchentoot:*dispatch-table* *static-dispatch-table*)
   (setf *acceptor* (make-instance 'cave-acceptor :port port))
   (handler-case (hunchentoot:start *acceptor*)

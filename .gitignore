@@ -4,3 +4,8 @@ ocicl
 cave
 cave.conf
 data/
+node_modules/
+package-lock.json
+test-results/
+playwright-report/
+screenshots/

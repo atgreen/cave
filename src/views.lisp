@@ -16,7 +16,10 @@
         (:meta :charset "utf-8")
         (:meta :name "viewport" :content "width=device-width, initial-scale=1")
         (:title (or ,title "Cave"))
-        (:link :rel "icon" :href "/static/favicon.svg" :type "image/svg+xml")
+        (:link :rel "icon" :href "/static/img/favicon.svg" :type "image/svg+xml")
+        (:link :rel "preconnect" :href "https://fonts.googleapis.com")
+        (:link :rel "preconnect" :href "https://fonts.gstatic.com" :crossorigin "")
+        (:link :rel "stylesheet" :href "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap")
         (:link :rel "stylesheet" :href "/static/css/cave.css"))
        (:body
         (:nav.nav
@@ -160,9 +163,9 @@
       (:input :type "text" :id "description" :name "description"))
      (:button.btn.btn-primary :type "submit" "Create organization"))))
 
-(defun view-org (&key owner-name repos is-member)
+(defun view-org (&key org repos is-member)
   "Render an org page."
-  (let ((org-name owner-name))
+  (let ((org-name (getf org :name)))
     (page (:title (format nil "~A — Cave" (getf org :display-name)))
       (:h1 (getf org :display-name))
       (when (getf org :description)
@@ -187,7 +190,7 @@
 
 (defun view-new-repo (&key org)
   "Render the new repo form."
-  (let ((org-name owner-name))
+  (let ((org-name (getf org :name)))
     (page (:title "New repository — Cave")
       (:h1 (format nil "New repository in ~A" org-name))
       (:form :method "post" :action (format nil "/o/~A/-/new-repo" org-name)

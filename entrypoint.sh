@@ -21,6 +21,22 @@ if [ ! -f "$CONFIG" ]; then
 CONF
 fi
 
+# Wait for PostgreSQL to accept connections
+DB_HOST="${CAVE_DB_HOST:-localhost}"
+DB_PORT="${CAVE_DB_PORT:-5432}"
+echo "Waiting for PostgreSQL at ${DB_HOST}:${DB_PORT}..."
+for i in $(seq 1 30); do
+  if bash -c "echo >/dev/tcp/${DB_HOST}/${DB_PORT}" 2>/dev/null; then
+    echo "PostgreSQL is accepting connections."
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "PostgreSQL not ready after 30s, giving up." >&2
+    exit 1
+  fi
+  sleep 1
+done
+
 # Run migrations
 cave migrate --config "$CONFIG"
 
@@ -49,5 +65,6 @@ git config --global --add safe.directory '*'
 # Start sshd
 /usr/sbin/sshd
 
-# Start Cave (foreground)
+# Start Cave (foreground) — run from /opt/cave so static/ is found
+cd /opt/cave
 exec cave serve --config "$CONFIG"
