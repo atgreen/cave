@@ -57,7 +57,9 @@ chown cave:cave /home/cave/.ssh/authorized_keys 2>/dev/null || true
 chown -R cave:cave /var/lib/cave
 
 # Trust all cave repos (ownership may differ between init and runtime)
+# Set for both root (Cave server) and cave user (SSH/git-shell)
 git config --global --add safe.directory '*'
+su -c "git config --global --add safe.directory '*'" cave
 
 # Start sshd
 /usr/sbin/sshd

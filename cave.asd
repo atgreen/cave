@@ -28,6 +28,9 @@
                 :com.inuoe.jzon
                 ;; HTML generation
                 :spinneret
+                ;; Markdown rendering
+                :3bmd
+                :sanitize-html
                 ;; UUIDs
                 :frugal-uuid
                 ;; Date/time

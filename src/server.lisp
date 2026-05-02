@@ -85,13 +85,11 @@
   (setf (hunchentoot:return-code*) 404)
   "Not found")
 
-;; Visibility check macro
-(defmacro check-repo-visible (repo)
-  "Return 404 if repo is private and user is not a member."
-  `(when (and (getf ,repo :is-private)
-              (not (and *current-user-id*
-                        (repo-member-role (getf ,repo :id) *current-user-id*))))
-     (return-from route-handler (not-found))))
+(defun repo-visible-p (repo)
+  "Check if the current user can see REPO. Public repos are always visible."
+  (or (not (getf repo :is-private))
+      (and *current-user-id*
+           (repo-member-role (getf repo :id) *current-user-id*))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Metrics
@@ -333,28 +331,108 @@
       (html-response (view-org :org org :repos repos :is-member is-member)))))
 
 ;; ----------------------------------------------------------------------------
+;; Routes: Owner (user or org) profile — single-segment catch-all
+
+(easy-routes:defroute owner-page ("/:name" :method :get) ()
+  ;; Try user first, then org
+  (let ((user (find-user-by-username name)))
+    (when user
+      (let* ((is-self (and *current-user-id* (= *current-user-id* (getf user :id))))
+             (repos (list-user-repos (getf user :id) :include-private is-self)))
+        (return-from owner-page
+          (html-response (view-user-profile :user user :repos repos :is-self is-self))))))
+  (let ((org (find-org-by-name name)))
+    (when org
+      (let* ((is-member (and *current-user-id*
+                             (org-member-role (getf org :id) *current-user-id*)))
+             (repos (list-org-repos (getf org :id) :include-private is-member)))
+        (return-from owner-page
+          (html-response (view-org :org org :repos repos :is-member is-member))))))
+  (not-found))
+
+;; ----------------------------------------------------------------------------
 ;; Routes: Repos
 
 (easy-routes:defroute repo-page ("/:owner/:repo-name" :method :get) ()
   (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from repo-page (not-found)))
-    (when (and (getf repo :is-private)
-               (not (and *current-user-id*
-                         (repo-member-role (getf repo :id) *current-user-id*))))
-      (return-from repo-page (not-found)))
+    (unless (repo-visible-p repo) (return-from repo-page (not-found)))
     (let* ((role (and *current-user-id*
                       (repo-member-role (getf repo :id) *current-user-id*)))
            (disk-path (repo-disk-path owner repo-name))
            (empty (git-repo-empty-p disk-path))
+           (default-branch (unless empty (or (git-default-branch disk-path) "main")))
            (branches (unless empty (git-branches disk-path)))
+           (file-tree (unless empty (git-tree disk-path :ref default-branch)))
+           (readme-entry (unless empty (git-readme-path disk-path :ref default-branch)))
+           (readme-content (when readme-entry
+                             (git-blob disk-path default-branch
+                                       (getf readme-entry :name))))
+           (readme-html (when (and readme-content
+                                   (search ".md" (string-downcase
+                                                   (getf readme-entry :name))))
+                          (render-markdown readme-content)))
+           ;; Plain text README (no markdown)
+           (readme-html (or readme-html
+                            (when readme-content
+                              (format nil "<pre>~A</pre>"
+                                      (spinneret::escape-string readme-content)))))
            (recent-commits (unless empty (git-log disk-path :limit 5)))
            (open-issues (list-issues (getf repo :id) :status "open" :limit 5))
            (open-changesets (list-changesets (getf repo :id) :status "open" :limit 5)))
       (html-response
        (view-repo :owner-name owner :repo repo :role role
                   :empty empty :branches branches
+                  :default-branch default-branch
+                  :file-tree file-tree
+                  :readme-html readme-html
+                  :readme-filename (when readme-entry (getf readme-entry :name))
                   :recent-commits recent-commits
                   :issues open-issues :changesets open-changesets)))))
+
+;; Tree (directory) browsing
+(easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
+    (unless repo (return-from tree-page (not-found)))
+    (unless (repo-visible-p repo) (return-from tree-page (not-found)))
+    (let* ((disk-path (repo-disk-path owner repo-name))
+           (path (or (hunchentoot:get-parameter "path") ""))
+           (file-tree (git-tree disk-path :ref ref :path path)))
+      (html-response
+       (view-tree :owner-name owner :repo repo :ref ref
+                  :path path :file-tree file-tree)))))
+
+;; Blob (file) viewing
+(easy-routes:defroute blob-page ("/:owner/:repo-name/blob/:ref" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
+    (unless repo (return-from blob-page (not-found)))
+    (unless (repo-visible-p repo) (return-from blob-page (not-found)))
+    (let* ((disk-path (repo-disk-path owner repo-name))
+           (path (or (hunchentoot:get-parameter "path") ""))
+           (file-size (git-blob-size disk-path ref path))
+           (content (when (and file-size (<= file-size (* 2 1024 1024)))
+                      (git-blob disk-path ref path)))
+           (is-binary (git-blob-binary-p content))
+           (language (file-language path)))
+      (unless file-size (return-from blob-page (not-found)))
+      (html-response
+       (view-blob :owner-name owner :repo repo :ref ref :path path
+                  :content (unless is-binary content)
+                  :is-binary is-binary
+                  :file-size file-size
+                  :language language)))))
+
+;; Raw file content
+(easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
+    (unless repo (return-from raw-page (not-found)))
+    (unless (repo-visible-p repo) (return-from raw-page (not-found)))
+    (let* ((disk-path (repo-disk-path owner repo-name))
+           (path (or (hunchentoot:get-parameter "path") ""))
+           (content (git-blob disk-path ref path)))
+      (unless content (return-from raw-page (not-found)))
+      (setf (hunchentoot:content-type*) "text/plain; charset=utf-8")
+      content)))
 
 (easy-routes:defroute new-org-repo-page ("/o/:org-name/-/new-repo" :method :get) ()
   (when (require-login)

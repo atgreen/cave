@@ -189,7 +189,41 @@
         (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
        (:button.btn.btn-primary :type "submit" "Create repository")))))
 
-(defun view-repo (&key owner-name repo role empty branches recent-commits issues changesets)
+(defun render-file-tree (file-tree owner-name repo-name default-branch &optional current-path)
+  "Render a file tree table. Shared by view-repo and view-tree."
+  (spinneret:with-html
+    (:table.file-tree
+     (:tbody
+      ;; Parent directory link when in a subdirectory
+      (when (and current-path (not (uiop:emptyp current-path)))
+        (let ((parent (let ((slash (position #\/ current-path :from-end t)))
+                        (if slash (subseq current-path 0 slash) ""))))
+          (:tr
+           (:td.file-icon "..")
+           (:td (:a :href (if (uiop:emptyp parent)
+                              (format nil "/~A/~A" owner-name repo-name)
+                              (format nil "/~A/~A/tree/~A?path=~A"
+                                      owner-name repo-name default-branch parent))
+                 "..")))))
+      (dolist (entry file-tree)
+        (let* ((name (getf entry :name))
+               (is-dir (equal (getf entry :type) "tree"))
+               (entry-path (if (and current-path (not (uiop:emptyp current-path)))
+                               (format nil "~A/~A" current-path name)
+                               name)))
+          (:tr :class (when is-dir "file-dir")
+           (:td.file-icon (if is-dir "/" "."))
+           (:td
+            (:a :href (if is-dir
+                          (format nil "/~A/~A/tree/~A?path=~A"
+                                  owner-name repo-name default-branch entry-path)
+                          (format nil "/~A/~A/blob/~A?path=~A"
+                                  owner-name repo-name default-branch entry-path))
+             name)))))))))
+
+(defun view-repo (&key owner-name repo role empty branches recent-commits
+                       issues changesets default-branch file-tree
+                       readme-html readme-filename)
   "Render a repo page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
@@ -204,10 +238,6 @@
        (:a.btn :href (format nil "/~A/~A/issues" org-name repo-name) "Issues")
        (:a.btn :href (format nil "/~A/~A/changesets" org-name repo-name) "Changesets"))
 
-      (:section
-       (:h2 "Clone")
-       (:code.clone-url (ssh-clone-url org-name repo-name)))
-
       (if empty
           (:section
            (:p.empty "This repository is empty. Push some code to get started:")
@@ -215,11 +245,29 @@
             (format nil "git remote add origin ~A~%git push -u origin main"
                     (ssh-clone-url org-name repo-name))))
           (progn
-            (when branches
+            ;; File tree
+            (when file-tree
               (:section
-               (:h2 (format nil "Branches (~A)" (length branches)))
-               (:div :style "display:flex;flex-wrap:wrap;gap:.25rem"
-                (dolist (b branches) (:span.badge b)))))
+               (:h2 "Files")
+               (when branches
+                 (:div :style "margin-bottom:var(--sp-3)"
+                  (:span.badge default-branch)
+                  (:span :style "color:var(--text-muted);font-size:.8rem;margin-left:var(--sp-2)"
+                   (format nil "~A branch~:P" (length branches)))))
+               (render-file-tree file-tree org-name repo-name default-branch)))
+
+            ;; README
+            (when readme-html
+              (:section
+               (:h2 (or readme-filename "README"))
+               (:div.readme-content (:raw readme-html))))
+
+            ;; Clone URL
+            (:section
+             (:h2 "Clone")
+             (:code.clone-url (ssh-clone-url org-name repo-name)))
+
+            ;; Recent commits
             (when recent-commits
               (:section
                (:h2 "Recent commits")
@@ -252,6 +300,112 @@
                                 (getf iss :number))
               (:span.issue-number (format nil "#~A" (getf iss :number)))
               (format nil " ~A" (getf iss :title)))))))))))
+
+;;; ========================== TREE & BLOB PAGES ==========================
+
+(defun view-tree (&key owner-name repo ref path file-tree)
+  "Render a directory listing at a path."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
+      (render-breadcrumbs
+       (append (list (list (format nil "/~A" owner-name) owner-name)
+                     (list (format nil "/~A/~A" owner-name repo-name) repo-name))
+               (when (and path (not (uiop:emptyp path)))
+                 (let ((parts (uiop:split-string path :separator '(#\/)))
+                       (crumbs nil)
+                       (built ""))
+                   (dolist (part parts)
+                     (setf built (if (uiop:emptyp built) part (format nil "~A/~A" built part)))
+                     (push (list (format nil "/~A/~A/tree/~A?path=~A"
+                                         owner-name repo-name ref built)
+                                 part)
+                           crumbs))
+                   ;; Last one is just text, not a link
+                   (let ((reversed (nreverse crumbs)))
+                     (append (butlast reversed)
+                             (list (second (car (last reversed))))))))))
+      (:span.badge ref)
+      (if file-tree
+          (render-file-tree file-tree owner-name repo-name ref path)
+          (:p.empty "Empty directory.")))))
+
+(defun view-blob (&key owner-name repo ref path content is-binary file-size language)
+  "Render a file content page with Monaco editor."
+  (let ((repo-name (getf repo :name))
+        (filename (let ((slash (position #\/ path :from-end t)))
+                    (if slash (subseq path (1+ slash)) path))))
+    (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
+      (render-breadcrumbs
+       (append (list (list (format nil "/~A" owner-name) owner-name)
+                     (list (format nil "/~A/~A" owner-name repo-name) repo-name))
+               (let ((parts (uiop:split-string path :separator '(#\/)))
+                     (crumbs nil)
+                     (built ""))
+                 (dolist (part parts)
+                   (setf built (if (uiop:emptyp built) part (format nil "~A/~A" built part)))
+                   (push (list (format nil "/~A/~A/blob/~A?path=~A"
+                                       owner-name repo-name ref built)
+                               part)
+                         crumbs))
+                 (let ((reversed (nreverse crumbs)))
+                   (append (butlast reversed)
+                           (list (second (car (last reversed)))))))))
+      (:div.blob-meta
+       (:span filename)
+       (:span.badge language)
+       (when file-size
+         (:span.blob-size
+          (cond ((> file-size (* 1024 1024))
+                 (format nil "~,1f MB" (/ file-size (* 1024.0 1024.0))))
+                ((> file-size 1024)
+                 (format nil "~,1f KB" (/ file-size 1024.0)))
+                (t (format nil "~A bytes" file-size)))))
+       (:a.btn.btn-sm :href (format nil "/~A/~A/raw/~A?path=~A"
+                                     owner-name repo-name ref path)
+        "Raw"))
+      (cond
+        (is-binary
+         (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
+          (:p "Binary file — not displayed.")
+          (:a.btn :href (format nil "/~A/~A/raw/~A?path=~A"
+                                 owner-name repo-name ref path)
+           "Download")))
+        ((and file-size (> file-size (* 1024 1024)))
+         (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
+          (:p "File too large for preview.")
+          (:a.btn :href (format nil "/~A/~A/raw/~A?path=~A"
+                                 owner-name repo-name ref path)
+           "Download")))
+        (t
+         (:div#editor-container :style "height:600px")
+         (:script :src "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.min.js" "")
+         (:script
+          (:raw (format nil "
+require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs' } });
+require(['vs/editor/editor.main'], function() {
+  var container = document.getElementById('editor-container');
+  var lineCount = ~A.split('\\n').length;
+  container.style.height = Math.min(Math.max(lineCount * 19 + 20, 200), 800) + 'px';
+  monaco.editor.create(container, {
+    value: ~A,
+    language: ~A,
+    theme: 'vs-dark',
+    readOnly: true,
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    fontSize: 13,
+    fontFamily: \"'IBM Plex Mono', monospace\",
+    automaticLayout: true,
+    lineNumbers: 'on',
+    renderLineHighlight: 'none',
+    overviewRulerLanes: 0,
+    hideCursorInOverviewRuler: true,
+    scrollbar: { verticalScrollbarSize: 8 }
+  });
+});"
+                  (com.inuoe.jzon:stringify content)
+                  (com.inuoe.jzon:stringify content)
+                  (com.inuoe.jzon:stringify (or language "plaintext"))))))))))
 
 ;;; ========================== ISSUE PAGES ==========================
 
