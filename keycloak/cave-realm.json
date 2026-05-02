@@ -4,6 +4,16 @@
   "registrationAllowed": true,
   "registrationEmailAsUsername": false,
   "loginWithEmailAllowed": true,
+  "verifyEmail": true,
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "cave@localhost",
+    "fromDisplayName": "Cave",
+    "ssl": "false",
+    "starttls": "false",
+    "auth": "false"
+  },
   "roles": {
     "realm": [
       {
@@ -50,6 +60,7 @@
     {
       "username": "admin",
       "enabled": true,
+      "emailVerified": true,
       "email": "admin@localhost",
       "firstName": "Cave",
       "lastName": "Admin",

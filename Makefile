@@ -47,6 +47,10 @@ podman-up: cave ## Build container and start cave + postgres + keycloak via podm
 		done
 	podman exec cave-pg psql -U cave -tc "SELECT 1 FROM pg_database WHERE datname='keycloak'" | grep -q 1 || \
 		podman exec cave-pg psql -U cave -c "CREATE DATABASE keycloak"
+	podman container exists mailpit 2>/dev/null || \
+		podman run -d --name mailpit --network cave-net \
+			-p 8025:8025 \
+			docker.io/axllent/mailpit:latest
 	podman container exists cave-keycloak 2>/dev/null || \
 		podman run -d --name cave-keycloak --network cave-net \
 			-p 8180:8080 \
@@ -62,6 +66,7 @@ podman-up: cave ## Build container and start cave + postgres + keycloak via podm
 			-e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
 			-v $(CURDIR)/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro \
 			quay.io/keycloak/keycloak:26.0 start-dev --import-realm
+	$(CURDIR)/keycloak/configure-realm.sh http://localhost:8180
 	podman build -t cave -f Containerfile.local .
 	podman stop cave 2>/dev/null; podman rm cave 2>/dev/null; true
 	podman run -d --name cave --network cave-net \
@@ -75,10 +80,11 @@ podman-up: cave ## Build container and start cave + postgres + keycloak via podm
 		-v cave-data:/var/lib/cave cave:latest
 	@echo "\n  Cave:     http://localhost:8080"
 	@echo "  Keycloak: http://localhost:8180  (admin/admin)"
+	@echo "  Mailpit:  http://localhost:8025"
 
-podman-down: ## Stop and remove cave + postgres + keycloak containers
-	podman stop cave cave-keycloak cave-pg 2>/dev/null; true
-	podman rm cave cave-keycloak cave-pg 2>/dev/null; true
+podman-down: ## Stop and remove cave + postgres + keycloak + mailpit containers
+	podman stop cave cave-keycloak mailpit cave-pg 2>/dev/null; true
+	podman rm cave cave-keycloak mailpit cave-pg 2>/dev/null; true
 
 podman-rebuild: podman-down podman-up ## Tear down and rebuild everything
 
