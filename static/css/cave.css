@@ -604,7 +604,7 @@ code {
   padding: 0 var(--sp-3);
   font-family: var(--font-mono);
   font-size: .8rem;
-  line-height: 1.5;
+  line-height: 1.2;
   white-space: pre;
   vertical-align: top;
 }
@@ -622,16 +622,25 @@ code.diff-code {
   padding: 0 !important;
   font-size: inherit;
   color: inherit;
-  display: inline;
+  display: block;
+  line-height: inherit;
+  margin: 0;
   white-space: pre;
 }
-code.diff-code.hljs { background: none !important; }
+code.diff-code.hljs {
+  background: none !important;
+  display: block;
+  line-height: inherit;
+  margin: 0;
+  padding: 0 !important;
+}
 .diff-gutter {
   width: 1em;
   text-align: center;
   color: var(--text-muted);
   user-select: none;
   padding: 0 var(--sp-1) !important;
+  line-height: inherit;
 }
 .diff-line-add .diff-gutter { color: var(--green); }
 .diff-line-del .diff-gutter { color: var(--red); }
@@ -656,6 +665,7 @@ code.diff-code.hljs { background: none !important; }
   padding: 0 var(--sp-2) !important;
   user-select: none;
   opacity: .6;
+  line-height: inherit;
 }
 .diff-table tr:hover .diff-add-btn { opacity: 1; }
 .diff-add-btn {
