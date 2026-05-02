@@ -1,0 +1,15 @@
+[Unit]
+Description=Cave Mailpit (dev email catcher)
+After=cave.network-online.target
+
+[Container]
+ContainerName=cave-prod-mailpit
+Image=docker.io/axllent/mailpit:latest
+Network=cave.network
+PublishPort=9025:8025
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

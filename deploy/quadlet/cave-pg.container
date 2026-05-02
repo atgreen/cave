@@ -1,0 +1,21 @@
+[Unit]
+Description=Cave PostgreSQL
+Before=cave-keycloak.service cave.service
+
+[Container]
+ContainerName=cave-prod-pg
+Image=docker.io/postgres:16-alpine
+Network=cave.network
+Volume=cave-pg.volume:/var/lib/postgresql/data
+Environment=POSTGRES_USER=cave
+Environment=POSTGRES_PASSWORD=cave
+Environment=POSTGRES_DB=cave
+HealthCmd=pg_isready -U cave
+HealthInterval=5s
+HealthRetries=10
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

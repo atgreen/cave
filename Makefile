@@ -1,9 +1,13 @@
 SBCL ?= /usr/bin/sbcl
 LISP := $(SBCL) --non-interactive --eval '(push (truename ".") asdf:*central-registry*)'
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+QUADLET_DIR = $(HOME)/.config/containers/systemd
+
 .PHONY: help build load lint clean test test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
-       observability-up observability-down
+       observability-up observability-down \
+       tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -121,3 +125,48 @@ observability-up: ## Start Prometheus + Grafana + postgres_exporter
 observability-down: ## Stop and remove observability containers
 	podman stop prometheus postgres-exporter grafana 2>/dev/null; true
 	podman rm prometheus postgres-exporter grafana 2>/dev/null; true
+
+# --- Production (quadlet/systemd) ---
+
+tag: ## Tag current commit as a release (e.g., make tag V=0.2.0)
+	@if [ -z "$(V)" ]; then echo "Usage: make tag V=0.2.0"; exit 1; fi
+	git tag -a "v$(V)" -m "Release $(V)"
+	@echo "Tagged v$(V). Run 'make release' to build and deploy."
+
+release: cave ## Build prod image from current tree, tag as cave:prod
+	podman build -t cave:$(VERSION) -f Containerfile.local .
+	podman tag cave:$(VERSION) cave:prod
+	@echo "\n  Built cave:$(VERSION), tagged as cave:prod"
+	@echo "  Run 'make prod-start' or 'systemctl --user restart cave' to deploy"
+
+prod-install: ## Install quadlet units for production (systemd --user)
+	mkdir -p $(QUADLET_DIR)
+	cp deploy/quadlet/*.container deploy/quadlet/*.volume deploy/quadlet/*.network $(QUADLET_DIR)/
+	systemctl --user daemon-reload
+	@echo "Quadlet units installed. Run 'make prod-start' to start."
+	@echo "\n  Cave:     http://localhost:9080"
+	@echo "  Keycloak: http://localhost:9180"
+	@echo "  Mailpit:  http://localhost:9025"
+	@echo "  SSH:      port 9222"
+
+prod-uninstall: prod-stop ## Remove quadlet units
+	rm -f $(QUADLET_DIR)/cave*.container $(QUADLET_DIR)/cave*.volume $(QUADLET_DIR)/cave*.network
+	systemctl --user daemon-reload
+	@echo "Quadlet units removed."
+
+prod-start: ## Start production Cave via systemd
+	systemctl --user start cave-pg cave-mailpit cave-init cave-keycloak cave
+	@echo "Starting Cave production..."
+	@echo "  Cave:     http://localhost:9080"
+	@echo "  Keycloak: http://localhost:9180"
+
+prod-stop: ## Stop production Cave
+	systemctl --user stop cave cave-keycloak cave-mailpit cave-init cave-pg 2>/dev/null; true
+
+prod-logs: ## Tail production Cave logs
+	journalctl --user -u cave -f
+
+prod-status: ## Show production service status
+	@systemctl --user is-active cave-pg cave-keycloak cave cave-mailpit 2>/dev/null || true
+	@echo "---"
+	@systemctl --user status cave --no-pager -l 2>/dev/null | head -15 || echo "cave: not installed"

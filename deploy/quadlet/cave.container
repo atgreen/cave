@@ -1,0 +1,24 @@
+[Unit]
+Description=Cave Code Forge
+After=cave-pg.service cave-keycloak.service
+Requires=cave-pg.service
+
+[Container]
+ContainerName=cave-prod
+Image=localhost/cave:prod
+Network=cave.network
+PublishPort=9080:8080
+PublishPort=9222:22
+Volume=cave-data.volume:/var/lib/cave
+Environment=CAVE_DB_HOST=cave-prod-pg
+Environment=CAVE_OIDC_ISSUER=http://localhost:9180/realms/cave
+Environment=CAVE_OIDC_ISSUER_INTERNAL=http://cave-prod-keycloak:8080/realms/cave
+Environment=CAVE_OIDC_CLIENT_ID=cave
+Environment=CAVE_OIDC_CLIENT_SECRET=cave-dev-secret
+Environment=CAVE_BASE_URL=http://localhost:9080
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
