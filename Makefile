@@ -4,7 +4,7 @@ LISP := $(SBCL) --non-interactive --eval '(push (truename ".") asdf:*central-reg
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 QUADLET_DIR = $(HOME)/.config/containers/systemd
 
-.PHONY: help build load lint clean test test-smoke test-workflow \
+.PHONY: help build cav load lint clean test test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
        tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
@@ -13,7 +13,10 @@ QUADLET_DIR = $(HOME)/.config/containers/systemd
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-build: cave ## Build the cave binary
+build: cave cav ## Build the Cave server and Go CLI binaries
+
+cav: ## Build the Go CLI client
+	go build -o cav ./cli/cav
 
 cave: src/*.lisp *.asd
 	$(LISP) --eval '(asdf:make :cave)'
@@ -26,7 +29,7 @@ lint: ## Run ocicl lint on source
 	ocicl lint src/*.lisp
 
 clean: ## Remove build artifacts
-	rm -rf *~ cave test-results playwright-report
+	rm -rf *~ cave cav test-results playwright-report
 
 test: ## Run all Playwright tests (requires running cave)
 	npx playwright test
@@ -39,7 +42,7 @@ test-workflow: ## Run org/repo workflow tests only
 
 # --- Podman (local dev) ---
 
-podman-up: cave ## Build container and start cave + postgres + keycloak via podman
+podman-up: cave cav ## Build container and start cave + postgres + keycloak via podman
 	podman network exists cave-net 2>/dev/null || podman network create cave-net
 	podman container exists cave-pg 2>/dev/null || \
 		podman run -d --name cave-pg --network cave-net \

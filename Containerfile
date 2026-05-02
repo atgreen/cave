@@ -9,13 +9,14 @@
 
 FROM fedora:42 AS builder
 
-RUN dnf install -y sbcl make git gcc zlib-devel && dnf clean all
+RUN dnf install -y sbcl make git gcc zlib-devel golang && dnf clean all
 
 WORKDIR /build
 
 # Copy everything needed for build (ocicl/ has vendored deps)
-COPY cave.asd Makefile ocicl.csv ./
+COPY cave.asd Makefile ocicl.csv go.mod ./
 COPY src/ src/
+COPY cli/ cli/
 COPY ocicl/ ocicl/
 
 # Build
@@ -38,9 +39,10 @@ RUN dnf install -y openssh-server git && dnf clean all && \
     chown cave:cave /home/cave/.ssh
 
 COPY --from=builder /build/cave /usr/bin/cave
+COPY --from=builder /build/cav /usr/bin/cav
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/bin/cave
+RUN chmod +x /entrypoint.sh /usr/bin/cave /usr/bin/cav
 
 EXPOSE 8080 22
 VOLUME /var/lib/cave

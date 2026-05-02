@@ -9,6 +9,23 @@ make
 cave --help
 ```
 
+## Go CLI
+
+This repo also includes a small Go client, `cav`, for Cave's REST API.
+
+```sh
+make cav
+./cav --repo admin/test-browse issue list
+./cav --repo admin/test-browse issue get 1
+./cav --repo admin/test-browse --token "$CAVE_TOKEN" issue create --title "Bug" --body "Details"
+```
+
+Supported commands currently match the API implemented in this repo:
+
+- `issue list`
+- `issue get`
+- `issue create`
+
 This web application listens to port 8080 by default.  Change the
 port with the `-p` option.
 

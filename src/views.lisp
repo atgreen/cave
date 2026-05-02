@@ -692,78 +692,95 @@ require(['vs/editor/editor.main'], function() {
 (defun view-settings (&key ssh-keys api-tokens new-token ssh-error
                            generated-private-key generated-key-name)
   "Render user settings page."
-  (page (:title "Settings — Cave")
-    (:h1 "Settings")
+  (let ((cav-path (cav-download-path)))
+    (page (:title "Settings — Cave")
+      (:h1 "Settings")
 
-    (:section
-     (:h2 "SSH keys")
-     (if ssh-keys
-         (:ul.data-list
-          (dolist (k ssh-keys)
-            (:li
-             (:strong (getf k :name))
-             (:code (getf k :fingerprint))
-             (:form :method "post" :style "display:inline"
-              :action (format nil "/-/settings/ssh-keys/~A/delete" (getf k :id))
-              (:button.btn.btn-sm :type "submit" "Remove")))))
-         (:p.empty "No SSH keys registered."))
+      (:section
+       (:h2 "CLI")
+       (if cav-path
+           (progn
+             (:p "Download the Cave CLI for issue and API workflows.")
+             (:p
+              (:a.btn.btn-primary :href "/-/downloads/cav" "Download cav"))
+             (:p :style "color:var(--text-muted);font-size:.85rem"
+              "Save it somewhere on your PATH and run " (:code "chmod +x cav") "."))
+           (:p.empty "cav is not installed on this Cave host yet."))
+       (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);font-size:.85rem;overflow-x:auto"
+        "export CAVE_BASE_URL=" (config-value :base-url)
+        "
+export CAVE_TOKEN=<your-api-token>
+./cav --repo OWNER/REPO issue list"))
 
-     ;; Show generated private key for download (one-time)
-     (when generated-private-key
-       (:div.alert :style "border:1px solid var(--primary);padding:1rem;margin:1rem 0"
-        (:strong (format nil "SSH key '~A' generated." generated-key-name))
-        " Save this private key now — it will not be shown again."
-        (:pre :style "background:var(--bg);padding:.75rem;border-radius:var(--radius);margin-top:.75rem;font-size:.8rem;overflow-x:auto;white-space:pre-wrap;word-break:break-all"
-         generated-private-key)
-        (:p :style "margin-top:.75rem;color:var(--text-muted);font-size:.85rem"
-         "Save to " (:code "~/.ssh/cave_ed25519") " and run: "
-         (:code "chmod 600 ~/.ssh/cave_ed25519"))))
+      (:section
+       (:h2 "SSH keys")
+       (if ssh-keys
+           (:ul.data-list
+            (dolist (k ssh-keys)
+              (:li
+               (:strong (getf k :name))
+               (:code (getf k :fingerprint))
+               (:form :method "post" :style "display:inline"
+                :action (format nil "/-/settings/ssh-keys/~A/delete" (getf k :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No SSH keys registered."))
 
-     ;; Generate keypair
-     (:h3 "Generate SSH key")
-     (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:.5rem"
-      "Generate an ed25519 keypair. The public key is stored here; you download the private key.")
-     (:form :method "post" :action "/-/settings/ssh-keys/generate"
-      (:div.field
-       (:label :for "gen_name" "Key name")
-       (:input :type "text" :id "gen_name" :name "name" :required t
-               :placeholder "e.g. laptop"))
-      (:button.btn.btn-primary :type "submit" "Generate keypair"))
+       ;; Show generated private key for download (one-time)
+       (when generated-private-key
+         (:div.alert :style "border:1px solid var(--primary);padding:1rem;margin:1rem 0"
+          (:strong (format nil "SSH key '~A' generated." generated-key-name))
+          " Save this private key now — it will not be shown again."
+          (:pre :style "background:var(--bg);padding:.75rem;border-radius:var(--radius);margin-top:.75rem;font-size:.8rem;overflow-x:auto;white-space:pre-wrap;word-break:break-all"
+           generated-private-key)
+          (:p :style "margin-top:.75rem;color:var(--text-muted);font-size:.85rem"
+           "Save to " (:code "~/.ssh/cave_ed25519") " and run: "
+           (:code "chmod 600 ~/.ssh/cave_ed25519"))))
 
-     ;; Or paste existing
-     (:h3 "Add existing SSH key")
-     (when ssh-error (:div.alert.alert-error ssh-error))
-     (:form :method "post" :action "/-/settings/ssh-keys"
-      (:div.field
-       (:label :for "key_name" "Name")
-       (:input :type "text" :id "key_name" :name "name" :required t
-               :placeholder "e.g. work-laptop"))
-      (:div.field
-       (:label :for "public_key" "Public key")
-       (:textarea :id "public_key" :name "public_key" :rows "4" :required t
-                  :placeholder "ssh-ed25519 AAAA..."))
-      (:button.btn :type "submit" "Add key")))
+       ;; Generate keypair
+       (:h3 "Generate SSH key")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:.5rem"
+        "Generate an ed25519 keypair. The public key is stored here; you download the private key.")
+       (:form :method "post" :action "/-/settings/ssh-keys/generate"
+        (:div.field
+         (:label :for "gen_name" "Key name")
+         (:input :type "text" :id "gen_name" :name "name" :required t
+                 :placeholder "e.g. laptop"))
+        (:button.btn.btn-primary :type "submit" "Generate keypair"))
 
-    (:section
-     (:h2 "API tokens")
-     (when new-token
-       (:div.alert :style "border:1px solid var(--primary);padding:.75rem;margin-bottom:1rem"
-        (:strong "New token created.") " Copy it now — you won't see it again:" (:br)
-        (:code :style "word-break:break-all" new-token)))
-     (if api-tokens
-         (:ul.data-list
-          (dolist (tok api-tokens)
-            (:li
-             (:strong (getf tok :name))
-             (:code (format nil "~A..." (getf tok :token-prefix)))
-             (:form :method "post" :style "display:inline"
-              :action (format nil "/-/settings/tokens/~A/delete" (getf tok :id))
-              (:button.btn.btn-sm :type "submit" "Revoke")))))
-         (:p.empty "No API tokens."))
-     (:h3 "Create API token")
-     (:form :method "post" :action "/-/settings/tokens"
-      (:div.field
-       (:label :for "token_name" "Name")
-       (:input :type "text" :id "token_name" :name "name" :required t
-               :placeholder "e.g. ci-bot"))
-      (:button.btn.btn-primary :type "submit" "Create token")))))
+       ;; Or paste existing
+       (:h3 "Add existing SSH key")
+       (when ssh-error (:div.alert.alert-error ssh-error))
+       (:form :method "post" :action "/-/settings/ssh-keys"
+        (:div.field
+         (:label :for "key_name" "Name")
+         (:input :type "text" :id "key_name" :name "name" :required t
+                 :placeholder "e.g. work-laptop"))
+        (:div.field
+         (:label :for "public_key" "Public key")
+         (:textarea :id "public_key" :name "public_key" :rows "4" :required t
+                    :placeholder "ssh-ed25519 AAAA..."))
+        (:button.btn :type "submit" "Add key")))
+
+      (:section
+       (:h2 "API tokens")
+       (when new-token
+         (:div.alert :style "border:1px solid var(--primary);padding:.75rem;margin-bottom:1rem"
+          (:strong "New token created.") " Copy it now — you won't see it again:" (:br)
+          (:code :style "word-break:break-all" new-token)))
+       (if api-tokens
+           (:ul.data-list
+            (dolist (tok api-tokens)
+              (:li
+               (:strong (getf tok :name))
+               (:code (format nil "~A..." (getf tok :token-prefix)))
+               (:form :method "post" :style "display:inline"
+                :action (format nil "/-/settings/tokens/~A/delete" (getf tok :id))
+                (:button.btn.btn-sm :type "submit" "Revoke")))))
+           (:p.empty "No API tokens."))
+       (:h3 "Create API token")
+       (:form :method "post" :action "/-/settings/tokens"
+        (:div.field
+         (:label :for "token_name" "Name")
+         (:input :type "text" :id "token_name" :name "name" :required t
+                 :placeholder "e.g. ci-bot"))
+        (:button.btn.btn-primary :type "submit" "Create token"))))))

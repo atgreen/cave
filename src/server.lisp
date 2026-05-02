@@ -305,6 +305,15 @@
       (when tid (delete-api-token tid *current-user-id*)))
     (hunchentoot:redirect "/-/settings")))
 
+(easy-routes:defroute download-cav ("/-/downloads/cav" :method :get) ()
+  (let ((path (cav-download-path)))
+    (unless path
+      (setf (hunchentoot:return-code*) 404)
+      (return-from download-cav "cav is not installed on this Cave host"))
+    (setf (hunchentoot:header-out "Content-Disposition")
+          "attachment; filename=\"cav\"")
+    (hunchentoot:handle-static-file path "application/octet-stream")))
+
 ;; ----------------------------------------------------------------------------
 ;; Routes: Personal repo creation
 
