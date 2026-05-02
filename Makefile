@@ -8,7 +8,7 @@ QUADLET_DIR = $(HOME)/.config/containers/systemd
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
        tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
-       prod-backup prod-restore
+       prod-backup prod-restore prod-rollback prod-images
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -136,9 +136,21 @@ tag: ## Tag current commit as a release (e.g., make tag V=0.2.0)
 
 release: cave ## Build prod image from current tree, tag as cave:prod
 	podman build -t cave:$(VERSION) -f Containerfile.local .
+	-podman tag cave:prod cave:prod-previous 2>/dev/null
 	podman tag cave:$(VERSION) cave:prod
 	@echo "\n  Built cave:$(VERSION), tagged as cave:prod"
+	@echo "  Previous prod saved as cave:prod-previous"
 	@echo "  Run 'make prod-start' or 'systemctl --user restart cave' to deploy"
+
+prod-rollback: ## Roll back prod to the previous release
+	@podman image exists cave:prod-previous 2>/dev/null || (echo "No previous release to roll back to."; exit 1)
+	podman tag cave:prod cave:prod-failed
+	podman tag cave:prod-previous cave:prod
+	systemctl --user restart cave
+	@echo "Rolled back to previous release. Failed build saved as cave:prod-failed."
+
+prod-images: ## List available cave images for rollback
+	@podman images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Created}}" | grep cave:
 
 prod-install: ## Install quadlet units for production (systemd --user)
 	mkdir -p $(QUADLET_DIR)
