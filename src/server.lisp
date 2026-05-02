@@ -505,7 +505,23 @@
       (unless issue (return-from issue-page (not-found)))
       (html-response
        (view-issue :owner-name owner :repo repo :issue issue
-                   :author (find-user-by-id (getf issue :author-id)))))))
+                   :author (find-user-by-id (getf issue :author-id))
+                   :comments (list-issue-comments (getf issue :id)))))))
+
+(easy-routes:defroute issue-comment-submit
+    ("/:owner/:repo-name/issues/:number/comment" :method :post) ()
+  (when (require-login)
+    (let* ((repo (find-repo owner repo-name))
+           (num (parse-integer number :junk-allowed t))
+           (issue (when (and repo num) (find-issue (getf repo :id) num))))
+      (unless issue (return-from issue-comment-submit (not-found)))
+      (let ((body (hunchentoot:post-parameter "body")))
+        (when (and body (not (uiop:emptyp body)))
+          (create-issue-comment :issue-id (getf issue :id)
+                                :author-id *current-user-id*
+                                :body body)))
+      (hunchentoot:redirect
+       (format nil "/~A/~A/issues/~A" owner repo-name number)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Changesets

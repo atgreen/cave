@@ -329,7 +329,18 @@ CREATE UNIQUE INDEX idx_repos_owner_name ON cave_repos (owner_id, name) WHERE ow
     (21 . "-- OIDC: add oidc_sub, make password_hash nullable
 ALTER TABLE cave_users ADD COLUMN oidc_sub VARCHAR(256);
 CREATE UNIQUE INDEX idx_users_oidc_sub ON cave_users (oidc_sub) WHERE oidc_sub IS NOT NULL;
-ALTER TABLE cave_users ALTER COLUMN password_hash DROP NOT NULL;"))
+ALTER TABLE cave_users ALTER COLUMN password_hash DROP NOT NULL;")
+
+    (22 . "-- Issue comments
+CREATE TABLE cave_issue_comments (
+  id BIGSERIAL PRIMARY KEY,
+  issue_id BIGINT NOT NULL REFERENCES cave_issues(id) ON DELETE CASCADE,
+  author_id BIGINT NOT NULL REFERENCES cave_users(id),
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_issue_comments_issue ON cave_issue_comments (issue_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

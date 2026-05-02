@@ -428,6 +428,29 @@
           :set 'status status 'updated-at (:now)
           :where (:= 'id issue-id))))))
 
+;;; ========================== ISSUE COMMENTS ==========================
+
+(defun create-issue-comment (&key issue-id author-id body)
+  "Create a comment on an issue. Returns the comment plist."
+  (postmodern:query
+   (:insert-into 'cave-issue-comments
+    :set 'issue-id issue-id
+         'author-id author-id
+         'body body
+    :returning '*)
+   :plist))
+
+(defun list-issue-comments (issue-id)
+  "List all comments on an issue, oldest first, with author usernames."
+  (postmodern:query
+   (:order-by
+    (:select 'cave-issue-comments.* 'cave-users.username
+     :from 'cave-issue-comments
+     :inner-join 'cave-users :on (:= 'cave-issue-comments.author-id 'cave-users.id)
+     :where (:= 'cave-issue-comments.issue-id issue-id))
+    'cave-issue-comments.created-at)
+   :plists))
+
 ;;; ========================== CHANGESETS ==========================
 
 (defun create-changeset (&key repo-id author-id source-branch target-branch head-commit

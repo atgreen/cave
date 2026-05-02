@@ -484,6 +484,32 @@ code {
 .readme-content th { background: var(--bg); }
 .readme-content hr { border: none; border-top: 1px solid var(--border); margin: var(--sp-6) 0; }
 
+/* --- Comments --- */
+.comment {
+  padding: var(--sp-3) var(--sp-4);
+  border-left: 2px solid var(--border-subtle);
+  background: var(--surface);
+  margin-bottom: var(--sp-3);
+}
+.comment-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: .85rem;
+}
+.comment-date {
+  color: var(--text-muted);
+  font-size: .75rem;
+  margin-left: auto;
+}
+.comment-body {
+  font-size: .9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 /* --- Diff --- */
 .diff-file {
   margin-bottom: var(--sp-6);

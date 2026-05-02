@@ -458,23 +458,46 @@ require(['vs/editor/editor.main'], function() {
         (:textarea :id "body" :name "body" :rows "12"))
        (:button.btn.btn-primary :type "submit" "Create issue")))))
 
-(defun view-issue (&key owner-name repo issue author)
+(defun view-issue (&key owner-name repo issue author comments)
   "Render an issue detail page."
   (let ((org-name owner-name)
-        (repo-name (getf repo :name)))
-    (page (:title (format nil "#~A ~A — Cave" (getf issue :number) (getf issue :title)))
+        (repo-name (getf repo :name))
+        (issue-num (getf issue :number)))
+    (page (:title (format nil "#~A ~A — Cave" issue-num (getf issue :title)))
       (render-breadcrumbs
        (list (list (format nil "/~A" org-name) org-name)
              (list (format nil "/~A/~A" org-name repo-name) repo-name)
              (list (format nil "/~A/~A/issues" org-name repo-name) "Issues")
-             (format nil "#~A" (getf issue :number))))
+             (format nil "#~A" issue-num)))
       (:div.issue-header
-       (:h1 (format nil "#~A ~A" (getf issue :number) (getf issue :title)))
+       (:h1 (format nil "#~A ~A" issue-num (getf issue :title)))
        (:span.badge (getf issue :status)))
       (:div.issue-meta
        (format nil "Opened by ~A" (getf author :username)))
       (when (getf issue :body)
-        (:div.issue-body (getf issue :body))))))
+        (:div.issue-body (getf issue :body)))
+
+      ;; Comments
+      (:section
+       (:h2 (format nil "Comments (~A)" (length comments)))
+       (if comments
+           (dolist (c comments)
+             (:div.comment
+              (:div.comment-header
+               (:strong (getf c :username))
+               (:span.comment-date (princ-to-string (getf c :created-at))))
+              (:div.comment-body (getf c :body))))
+           (:p.empty "No comments yet.")))
+
+      ;; Comment form
+      (when *current-user*
+        (:section
+         (:form :method "post"
+          :action (format nil "/~A/~A/issues/~A/comment" org-name repo-name issue-num)
+          (:div.field
+           (:label :for "comment_body" "Add a comment")
+           (:textarea :id "comment_body" :name "body" :rows "4" :required t))
+          (:button.btn.btn-primary :type "submit" "Comment")))))))
 
 ;;; ========================== CHANGESET PAGES ==========================
 
