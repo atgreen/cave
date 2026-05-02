@@ -1,0 +1,10 @@
+Source: cave
+Section: devel
+Priority: optional
+Maintainer: Your Name <your@email.com>
+Build-Depends: debhelper (>= 13), sbcl, libfixposix-dev, gcc, make
+
+Package: cave
+Architecture: amd64
+Description: Cave
+ A Common Lisp application.

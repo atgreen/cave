@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	make
+
+override_dh_auto_install:
+	mkdir -p debian/cave/usr/bin
+	mkdir -p debian/cave/usr/share/sbom
+	install -m 0755 cave debian/cave/usr/bin/
+	install -m 0644 cave-sbom.spdx.json debian/cave/usr/share/sbom/cave-$(shell dpkg-parsechangelog -S Version | sed 's/-.*//' ).spdx.json
+
+override_dh_strip:
+	# Do not strip SBCL-based binaries as it corrupts the embedded core
+
+override_dh_auto_clean:
+	rm -f cave
+	dh_auto_clean

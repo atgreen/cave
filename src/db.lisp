@@ -1,0 +1,361 @@
+;;; db.lisp — PostgreSQL database layer via postmodern
+;;;
+;;; SPDX-License-Identifier: MIT
+
+(in-package #:cave)
+
+(defvar *db-connected* nil)
+
+(defun connect-db (&key (host (config-value :db-host))
+                        (port (config-value :db-port))
+                        (name (config-value :db-name))
+                        (user (config-value :db-user))
+                        (password (config-value :db-password)))
+  "Connect to the PostgreSQL database."
+  (postmodern:connect-toplevel name user password host :port port)
+  (setf *db-connected* t)
+  (llog:info "Connected to database" :db name :host host :port port))
+
+(defun disconnect-db ()
+  "Disconnect from the database."
+  (when *db-connected*
+    (postmodern:disconnect-toplevel)
+    (setf *db-connected* nil)
+    (llog:info "Disconnected from database")))
+
+(defun db-query (sql &rest params)
+  "Execute a SQL query with parameters. Returns list of rows as plists."
+  (postmodern:query (apply #'format nil sql params) :plists))
+
+;;; --- Migrations ---
+
+(defparameter *migrations*
+  '((1 . "-- Schema version tracking
+CREATE TABLE IF NOT EXISTS cave_schema_version (
+  version INTEGER NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);")
+
+    (2 . "-- Users
+CREATE TABLE cave_users (
+  id BIGSERIAL PRIMARY KEY,
+  username VARCHAR(64) NOT NULL UNIQUE,
+  password_hash VARCHAR(256) NOT NULL,
+  display_name VARCHAR(128),
+  email VARCHAR(256),
+  is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_users_username ON cave_users (username);")
+
+    (3 . "-- SSH keys
+CREATE TABLE cave_ssh_keys (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  public_key TEXT NOT NULL UNIQUE,
+  fingerprint VARCHAR(128) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_ssh_keys_fingerprint ON cave_ssh_keys (fingerprint);
+CREATE INDEX idx_ssh_keys_user_id ON cave_ssh_keys (user_id);")
+
+    (4 . "-- API tokens
+CREATE TABLE cave_api_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  token_hash VARCHAR(256) NOT NULL UNIQUE,
+  token_prefix VARCHAR(8) NOT NULL,
+  last_used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_api_tokens_hash ON cave_api_tokens (token_hash);
+CREATE INDEX idx_api_tokens_user_id ON cave_api_tokens (user_id);")
+
+    (5 . "-- Organizations
+CREATE TABLE cave_orgs (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(64) NOT NULL UNIQUE,
+  display_name VARCHAR(128),
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_orgs_name ON cave_orgs (name);")
+
+    (6 . "-- Org membership
+CREATE TABLE cave_org_members (
+  id BIGSERIAL PRIMARY KEY,
+  org_id BIGINT NOT NULL REFERENCES cave_orgs(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  role VARCHAR(16) NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(org_id, user_id)
+);
+CREATE INDEX idx_org_members_org ON cave_org_members (org_id);
+CREATE INDEX idx_org_members_user ON cave_org_members (user_id);")
+
+    (7 . "-- Repositories
+CREATE TABLE cave_repos (
+  id BIGSERIAL PRIMARY KEY,
+  org_id BIGINT NOT NULL REFERENCES cave_orgs(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  description TEXT,
+  is_private BOOLEAN NOT NULL DEFAULT FALSE,
+  default_branch VARCHAR(256) NOT NULL DEFAULT 'main',
+  next_number INTEGER NOT NULL DEFAULT 1,
+  -- Merge policy
+  required_approvals INTEGER NOT NULL DEFAULT 1,
+  allow_stale_approvals BOOLEAN NOT NULL DEFAULT FALSE,
+  allow_self_approval BOOLEAN NOT NULL DEFAULT FALSE,
+  concerns_count_as_approval BOOLEAN NOT NULL DEFAULT TRUE,
+  require_zero_unresolved_concerns BOOLEAN NOT NULL DEFAULT FALSE,
+  block_on_request_changes BOOLEAN NOT NULL DEFAULT TRUE,
+  required_checks_pass BOOLEAN NOT NULL DEFAULT TRUE,
+  allow_direct_push_to_default BOOLEAN NOT NULL DEFAULT FALSE,
+  auto_delete_branch BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Deploy config (admin-managed)
+  deploy_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  deploy_branch VARCHAR(256) NOT NULL DEFAULT 'main',
+  container_port INTEGER,
+  host_port INTEGER,
+  build_timeout INTEGER NOT NULL DEFAULT 600,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(org_id, name)
+);
+CREATE INDEX idx_repos_org ON cave_repos (org_id);")
+
+    (8 . "-- Repo membership
+CREATE TABLE cave_repo_members (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  role VARCHAR(16) NOT NULL DEFAULT 'writer' CHECK (role IN ('writer', 'reviewer', 'admin')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, user_id)
+);
+CREATE INDEX idx_repo_members_repo ON cave_repo_members (repo_id);
+CREATE INDEX idx_repo_members_user ON cave_repo_members (user_id);")
+
+    (9 . "-- Issues and changesets share a number sequence per repo (next_number on repos).
+-- Issues
+CREATE TABLE cave_issues (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  number INTEGER NOT NULL,
+  author_id BIGINT NOT NULL REFERENCES cave_users(id),
+  title VARCHAR(512) NOT NULL,
+  body TEXT,
+  status VARCHAR(16) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  UNIQUE(repo_id, number)
+);
+CREATE INDEX idx_issues_repo ON cave_issues (repo_id);
+CREATE INDEX idx_issues_status ON cave_issues (repo_id, status);")
+
+    (10 . "-- Issue labels
+CREATE TABLE cave_issue_labels (
+  id BIGSERIAL PRIMARY KEY,
+  issue_id BIGINT NOT NULL REFERENCES cave_issues(id) ON DELETE CASCADE,
+  label VARCHAR(64) NOT NULL,
+  UNIQUE(issue_id, label)
+);
+CREATE INDEX idx_issue_labels_issue ON cave_issue_labels (issue_id);
+
+-- Issue assignees
+CREATE TABLE cave_issue_assignees (
+  id BIGSERIAL PRIMARY KEY,
+  issue_id BIGINT NOT NULL REFERENCES cave_issues(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  UNIQUE(issue_id, user_id)
+);")
+
+    (11 . "-- Changesets
+CREATE TABLE cave_changesets (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  number INTEGER NOT NULL,
+  author_id BIGINT NOT NULL REFERENCES cave_users(id),
+  source_branch VARCHAR(256) NOT NULL,
+  target_branch VARCHAR(256) NOT NULL,
+  head_commit VARCHAR(64),
+  version INTEGER NOT NULL DEFAULT 1,
+  is_merged BOOLEAN NOT NULL DEFAULT FALSE,
+  is_closed BOOLEAN NOT NULL DEFAULT FALSE,
+  stack_id BIGINT,
+  stack_order INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  merged_at TIMESTAMPTZ,
+  closed_at TIMESTAMPTZ,
+  UNIQUE(repo_id, number)
+);
+CREATE INDEX idx_changesets_repo ON cave_changesets (repo_id);
+CREATE INDEX idx_changesets_branch ON cave_changesets (repo_id, source_branch);
+CREATE INDEX idx_changesets_stack ON cave_changesets (stack_id);")
+
+    (12 . "-- Stacks
+CREATE TABLE cave_stacks (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  name VARCHAR(256) NOT NULL,
+  base_branch VARCHAR(256) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, name)
+);
+-- Now add the FK from changesets to stacks
+ALTER TABLE cave_changesets
+  ADD CONSTRAINT fk_changesets_stack
+  FOREIGN KEY (stack_id) REFERENCES cave_stacks(id) ON DELETE SET NULL;")
+
+    (13 . "-- Reviews
+CREATE TABLE cave_reviews (
+  id BIGSERIAL PRIMARY KEY,
+  changeset_id BIGINT NOT NULL REFERENCES cave_changesets(id) ON DELETE CASCADE,
+  reviewer_id BIGINT NOT NULL REFERENCES cave_users(id),
+  state VARCHAR(32) NOT NULL CHECK (state IN ('approve', 'approve_with_concerns', 'request_changes', 'comment')),
+  body TEXT,
+  changeset_version INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_reviews_changeset ON cave_reviews (changeset_id);
+CREATE INDEX idx_reviews_reviewer ON cave_reviews (reviewer_id);")
+
+    (14 . "-- Concerns
+CREATE TABLE cave_concerns (
+  id BIGSERIAL PRIMARY KEY,
+  review_id BIGINT NOT NULL REFERENCES cave_reviews(id) ON DELETE CASCADE,
+  changeset_id BIGINT NOT NULL REFERENCES cave_changesets(id) ON DELETE CASCADE,
+  author_id BIGINT NOT NULL REFERENCES cave_users(id),
+  body TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  resolved_by_id BIGINT REFERENCES cave_users(id),
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_concerns_changeset ON cave_concerns (changeset_id);
+CREATE INDEX idx_concerns_status ON cave_concerns (changeset_id, status);")
+
+    (15 . "-- Deploy secrets (encrypted)
+CREATE TABLE cave_deploy_secrets (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  encrypted_value TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, name)
+);")
+
+    (16 . "-- Deploy records
+CREATE TABLE cave_deploys (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  commit_sha VARCHAR(64) NOT NULL,
+  image_tag VARCHAR(256) NOT NULL,
+  previous_image_tag VARCHAR(256),
+  status VARCHAR(32) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'building', 'running', 'succeeded', 'failed', 'rolled_back')),
+  log TEXT,
+  triggered_by_id BIGINT REFERENCES cave_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX idx_deploys_repo ON cave_deploys (repo_id);
+CREATE INDEX idx_deploys_status ON cave_deploys (repo_id, status);")
+
+    (17 . "-- Event log (instrumentation)
+CREATE TABLE cave_events (
+  id BIGSERIAL PRIMARY KEY,
+  event_type VARCHAR(64) NOT NULL,
+  user_id BIGINT,
+  repo_id BIGINT,
+  entity_type VARCHAR(32),
+  entity_id BIGINT,
+  metadata JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_events_type ON cave_events (event_type);
+CREATE INDEX idx_events_repo ON cave_events (repo_id);
+CREATE INDEX idx_events_created ON cave_events (created_at);")
+
+    (18 . "-- Sessions (web login)
+CREATE TABLE cave_sessions (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  session_token VARCHAR(128) NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_sessions_token ON cave_sessions (session_token);
+CREATE INDEX idx_sessions_expires ON cave_sessions (expires_at);")
+
+    (19 . "-- Check configs (server-side, per-repo)
+CREATE TABLE cave_check_configs (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  command TEXT NOT NULL,
+  timeout_seconds INTEGER NOT NULL DEFAULT 60,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, name)
+);
+-- Whether repo-stored checks (.cave/checks.toml) are allowed
+ALTER TABLE cave_repos ADD COLUMN allow_repo_checks BOOLEAN NOT NULL DEFAULT FALSE;"))
+  "Ordered list of (version . sql) migration pairs.")
+
+(defun current-schema-version ()
+  "Get the current schema version from the database. Returns 0 if table doesn't exist."
+  (handler-case
+      (let ((result (postmodern:query
+                     "SELECT COALESCE(MAX(version), 0) FROM cave_schema_version"
+                     :single)))
+        (or result 0))
+    (error () 0)))
+
+(defun split-sql-statements (sql)
+  "Split a SQL string into individual statements on semicolons.
+   Naive split — doesn't handle semicolons inside strings, but fine for DDL."
+  (let ((stmts (uiop:split-string sql :separator ";")))
+    (remove-if (lambda (s) (every (lambda (c) (member c '(#\Space #\Newline #\Tab #\Return)))
+                                  s))
+               (mapcar (lambda (s) (string-trim '(#\Space #\Newline #\Tab #\Return) s))
+                       stmts))))
+
+(defun run-migrations ()
+  "Run all pending database migrations."
+  (let ((current (current-schema-version))
+        (applied 0))
+    (llog:info "Current schema version" :version current)
+    (dolist (migration *migrations*)
+      (destructuring-bind (version . sql) migration
+        (when (> version current)
+          (llog:info "Applying migration" :version version)
+          (dolist (stmt (split-sql-statements sql))
+            (postmodern:execute stmt))
+          (postmodern:execute
+           (format nil "INSERT INTO cave_schema_version (version) VALUES (~A)" version))
+          (incf applied))))
+    (if (zerop applied)
+        (llog:info "Database is up to date" :version (length *migrations*))
+        (llog:info "Migrations applied" :count applied :version (length *migrations*)))
+    applied))
+
+(defun expected-schema-version ()
+  "The schema version this binary expects."
+  (first (first (last *migrations*))))
+
+(defun check-schema-version ()
+  "Ensure the DB schema matches what this binary expects. Signal error if not."
+  (let ((current (current-schema-version))
+        (expected (expected-schema-version)))
+    (unless (= current expected)
+      (error "Database schema version mismatch: have ~A, need ~A. ~
+              Run 'cave migrate' to update." current expected))))

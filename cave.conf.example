@@ -1,0 +1,24 @@
+;;; cave.conf — Cave configuration
+;;;
+;;; This is an s-expression plist. Copy to cave.conf and edit.
+
+(:http-port 8080
+ :ssh-port 2222
+ :data-dir "/var/lib/cave"
+ :db-host "localhost"
+ :db-port 5432
+ :db-name "cave"
+ :db-user "cave"
+ :db-password ""
+ ;; 64-char hex string for encrypting deploy secrets.
+ ;; Generate with: openssl rand -hex 32
+ :secret-key nil
+ ;; SMTP (optional, for email notifications)
+ :smtp-host nil
+ :smtp-port 587
+ :smtp-user nil
+ :smtp-password nil
+ :smtp-from nil
+ ;; Public URL (used in clone URLs and links)
+ :base-url "http://localhost:8080"
+ :log-level :info)

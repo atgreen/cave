@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: cave
+Upstream-Contact: Your Name <your@email.com>
+
+Files: *
+Copyright: 2026 Your Name
+License: MIT
