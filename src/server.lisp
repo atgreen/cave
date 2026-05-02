@@ -193,6 +193,26 @@
                           :api-tokens (list-api-tokens *current-user-id*)
                           :ssh-error (format nil "~A" e))))))))
 
+(easy-routes:defroute generate-ssh-key-submit
+    ("/-/settings/ssh-keys/generate" :method :post) ()
+  (when (require-login)
+    (let ((name (hunchentoot:post-parameter "name")))
+      (handler-case
+          (multiple-value-bind (private-key _record)
+              (generate-ssh-keypair *current-user-id* name)
+            (declare (ignore _record))
+            (sync-authorized-keys)
+            (html-response
+             (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                            :api-tokens (list-api-tokens *current-user-id*)
+                            :generated-private-key private-key
+                            :generated-key-name name)))
+        (error (e)
+          (html-response
+           (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                          :api-tokens (list-api-tokens *current-user-id*)
+                          :ssh-error (format nil "~A" e))))))))
+
 (easy-routes:defroute delete-ssh-key-submit
     ("/-/settings/ssh-keys/:key-id/delete" :method :post) ()
   (when (require-login)

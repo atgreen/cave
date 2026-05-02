@@ -194,9 +194,9 @@
                               (merge-pathnames ".ssh/authorized_keys"
                                                (user-homedir-pathname))))
              (clingon:make-option :string
-              :long-name "cave-binary" :key :cave-binary
-              :description "Path to the cave binary"
-              :initial-value "/usr/bin/cave"))
+              :long-name "cave-shell" :key :cave-shell
+              :description "Path to cave-shell.sh"
+              :initial-value "/usr/bin/cave-shell.sh"))
    :handler #'handle-update-keys
    :examples '(("Update authorized_keys:" .
                 "cave update-keys --config /etc/cave.conf"))))

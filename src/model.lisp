@@ -134,6 +134,29 @@
     :where (:= 'cave-users.is-active t))
    :plists))
 
+(defun generate-ssh-keypair (user-id key-name)
+  "Generate an ed25519 SSH keypair. Stores the public key in the DB.
+   Returns (VALUES private-key-string key-record)."
+  (let ((tmpdir (uiop:ensure-directory-pathname
+                 (merge-pathnames (format nil "keygen-~A/" (get-universal-time))
+                                  (data-dir "tmp")))))
+    (ensure-directories-exist tmpdir)
+    (let ((keyfile (merge-pathnames "key" tmpdir)))
+      (unwind-protect
+           (progn
+             (uiop:run-program
+              (list "ssh-keygen" "-t" "ed25519" "-f" (namestring keyfile)
+                    "-N" "" "-q" "-C" (format nil "~A@cave" key-name))
+              :output :string :error-output :string)
+             (let* ((public-key (string-trim '(#\Newline #\Return)
+                                             (uiop:read-file-string
+                                              (merge-pathnames "key.pub" tmpdir))))
+                    (private-key (uiop:read-file-string keyfile))
+                    (record (add-ssh-key user-id key-name public-key)))
+               (values private-key record)))
+        ;; Always clean up private key from disk
+        (uiop:delete-directory-tree tmpdir :validate t :if-does-not-exist :ignore)))))
+
 (defun delete-ssh-key (key-id user-id)
   "Delete an SSH key (must belong to user)."
   (postmodern:execute

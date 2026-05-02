@@ -18,9 +18,10 @@ RUN dnf install -y openssh-server git && dnf clean all && \
     chown cave:cave /home/cave/.ssh
 
 COPY cave /usr/bin/cave
+COPY cave-shell.sh /usr/bin/cave-shell.sh
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/bin/cave
+RUN chmod +x /entrypoint.sh /usr/bin/cave /usr/bin/cave-shell.sh
 
 EXPOSE 8080 22
 VOLUME /var/lib/cave

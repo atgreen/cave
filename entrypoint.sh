@@ -17,7 +17,7 @@ if [ ! -f "$CONFIG" ]; then
  :secret-key "${CAVE_SECRET_KEY:-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
  :base-url "${CAVE_BASE_URL:-http://localhost:8080}"
  :authorized-keys-path "/home/cave/.ssh/authorized_keys"
- :cave-binary "/usr/bin/cave")
+ :cave-shell "/usr/bin/cave-shell.sh")
 CONF
 fi
 
@@ -36,9 +36,15 @@ fi
 cave update-keys \
   --config "$CONFIG" \
   --output /home/cave/.ssh/authorized_keys \
-  --cave-binary /usr/bin/cave || true
+  --cave-shell /usr/bin/cave-shell.sh || true
 
 chown cave:cave /home/cave/.ssh/authorized_keys 2>/dev/null || true
+
+# Ensure cave user owns data dirs and repos
+chown -R cave:cave /var/lib/cave
+
+# Trust all cave repos (ownership may differ between init and runtime)
+git config --global --add safe.directory '*'
 
 # Start sshd
 /usr/sbin/sshd
