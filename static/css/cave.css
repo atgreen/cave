@@ -451,6 +451,17 @@ section { margin-bottom: var(--sp-8); }
   background: var(--accent-bg);
 }
 
+/* --- Footer --- */
+.site-footer {
+  margin-top: var(--sp-12);
+  padding: var(--sp-4) var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  color: var(--text-muted);
+}
+
 /* --- Utility --- */
 .empty { color: var(--text-muted); font-style: italic; font-size: .9rem; }
 

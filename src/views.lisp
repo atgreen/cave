@@ -36,7 +36,9 @@
                  (:form :method "post" :action "/logout" :style "display:inline"
                   (:button.btn.btn-sm :type "submit" "Log out")))
                (:a.btn.btn-sm :href "/-/auth/login" "Log in")))))
-        (:main.container ,@body)))))
+        (:main.container ,@body)
+        (:footer.site-footer
+         (:span (format nil "Cave ~A" +version+)))))))
 
 ;;; --- Breadcrumb helper ---
 
