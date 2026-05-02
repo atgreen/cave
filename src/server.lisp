@@ -675,11 +675,15 @@
   (merge-pathnames (format nil "~A/~A.git/" owner repo-name) (repos-dir)))
 
 (defun init-bare-repo (owner repo-name)
-  "Initialize a bare git repository on disk with HEAD pointing to main."
+  "Initialize a bare git repository on disk with HEAD pointing to main.
+   Sets ownership to cave:cave so SSH pushes work."
   (let ((path (repo-disk-path owner repo-name)))
     (ensure-directories-exist path)
     (uiop:run-program (list "git" "init" "--bare" "-b" "main" (namestring path))
                        :output :string :error-output :string)
+    ;; Ensure the cave user owns the repo (server may run as root)
+    (uiop:run-program (list "chown" "-R" "cave:cave" (namestring path))
+                       :output :string :error-output :string :ignore-error-status t)
     (llog:info "Initialized bare repo" :path path)
     path))
 
