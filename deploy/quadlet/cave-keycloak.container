@@ -7,7 +7,7 @@ Requires=cave-pg.service
 ContainerName=cave-prod-keycloak
 Image=quay.io/keycloak/keycloak:26.0
 Network=cave.network
-PublishPort=9180:8080
+PublishPort=127.0.0.1:9180:8080
 Environment=KC_DB=postgres
 Environment=KC_DB_URL=jdbc:postgresql://cave-prod-pg:5432/keycloak
 Environment=KC_DB_USERNAME=cave

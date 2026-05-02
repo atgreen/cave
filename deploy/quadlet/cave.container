@@ -7,8 +7,8 @@ Requires=cave-pg.service
 ContainerName=cave-prod
 Image=localhost/cave:prod
 Network=cave.network
-PublishPort=9080:8080
-PublishPort=9222:22
+PublishPort=127.0.0.1:9080:8080
+PublishPort=127.0.0.1:9222:22
 Volume=cave-data.volume:/var/lib/cave
 Environment=CAVE_DB_HOST=cave-prod-pg
 Environment=CAVE_OIDC_ISSUER=http://localhost:9180/realms/cave

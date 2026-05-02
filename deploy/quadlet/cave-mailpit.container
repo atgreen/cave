@@ -6,7 +6,7 @@ After=cave.network-online.target
 ContainerName=cave-prod-mailpit
 Image=docker.io/axllent/mailpit:latest
 Network=cave.network
-PublishPort=9025:8025
+PublishPort=127.0.0.1:9025:8025
 
 [Service]
 Restart=always
