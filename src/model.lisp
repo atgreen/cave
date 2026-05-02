@@ -355,7 +355,7 @@
     :set 'repo-id repo-id 'user-id user-id 'role role)))
 
 (defun next-repo-number (repo-id)
-  "Atomically get and increment the next number for a repo (shared by issues and changesets)."
+  "Atomically get and increment the next number for a repo (shared by issues and pull requests)."
   (let ((result (postmodern:query
                  (:update 'cave-repos
                   :set 'next-number (:+ 'next-number 1)
@@ -451,11 +451,11 @@
     'cave-issue-comments.created-at)
    :plists))
 
-;;; ========================== CHANGESETS ==========================
+;;; ========================== PULL REQUESTS ==========================
 
-(defun create-changeset (&key repo-id author-id source-branch target-branch head-commit
+(defun create-pull-request (&key repo-id author-id source-branch target-branch head-commit
                                stack-id stack-order)
-  "Create a new changeset."
+  "Create a new pull request."
   (let ((number (next-repo-number repo-id)))
     (postmodern:query
      (:insert-into 'cave-changesets
@@ -470,21 +470,21 @@
       :returning '*)
      :plist)))
 
-(defun find-changeset (repo-id number)
-  "Find a changeset by repo and number."
+(defun find-pull-request (repo-id number)
+  "Find a pull request by repo and number."
   (postmodern:query
    (:select '* :from 'cave-changesets
     :where (:and (:= 'repo-id repo-id) (:= 'number number)))
    :plist))
 
-(defun find-changeset-by-id (changeset-id)
-  "Find a changeset by ID."
+(defun find-pull-request-by-id (changeset-id)
+  "Find a pull request by ID."
   (postmodern:query
    (:select '* :from 'cave-changesets :where (:= 'id changeset-id))
    :plist))
 
-(defun find-changeset-by-branch (repo-id source-branch)
-  "Find an open changeset for a source branch."
+(defun find-pull-request-by-branch (repo-id source-branch)
+  "Find an open pull request for a source branch."
   (postmodern:query
    (:select '* :from 'cave-changesets
     :where (:and (:= 'repo-id repo-id)
@@ -493,8 +493,8 @@
                  (:= 'is-closed nil)))
    :plist))
 
-(defun list-changesets (repo-id &key (status "open") (limit 50) (offset 0))
-  "List changesets. Status: open, merged, closed, or nil for all."
+(defun list-pull-requests (repo-id &key (status "open") (limit 50) (offset 0))
+  "List pull requests. Status: open, merged, closed, or nil for all."
   (cond
     ((equal status "open")
      (postmodern:query
@@ -530,7 +530,7 @@
               limit offset)
       :plists))))
 
-(defun update-changeset-head (changeset-id head-commit)
+(defun update-pull-request-head (changeset-id head-commit)
   "Update the head commit and bump version."
   (postmodern:execute
    (:update 'cave-changesets
@@ -539,15 +539,15 @@
          'updated-at (:now)
     :where (:= 'id changeset-id))))
 
-(defun close-changeset (changeset-id)
-  "Mark a changeset as closed."
+(defun close-pull-request (changeset-id)
+  "Mark a pull request as closed."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'is-closed t 'closed-at (:now) 'updated-at (:now)
     :where (:= 'id changeset-id))))
 
-(defun merge-changeset (changeset-id)
-  "Mark a changeset as merged."
+(defun merge-pull-request (changeset-id)
+  "Mark a pull request as merged."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'is-merged t 'merged-at (:now) 'updated-at (:now)
@@ -577,8 +577,8 @@
      (:select '* :from 'cave-stacks :where (:= 'id stack-id))
      :plist)))
 
-(defun list-stack-changesets (stack-id)
-  "List all changesets in a stack, ordered by stack_order."
+(defun list-stack-pull-requests (stack-id)
+  "List all pull requests in a stack, ordered by stack_order."
   (postmodern:query
    (:order-by
     (:select '* :from 'cave-changesets :where (:= 'stack-id stack-id))
@@ -610,9 +610,9 @@
     (:desc 'cave-reviews.created-at))
    :plists))
 
-(defun review-is-stale-p (review changeset)
+(defun review-is-stale-p (review pr)
   "A review is stale if its version doesn't match the current changeset version."
-  (/= (getf review :changeset-version) (getf changeset :version)))
+  (/= (getf review :changeset-version) (getf pr :version)))
 
 ;;; ========================== CONCERNS ==========================
 
@@ -658,18 +658,18 @@
 
 ;;; ========================== MERGE ELIGIBILITY ==========================
 
-(defun compute-merge-eligibility (changeset repo)
+(defun compute-merge-eligibility (pr repo)
   "Compute merge eligibility rules. Returns a list of (:description ... :pass ...)."
-  (let* ((cs-id (getf changeset :id))
+  (let* ((cs-id (getf pr :id))
          (repo-id (getf repo :id))
-         (version (getf changeset :version))
+         (version (getf pr :version))
          (reviews (list-reviews cs-id))
          (rules nil))
 
     ;; Rule 1: Not closed/merged
-    (push (list :description "Changeset is open"
-                :pass (and (not (getf changeset :is-merged))
-                           (not (getf changeset :is-closed))))
+    (push (list :description "Pull request is open"
+                :pass (and (not (getf pr :is-merged))
+                           (not (getf pr :is-closed))))
           rules)
 
     ;; Rule 2: Target branch exists (simplified — always true for now)
@@ -696,7 +696,7 @@
                                  (= (getf r :changeset-version) version))
                              (or allow-self
                                  (/= (getf r :reviewer-id)
-                                      (getf changeset :author-id))))
+                                      (getf pr :author-id))))
                    count r)))
       (push (list :description (format nil "Approvals: ~A/~A required"
                                        approval-count required)
@@ -733,7 +733,7 @@
 
     (nreverse rules)))
 
-(defun changeset-mergeable-p (eligibility)
+(defun pull-request-mergeable-p (eligibility)
   "Return T if all eligibility rules pass."
   (every (lambda (rule) (getf rule :pass)) eligibility))
 

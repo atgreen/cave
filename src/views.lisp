@@ -190,15 +190,15 @@
        (:button.btn.btn-primary :type "submit" "Create repository")))))
 
 (defun render-repo-tabs (owner-name repo-name &optional active-tab)
-  "Render the repo navigation tab bar. ACTIVE-TAB is :code, :issues, or :changesets."
+  "Render the repo navigation tab bar. ACTIVE-TAB is :code, :issues, or :pulls."
   (spinneret:with-html
     (:nav.repo-tabs
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :code))
       :href (format nil "/~A/~A" owner-name repo-name) "Code")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :issues))
       :href (format nil "/~A/~A/issues" owner-name repo-name) "Issues")
-     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :changesets))
-      :href (format nil "/~A/~A/changesets" owner-name repo-name) "Changesets"))))
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulls))
+      :href (format nil "/~A/~A/pulls" owner-name repo-name) "Pull requests"))))
 
 (defun render-file-tree (file-tree owner-name repo-name default-branch &optional current-path)
   "Render a file tree table. Shared by view-repo and view-tree."
@@ -233,7 +233,7 @@
              name)))))))))
 
 (defun view-repo (&key owner-name repo role empty branches recent-commits
-                       issues changesets default-branch file-tree
+                       issues pulls default-branch file-tree
                        readme-html readme-filename)
   "Render a repo page."
   (let ((org-name owner-name)
@@ -485,14 +485,14 @@ require(['vs/editor/editor.main'], function() {
                 :style "border-color:var(--green);color:var(--green-bright)"
                 "Reopen issue")))))))))
 
-;;; ========================== CHANGESET PAGES ==========================
+;;; ========================== PULL REQUEST PAGES ==========================
 
-(defun view-changesets (&key owner-name repo changesets current-status)
-  "Render the changesets list."
+(defun view-pull-requests (&key owner-name repo pulls current-status)
+  "Render the pull requests list."
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
-    (page (:title (format nil "Changesets — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :changesets)
+    (page (:title (format nil "Pull requests — ~A/~A" org-name repo-name))
+      (render-repo-tabs org-name repo-name :pulls)
       (:div.issues-header
        (:div.issue-filters
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "open"))
@@ -501,11 +501,11 @@ require(['vs/editor/editor.main'], function() {
          :href "?status=merged" "Merged")
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "closed"))
          :href "?status=closed" "Closed")))
-      (if changesets
+      (if pulls
           (:ul.issue-list
-           (dolist (cs changesets)
+           (dolist (cs pulls)
              (:li
-              (:a :href (format nil "/~A/~A/changesets/~A" org-name repo-name
+              (:a :href (format nil "/~A/~A/pulls/~A" org-name repo-name
                                  (getf cs :number))
                (:span.issue-number (format nil "#~A" (getf cs :number)))
                (format nil " ~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
@@ -513,7 +513,7 @@ require(['vs/editor/editor.main'], function() {
                (cond ((getf cs :is-merged) "merged")
                      ((getf cs :is-closed) "closed")
                      (t "open"))))))
-          (:p.empty "No changesets found.")))))
+          (:p.empty "No pull requests found.")))))
 
 (defun render-diff (diff-files owner-name repo-name ref)
   "Render parsed diff files as HTML."
@@ -546,30 +546,30 @@ require(['vs/editor/editor.main'], function() {
                  (:td.diff-gutter " ")
                  (:td content))))))))))))
 
-(defun view-changeset (&key owner-name repo changeset author reviews eligibility
+(defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge stack stack-items diff-files diff-stat)
-  "Render a changeset detail page."
+  "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
-        (cs-num (getf changeset :number)))
-    (page (:title (format nil "#~A ~A — Cave" cs-num (getf changeset :source-branch)))
-      (render-repo-tabs org-name repo-name :changesets)
+        (cs-num (getf pr :number)))
+    (page (:title (format nil "#~A ~A — Cave" cs-num (getf pr :source-branch)))
+      (render-repo-tabs org-name repo-name :pulls)
 
       (:div.issue-header
-       (:h1 (format nil "#~A ~A" cs-num (getf changeset :source-branch)))
+       (:h1 (format nil "#~A ~A" cs-num (getf pr :source-branch)))
        (:span.badge
-        (cond ((getf changeset :is-merged) "merged")
-              ((getf changeset :is-closed) "closed")
+        (cond ((getf pr :is-merged) "merged")
+              ((getf pr :is-closed) "closed")
               (t "open"))))
 
       (:div.issue-meta
        (format nil "~A → ~A · version ~A · by ~A"
-               (getf changeset :source-branch)
-               (getf changeset :target-branch)
-               (getf changeset :version)
+               (getf pr :source-branch)
+               (getf pr :target-branch)
+               (getf pr :version)
                (getf author :username))
-       (when (getf changeset :head-commit)
-         (:code :style "margin-left:.5rem" (getf changeset :head-commit))))
+       (when (getf pr :head-commit)
+         (:code :style "margin-left:.5rem" (getf pr :head-commit))))
 
       ;; Stack
       (when stack
@@ -578,7 +578,7 @@ require(['vs/editor/editor.main'], function() {
          (:ol.stack-list
           (dolist (item stack-items)
             (:li :class (when (= (getf item :number) cs-num) "stack-current")
-             (:a :href (format nil "/~A/~A/changesets/~A" org-name repo-name
+             (:a :href (format nil "/~A/~A/pulls/~A" org-name repo-name
                                 (getf item :number))
               (format nil "#~A ~A" (getf item :number) (getf item :source-branch)))
              (:span.badge
@@ -593,12 +593,12 @@ require(['vs/editor/editor.main'], function() {
          (when diff-stat
            (:pre.diff-stat diff-stat))
          (render-diff diff-files org-name repo-name
-                      (getf changeset :source-branch))))
+                      (getf pr :source-branch))))
 
       ;; Merge eligibility
       (when (and eligibility
-                 (not (getf changeset :is-merged))
-                 (not (getf changeset :is-closed)))
+                 (not (getf pr :is-merged))
+                 (not (getf pr :is-closed)))
         (:section
          (:h2 "Merge eligibility")
          (:ul.eligibility-list
@@ -609,8 +609,8 @@ require(['vs/editor/editor.main'], function() {
                      (getf rule :description)))))
          (when can-merge
            (:form :method "post"
-            :action (format nil "/~A/~A/changesets/~A/merge" org-name repo-name cs-num)
-            (:button.btn.btn-primary :type "submit" "Merge changeset")))))
+            :action (format nil "/~A/~A/pulls/~A/merge" org-name repo-name cs-num)
+            (:button.btn.btn-primary :type "submit" "Merge pull request")))))
 
       ;; Reviews
       (:section
@@ -641,12 +641,12 @@ require(['vs/editor/editor.main'], function() {
 
       ;; Submit review form
       (when (and *current-user*
-                 (not (getf changeset :is-merged))
-                 (not (getf changeset :is-closed)))
+                 (not (getf pr :is-merged))
+                 (not (getf pr :is-closed)))
         (:section
          (:h2 "Submit review")
          (:form :method "post"
-          :action (format nil "/~A/~A/changesets/~A/review" org-name repo-name cs-num)
+          :action (format nil "/~A/~A/pulls/~A/review" org-name repo-name cs-num)
           (:div.field
            (:label :for "review_body" "Comment")
            (:textarea :id "review_body" :name "body" :rows "4"))

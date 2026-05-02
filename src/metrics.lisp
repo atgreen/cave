@@ -132,7 +132,7 @@
                               (:select (:count '*) :from 'cave-issues
                                :where (:= 'status "open"))
                               :single))
-                (open-changesets (postmodern:query
+                (open-pulls (postmodern:query
                                   (:select (:count '*) :from 'cave-changesets
                                    :where (:and (:= 'is-merged nil)
                                                 (:= 'is-closed nil)))
@@ -153,9 +153,9 @@
             (format-prometheus-metric s "cave_issues_open"
                                       "Open issues" "gauge"
                                       (list (format nil "cave_issues_open ~A" open-issues)))
-            (format-prometheus-metric s "cave_changesets_open"
-                                      "Open changesets" "gauge"
-                                      (list (format nil "cave_changesets_open ~A" open-changesets)))
+            (format-prometheus-metric s "cave_pull_requests_open"
+                                      "Open pull requests" "gauge"
+                                      (list (format nil "cave_pull_requests_open ~A" open-pulls)))
             (format-prometheus-metric s "cave_sessions_active"
                                       "Active sessions" "gauge"
                                       (list (format nil "cave_sessions_active ~A" active-sessions)))))

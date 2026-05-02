@@ -408,7 +408,7 @@
                                       (spinneret::escape-string readme-content)))))
            (recent-commits (unless empty (git-log disk-path :limit 5)))
            (open-issues (list-issues (getf repo :id) :status "open" :limit 5))
-           (open-changesets (list-changesets (getf repo :id) :status "open" :limit 5)))
+           (open-pulls (list-pull-requests (getf repo :id) :status "open" :limit 5)))
       (html-response
        (view-repo :owner-name owner :repo repo :role role
                   :empty empty :branches branches
@@ -417,7 +417,7 @@
                   :readme-html readme-html
                   :readme-filename (when readme-entry (getf readme-entry :name))
                   :recent-commits recent-commits
-                  :issues open-issues :changesets open-changesets)))))
+                  :issues open-issues :pulls open-pulls)))))
 
 ;; Tree (directory) browsing
 (easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
@@ -565,78 +565,78 @@
        (format nil "/~A/~A/issues/~A" owner repo-name number)))))
 
 ;; ----------------------------------------------------------------------------
-;; Routes: Changesets
+;; Routes: Pull requests
 
-(easy-routes:defroute changesets-page
-    ("/:owner/:repo-name/changesets" :method :get) ()
+(easy-routes:defroute pulls-page
+    ("/:owner/:repo-name/pulls" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from changesets-page repo))
+    (unless repo (return-from pulls-page repo))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
-           (changesets (list-changesets (getf repo :id) :status status)))
+           (pulls (list-pull-requests (getf repo :id) :status status)))
       (html-response
-       (view-changesets :owner-name owner :repo repo :changesets changesets
+       (view-pull-requests :owner-name owner :repo repo :pulls pulls
                         :current-status status)))))
 
-(easy-routes:defroute changeset-page
-    ("/:owner/:repo-name/changesets/:number" :method :get) ()
+(easy-routes:defroute pull-request-page
+    ("/:owner/:repo-name/pulls/:number" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from changeset-page repo))
+    (unless repo (return-from pull-request-page repo))
     (let* ((num (parse-integer number :junk-allowed t))
-           (changeset (when num (find-changeset (getf repo :id) num))))
-      (unless changeset (return-from changeset-page (not-found)))
-      (let* ((author (find-user-by-id (getf changeset :author-id)))
-             (reviews-raw (list-reviews (getf changeset :id)))
-             (concerns-all (list-concerns (getf changeset :id)))
+           (pr (when num (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from pull-request-page (not-found)))
+      (let* ((author (find-user-by-id (getf pr :author-id)))
+             (reviews-raw (list-reviews (getf pr :id)))
+             (concerns-all (list-concerns (getf pr :id)))
              (reviews (mapcar
                        (lambda (r)
                          (append r
-                          (list :is-stale (review-is-stale-p r changeset)
+                          (list :is-stale (review-is-stale-p r pr)
                                 :concerns (remove-if-not
                                            (lambda (c) (= (getf c :review-id) (getf r :id)))
                                            concerns-all))))
                        reviews-raw))
-             (eligibility (compute-merge-eligibility changeset repo))
-             (can-merge (and (changeset-mergeable-p eligibility)
+             (eligibility (compute-merge-eligibility pr repo))
+             (can-merge (and (pull-request-mergeable-p eligibility)
                              *current-user-id*
                              (equal (repo-member-role (getf repo :id) *current-user-id*)
                                     "admin")))
-             (stack (find-stack-by-id (getf changeset :stack-id)))
-             (stack-items (when stack (list-stack-changesets (getf stack :id))))
+             (stack (find-stack-by-id (getf pr :stack-id)))
+             (stack-items (when stack (list-stack-pull-requests (getf stack :id))))
              ;; Diff
              (disk-path (repo-disk-path owner repo-name))
-             (source (getf changeset :source-branch))
-             (target (getf changeset :target-branch))
+             (source (getf pr :source-branch))
+             (target (getf pr :target-branch))
              (diff-raw (git-diff disk-path target source))
              (diff-files (parse-diff diff-raw))
              (diff-stat (git-diff-stat disk-path target source)))
         (html-response
-         (view-changeset :owner-name owner :repo repo :changeset changeset
+         (view-pull-request :owner-name owner :repo repo :pr pr
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
                          :stack stack :stack-items stack-items
                          :diff-files diff-files :diff-stat diff-stat))))))
 
 (easy-routes:defroute submit-review
-    ("/:owner/:repo-name/changesets/:number/review" :method :post) ()
+    ("/:owner/:repo-name/pulls/:number/review" :method :post) ()
   (when (require-login)
     (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
-           (changeset (when (and repo num) (find-changeset (getf repo :id) num))))
+           (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
       (unless repo (return-from submit-review repo))
-      (unless changeset (return-from submit-review (not-found)))
+      (unless pr (return-from submit-review (not-found)))
       (let* ((state (hunchentoot:post-parameter "state"))
              (body (hunchentoot:post-parameter "body"))
              (concern-text (hunchentoot:post-parameter "concern_text"))
              (review (create-review
-                      :changeset-id (getf changeset :id)
+                      :changeset-id (getf pr :id)
                       :reviewer-id *current-user-id*
                       :state state
                       :body (unless (uiop:emptyp body) body)
-                      :changeset-version (getf changeset :version))))
+                      :changeset-version (getf pr :version))))
         (when (and (equal state "approve_with_concerns")
                    (not (uiop:emptyp concern-text)))
           (create-concern :review-id (getf review :id)
-                          :changeset-id (getf changeset :id)
+                          :changeset-id (getf pr :id)
                           :author-id *current-user-id*
                           :body concern-text))
         (log-event "review.submitted"
@@ -645,7 +645,7 @@
                    :entity-type "review"
                    :entity-id (getf review :id))
         (hunchentoot:redirect
-         (format nil "/~A/~A/changesets/~A" owner repo-name number))))))
+         (format nil "/~A/~A/pulls/~A" owner repo-name number))))))
 
 (easy-routes:defroute resolve-concern-submit
     ("/:owner/:repo-name/concerns/:concern-id/resolve" :method :post) ()
@@ -658,35 +658,35 @@
           (when (or (= (getf concern :author-id) *current-user-id*)
                     (equal role "admin"))
             (resolve-concern cid *current-user-id*))))
-      (let ((changeset (when concern (find-changeset-by-id (getf concern :changeset-id)))))
+      (let ((pr (when concern (find-pull-request-by-id (getf concern :changeset-id)))))
         (hunchentoot:redirect
-         (if changeset
-             (format nil "/~A/~A/changesets/~A" owner repo-name (getf changeset :number))
+         (if pr
+             (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number))
              (format nil "/~A/~A" owner repo-name)))))))
 
-(easy-routes:defroute merge-changeset-submit
-    ("/:owner/:repo-name/changesets/:number/merge" :method :post) ()
+(easy-routes:defroute merge-pull-request-submit
+    ("/:owner/:repo-name/pulls/:number/merge" :method :post) ()
   (when (require-login)
     (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
-           (changeset (when (and repo num) (find-changeset (getf repo :id) num))))
-      (unless repo (return-from merge-changeset-submit repo))
-      (unless changeset (return-from merge-changeset-submit (not-found)))
+           (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
+      (unless repo (return-from merge-pull-request-submit repo))
+      (unless pr (return-from merge-pull-request-submit (not-found)))
       (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
         (setf (hunchentoot:return-code*) 403)
-        (return-from merge-changeset-submit "Forbidden"))
-      (let ((eligibility (compute-merge-eligibility changeset repo)))
-        (unless (changeset-mergeable-p eligibility)
+        (return-from merge-pull-request-submit "Forbidden"))
+      (let ((eligibility (compute-merge-eligibility pr repo)))
+        (unless (pull-request-mergeable-p eligibility)
           (setf (hunchentoot:return-code*) 422)
-          (return-from merge-changeset-submit "Changeset is not mergeable")))
-      (merge-changeset (getf changeset :id))
-      (log-event "changeset.merged"
+          (return-from merge-pull-request-submit "Pull request is not mergeable")))
+      (merge-pull-request (getf pr :id))
+      (log-event "pr.merged"
                  :user-id *current-user-id*
                  :repo-id (getf repo :id)
-                 :entity-type "changeset"
-                 :entity-id (getf changeset :id))
+                 :entity-type "pull_request"
+                 :entity-id (getf pr :id))
       (hunchentoot:redirect
-       (format nil "/~A/~A/changesets/~A" owner repo-name number)))))
+       (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Issues

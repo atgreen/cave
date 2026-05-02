@@ -33,7 +33,7 @@ podman run -d --name cave --network cave-net -p 8080:8080 -p 2222:22 -e CAVE_DB_
 - **src/config.lisp** — S-expression config parser (cave.conf)
 - **src/db.lisp** — PostgreSQL via postmodern, numbered migrations
 - **src/auth.lisp** — bcrypt passwords, sessions, API tokens
-- **src/model.lisp** — All domain queries: users, orgs, repos, issues, changesets, reviews, concerns, stacks, events, SSH keys
+- **src/model.lisp** — All domain queries: users, orgs, repos, issues, pull requests, reviews, concerns, stacks, events, SSH keys
 - **src/git.lisp** — Shell out to git CLI for branch listing, log, file tree, diff
 - **src/views.lisp** — All HTML via Spinneret (s-expression HTML, no template files)
 - **src/ssh.lisp** — SSH transport: git-shell auth, authorized_keys generation

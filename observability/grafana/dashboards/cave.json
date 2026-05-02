@@ -149,7 +149,7 @@
       "datasource": { "type": "prometheus", "uid": "" }
     },
     {
-      "title": "Open Changesets",
+      "title": "Open Pull Requests",
       "type": "stat",
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 8 },
       "fieldConfig": {
@@ -160,7 +160,7 @@
       },
       "targets": [
         {
-          "expr": "cave_changesets_open",
+          "expr": "cave_pull_requests_open",
           "legendFormat": "",
           "refId": "A"
         }

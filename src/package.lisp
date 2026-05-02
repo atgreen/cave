@@ -25,7 +25,7 @@
            #:cave-org
            #:cave-repo
            #:cave-issue
-           #:cave-changeset
+           #:cave-pull-request
            #:cave-review
            #:cave-concern)
 
