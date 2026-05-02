@@ -617,22 +617,16 @@ code {
   padding: var(--sp-1) var(--sp-3);
 }
 .diff-table .diff-line-context { background: transparent; }
-code.diff-code {
-  background: none !important;
-  padding: 0 !important;
-  font-size: inherit;
-  color: inherit;
-  display: block;
-  line-height: inherit;
-  margin: 0;
-  white-space: pre;
-}
+code.diff-code,
 code.diff-code.hljs {
   background: none !important;
-  display: block;
-  line-height: inherit;
-  margin: 0;
   padding: 0 !important;
+  margin: 0 !important;
+  font-size: inherit;
+  color: inherit;
+  display: inline;
+  line-height: inherit;
+  white-space: pre;
 }
 .diff-gutter {
   width: 1em;
