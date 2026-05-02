@@ -69,10 +69,27 @@
 
 ;;; ========================== DASHBOARD ==========================
 
-(defun view-dashboard (&key orgs)
+(defun view-dashboard (&key orgs repos username)
   "Render the dashboard."
   (page (:title "Dashboard — Cave")
     (:h1 "Dashboard")
+
+    (:section
+     (:div :style "display:flex;justify-content:space-between;align-items:center"
+      (:h2 "Your repositories")
+      (:a.btn.btn-primary :href "/-/new-repo" "New repository"))
+     (if repos
+         (:ul.repo-list
+          (dolist (repo repos)
+            (:li
+             (:a :href (format nil "/~A/~A" username (getf repo :name))
+              (getf repo :name))
+             (when (getf repo :is-private)
+               (:span.badge "private"))
+             (when (getf repo :description)
+               (:span.desc (getf repo :description))))))
+         (:p.empty "No personal repositories yet.")))
+
     (:section
      (:h2 "Your organizations")
      (if orgs
@@ -83,6 +100,45 @@
               (getf org :display-name))
              (:span.badge (getf org :role)))))
          (:p.empty "You're not a member of any organization yet.")))))
+
+;;; ========================== PERSONAL REPO CREATION ==========================
+
+(defun view-new-personal-repo (&key error)
+  "Render the personal repo creation form."
+  (page (:title "New repository — Cave")
+    (:h1 "New repository")
+    (when error (:div.alert.alert-error error))
+    (:form :method "post" :action "/-/new-repo"
+     (:div.field
+      (:label :for "name" "Repository name")
+      (:input :type "text" :id "name" :name "name" :required t
+              :pattern "[a-zA-Z0-9._-]+" :autofocus t))
+     (:div.field
+      (:label :for "description" "Description (optional)")
+      (:input :type "text" :id "description" :name "description"))
+     (:div.field
+      (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
+     (:button.btn.btn-primary :type "submit" "Create repository"))))
+
+;;; ========================== USER PROFILE ==========================
+
+(defun view-user-profile (&key user repos is-self)
+  "Render a user's public profile / repo listing."
+  (let ((username (getf user :username)))
+    (page (:title (format nil "~A — Cave" username))
+      (:h1 username)
+      (when is-self
+        (:a.btn.btn-primary :href "/-/new-repo" "New repository"))
+      (:h2 "Repositories")
+      (if repos
+          (:ul.repo-list
+           (dolist (repo repos)
+             (:li
+              (:a :href (format nil "/~A/~A" username (getf repo :name))
+               (getf repo :name))
+              (when (getf repo :is-private) (:span.badge "private"))
+              (when (getf repo :description) (:span.desc (getf repo :description))))))
+          (:p.empty "No repositories.")))))
 
 ;;; ========================== ORG PAGES ==========================
 
@@ -104,9 +160,9 @@
       (:input :type "text" :id "description" :name "description"))
      (:button.btn.btn-primary :type "submit" "Create organization"))))
 
-(defun view-org (&key org repos is-member)
+(defun view-org (&key owner-name repos is-member)
   "Render an org page."
-  (let ((org-name (getf org :name)))
+  (let ((org-name owner-name))
     (page (:title (format nil "~A — Cave" (getf org :display-name)))
       (:h1 (getf org :display-name))
       (when (getf org :description)
@@ -119,7 +175,7 @@
           (:ul.repo-list
            (dolist (repo repos)
              (:li
-              (:a :href (format nil "/o/~A/~A" org-name (getf repo :name))
+              (:a :href (format nil "/~A/~A" org-name (getf repo :name))
                (getf repo :name))
               (when (getf repo :is-private)
                 (:span.badge "private"))
@@ -131,7 +187,7 @@
 
 (defun view-new-repo (&key org)
   "Render the new repo form."
-  (let ((org-name (getf org :name)))
+  (let ((org-name owner-name))
     (page (:title "New repository — Cave")
       (:h1 (format nil "New repository in ~A" org-name))
       (:form :method "post" :action (format nil "/o/~A/-/new-repo" org-name)
@@ -146,20 +202,20 @@
         (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
        (:button.btn.btn-primary :type "submit" "Create repository")))))
 
-(defun view-repo (&key org repo role empty branches recent-commits issues changesets)
+(defun view-repo (&key owner-name repo role empty branches recent-commits issues changesets)
   "Render a repo page."
-  (let ((org-name (getf org :name))
+  (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "~A/~A — Cave" org-name repo-name))
       (render-breadcrumbs
-       (list (list (format nil "/o/~A" org-name) org-name)
+       (list (list (format nil "/~A" org-name) org-name)
              repo-name))
       (when (getf repo :is-private) (:span.badge "private"))
       (when (getf repo :description) (:p (getf repo :description)))
 
       (:div.repo-actions
-       (:a.btn :href (format nil "/o/~A/~A/issues" org-name repo-name) "Issues")
-       (:a.btn :href (format nil "/o/~A/~A/changesets" org-name repo-name) "Changesets"))
+       (:a.btn :href (format nil "/~A/~A/issues" org-name repo-name) "Issues")
+       (:a.btn :href (format nil "/~A/~A/changesets" org-name repo-name) "Changesets"))
 
       (:section
        (:h2 "Clone")
@@ -196,7 +252,7 @@
          (:ul.issue-list
           (dolist (cs changesets)
             (:li
-             (:a :href (format nil "/o/~A/~A/changesets/~A" org-name repo-name
+             (:a :href (format nil "/~A/~A/changesets/~A" org-name repo-name
                                 (getf cs :number))
               (:span.issue-number (format nil "#~A" (getf cs :number)))
               (format nil " ~A → ~A" (getf cs :source-branch) (getf cs :target-branch))))))))
@@ -207,21 +263,21 @@
          (:ul.issue-list
           (dolist (iss issues)
             (:li
-             (:a :href (format nil "/o/~A/~A/issues/~A" org-name repo-name
+             (:a :href (format nil "/~A/~A/issues/~A" org-name repo-name
                                 (getf iss :number))
               (:span.issue-number (format nil "#~A" (getf iss :number)))
               (format nil " ~A" (getf iss :title)))))))))))
 
 ;;; ========================== ISSUE PAGES ==========================
 
-(defun view-issues (&key org repo issues current-status)
+(defun view-issues (&key owner-name repo issues current-status)
   "Render the issues list."
-  (let ((org-name (getf org :name))
+  (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Issues — ~A/~A" org-name repo-name))
       (render-breadcrumbs
-       (list (list (format nil "/o/~A" org-name) org-name)
-             (list (format nil "/o/~A/~A" org-name repo-name) repo-name)
+       (list (list (format nil "/~A" org-name) org-name)
+             (list (format nil "/~A/~A" org-name repo-name) repo-name)
              "Issues"))
       (:div.issues-header
        (:div.issue-filters
@@ -230,31 +286,31 @@
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "closed"))
          :href "?status=closed" "Closed"))
        (when *current-user*
-         (:a.btn.btn-primary :href (format nil "/o/~A/~A/issues/new" org-name repo-name)
+         (:a.btn.btn-primary :href (format nil "/~A/~A/issues/new" org-name repo-name)
           "New issue")))
       (if issues
           (:ul.issue-list
            (dolist (iss issues)
              (:li
-              (:a :href (format nil "/o/~A/~A/issues/~A" org-name repo-name
+              (:a :href (format nil "/~A/~A/issues/~A" org-name repo-name
                                  (getf iss :number))
                (:span.issue-number (format nil "#~A" (getf iss :number)))
                (format nil " ~A" (getf iss :title)))
               (:span.badge (getf iss :status)))))
           (:p.empty "No issues found.")))))
 
-(defun view-new-issue (&key org repo)
+(defun view-new-issue (&key owner-name repo)
   "Render the new issue form."
-  (let ((org-name (getf org :name))
+  (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title "New issue — Cave")
       (render-breadcrumbs
-       (list (list (format nil "/o/~A" org-name) org-name)
-             (list (format nil "/o/~A/~A" org-name repo-name) repo-name)
-             (list (format nil "/o/~A/~A/issues" org-name repo-name) "Issues")
+       (list (list (format nil "/~A" org-name) org-name)
+             (list (format nil "/~A/~A" org-name repo-name) repo-name)
+             (list (format nil "/~A/~A/issues" org-name repo-name) "Issues")
              "New"))
       (:h1 "New issue")
-      (:form :method "post" :action (format nil "/o/~A/~A/issues/new" org-name repo-name)
+      (:form :method "post" :action (format nil "/~A/~A/issues/new" org-name repo-name)
        (:div.field
         (:label :for "title" "Title")
         (:input :type "text" :id "title" :name "title" :required t :autofocus t))
@@ -263,15 +319,15 @@
         (:textarea :id "body" :name "body" :rows "12"))
        (:button.btn.btn-primary :type "submit" "Create issue")))))
 
-(defun view-issue (&key org repo issue author)
+(defun view-issue (&key owner-name repo issue author)
   "Render an issue detail page."
-  (let ((org-name (getf org :name))
+  (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "#~A ~A — Cave" (getf issue :number) (getf issue :title)))
       (render-breadcrumbs
-       (list (list (format nil "/o/~A" org-name) org-name)
-             (list (format nil "/o/~A/~A" org-name repo-name) repo-name)
-             (list (format nil "/o/~A/~A/issues" org-name repo-name) "Issues")
+       (list (list (format nil "/~A" org-name) org-name)
+             (list (format nil "/~A/~A" org-name repo-name) repo-name)
+             (list (format nil "/~A/~A/issues" org-name repo-name) "Issues")
              (format nil "#~A" (getf issue :number))))
       (:div.issue-header
        (:h1 (format nil "#~A ~A" (getf issue :number) (getf issue :title)))
@@ -283,14 +339,14 @@
 
 ;;; ========================== CHANGESET PAGES ==========================
 
-(defun view-changesets (&key org repo changesets current-status)
+(defun view-changesets (&key owner-name repo changesets current-status)
   "Render the changesets list."
-  (let ((org-name (getf org :name))
+  (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Changesets — ~A/~A" org-name repo-name))
       (render-breadcrumbs
-       (list (list (format nil "/o/~A" org-name) org-name)
-             (list (format nil "/o/~A/~A" org-name repo-name) repo-name)
+       (list (list (format nil "/~A" org-name) org-name)
+             (list (format nil "/~A/~A" org-name repo-name) repo-name)
              "Changesets"))
       (:div.issues-header
        (:div.issue-filters
@@ -304,7 +360,7 @@
           (:ul.issue-list
            (dolist (cs changesets)
              (:li
-              (:a :href (format nil "/o/~A/~A/changesets/~A" org-name repo-name
+              (:a :href (format nil "/~A/~A/changesets/~A" org-name repo-name
                                  (getf cs :number))
                (:span.issue-number (format nil "#~A" (getf cs :number)))
                (format nil " ~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
@@ -314,17 +370,17 @@
                      (t "open"))))))
           (:p.empty "No changesets found.")))))
 
-(defun view-changeset (&key org repo changeset author reviews eligibility
+(defun view-changeset (&key owner-name repo changeset author reviews eligibility
                              can-merge stack stack-items)
   "Render a changeset detail page."
-  (let ((org-name (getf org :name))
+  (let ((org-name owner-name)
         (repo-name (getf repo :name))
         (cs-num (getf changeset :number)))
     (page (:title (format nil "#~A ~A — Cave" cs-num (getf changeset :source-branch)))
       (render-breadcrumbs
-       (list (list (format nil "/o/~A" org-name) org-name)
-             (list (format nil "/o/~A/~A" org-name repo-name) repo-name)
-             (list (format nil "/o/~A/~A/changesets" org-name repo-name) "Changesets")
+       (list (list (format nil "/~A" org-name) org-name)
+             (list (format nil "/~A/~A" org-name repo-name) repo-name)
+             (list (format nil "/~A/~A/changesets" org-name repo-name) "Changesets")
              (format nil "#~A" cs-num)))
 
       (:div.issue-header
@@ -350,7 +406,7 @@
          (:ol.stack-list
           (dolist (item stack-items)
             (:li :class (when (= (getf item :number) cs-num) "stack-current")
-             (:a :href (format nil "/o/~A/~A/changesets/~A" org-name repo-name
+             (:a :href (format nil "/~A/~A/changesets/~A" org-name repo-name
                                 (getf item :number))
               (format nil "#~A ~A" (getf item :number) (getf item :source-branch)))
              (:span.badge
@@ -372,7 +428,7 @@
                      (getf rule :description)))))
          (when can-merge
            (:form :method "post"
-            :action (format nil "/o/~A/~A/changesets/~A/merge" org-name repo-name cs-num)
+            :action (format nil "/~A/~A/changesets/~A/merge" org-name repo-name cs-num)
             (:button.btn.btn-primary :type "submit" "Merge changeset")))))
 
       ;; Reviews
@@ -396,7 +452,7 @@
                     (:span.concern-text (getf c :body))
                     (if (equal (getf c :status) "open")
                         (:form :method "post" :style "display:inline"
-                         :action (format nil "/o/~A/~A/concerns/~A/resolve"
+                         :action (format nil "/~A/~A/concerns/~A/resolve"
                                          org-name repo-name (getf c :id))
                          (:button.btn.btn-sm :type "submit" "Resolve"))
                         (:span.badge "resolved"))))))))
@@ -409,7 +465,7 @@
         (:section
          (:h2 "Submit review")
          (:form :method "post"
-          :action (format nil "/o/~A/~A/changesets/~A/review" org-name repo-name cs-num)
+          :action (format nil "/~A/~A/changesets/~A/review" org-name repo-name cs-num)
           (:div.field
            (:label :for "review_body" "Comment")
            (:textarea :id "review_body" :name "body" :rows "4"))

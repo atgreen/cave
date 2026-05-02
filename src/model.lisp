@@ -227,25 +227,37 @@
 
 ;;; ========================== REPOS ==========================
 
-(defun create-repo (&key org-id name description (is-private nil))
-  "Create a new repo record in the database."
+(defun create-repo (&key org-id owner-id name description (is-private nil))
+  "Create a new repo. Must have exactly one of ORG-ID or OWNER-ID."
   (postmodern:query
    (:insert-into 'cave-repos
-    :set 'org-id org-id
+    :set 'org-id (or org-id :null)
+         'owner-id (or owner-id :null)
          'name name
          'description description
          'is-private is-private
     :returning '*)
    :plist))
 
-(defun find-repo (org-name repo-name)
-  "Find a repo by org name and repo name."
+(defun find-repo (owner-name repo-name)
+  "Find a repo by owner (org or user) name and repo name."
+  ;; Try org first
+  (let ((result (postmodern:query
+                 (:select 'cave-repos.*
+                  :from 'cave-repos
+                  :inner-join 'cave-orgs
+                  :on (:= 'cave-repos.org-id 'cave-orgs.id)
+                  :where (:and (:= 'cave-orgs.name owner-name)
+                               (:= 'cave-repos.name repo-name)))
+                 :plist)))
+    (when result (return-from find-repo result)))
+  ;; Try user
   (postmodern:query
    (:select 'cave-repos.*
     :from 'cave-repos
-    :inner-join 'cave-orgs
-    :on (:= 'cave-repos.org-id 'cave-orgs.id)
-    :where (:and (:= 'cave-orgs.name org-name)
+    :inner-join 'cave-users
+    :on (:= 'cave-repos.owner-id 'cave-users.id)
+    :where (:and (:= 'cave-users.username owner-name)
                  (:= 'cave-repos.name repo-name)))
    :plist))
 
@@ -254,6 +266,20 @@
   (postmodern:query
    (:select '* :from 'cave-repos :where (:= 'id repo-id))
    :plist))
+
+(defun repo-owner-name (repo)
+  "Get the owner name (org name or username) for a repo."
+  (if (and (getf repo :org-id)
+           (not (eq (getf repo :org-id) :null)))
+      (let ((org (postmodern:query
+                  (:select 'name :from 'cave-orgs
+                   :where (:= 'id (getf repo :org-id)))
+                  :single)))
+        org)
+      (postmodern:query
+       (:select 'username :from 'cave-users
+        :where (:= 'id (getf repo :owner-id)))
+       :single)))
 
 (defun list-org-repos (org-id &key include-private)
   "List repos in an org."
@@ -270,19 +296,44 @@
         'name)
        :plists)))
 
+(defun list-user-repos (user-id &key include-private)
+  "List repos owned by a user."
+  (if include-private
+      (postmodern:query
+       (:order-by
+        (:select '* :from 'cave-repos :where (:= 'owner-id user-id))
+        'name)
+       :plists)
+      (postmodern:query
+       (:order-by
+        (:select '* :from 'cave-repos
+         :where (:and (:= 'owner-id user-id) (:= 'is-private nil)))
+        'name)
+       :plists)))
+
 (defun repo-member-role (repo-id user-id)
   "Get a user's role in a repo. Returns role string or NIL.
-   Also checks org admin status (implicit repo admin)."
+   Repo owner is implicit admin. Org admin is implicit repo admin."
   ;; Direct repo membership
   (let ((direct (postmodern:query
                  (:select 'role :from 'cave-repo-members
                   :where (:and (:= 'repo-id repo-id) (:= 'user-id user-id)))
                  :single)))
     (when direct (return-from repo-member-role direct)))
-  ;; Org admin = implicit repo admin
-  (let* ((repo (find-repo-by-id repo-id))
-         (org-role (when repo (org-member-role (getf repo :org-id) user-id))))
-    (when (equal org-role "admin") "admin")))
+  (let ((repo (find-repo-by-id repo-id)))
+    (when repo
+      ;; User-owned repo: owner is implicit admin
+      (when (and (getf repo :owner-id)
+                 (not (eq (getf repo :owner-id) :null))
+                 (= (getf repo :owner-id) user-id))
+        (return-from repo-member-role "admin"))
+      ;; Org repo: org admin is implicit repo admin
+      (when (and (getf repo :org-id)
+                 (not (eq (getf repo :org-id) :null)))
+        (let ((org-role (org-member-role (getf repo :org-id) user-id)))
+          (when (equal org-role "admin")
+            (return-from repo-member-role "admin"))))))
+  nil)
 
 (defun add-repo-member (repo-id user-id &key (role "writer"))
   "Add a member to a repo."

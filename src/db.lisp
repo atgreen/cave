@@ -308,7 +308,17 @@ CREATE TABLE cave_check_configs (
   UNIQUE(repo_id, name)
 );
 -- Whether repo-stored checks (.cave/checks.toml) are allowed
-ALTER TABLE cave_repos ADD COLUMN allow_repo_checks BOOLEAN NOT NULL DEFAULT FALSE;"))
+ALTER TABLE cave_repos ADD COLUMN allow_repo_checks BOOLEAN NOT NULL DEFAULT FALSE;")
+
+    (20 . "-- Allow repos to be owned by a user instead of an org
+ALTER TABLE cave_repos ALTER COLUMN org_id DROP NOT NULL;
+ALTER TABLE cave_repos ADD COLUMN owner_id BIGINT REFERENCES cave_users(id) ON DELETE CASCADE;
+ALTER TABLE cave_repos ADD CONSTRAINT repo_has_owner CHECK (
+  (org_id IS NOT NULL AND owner_id IS NULL) OR
+  (org_id IS NULL AND owner_id IS NOT NULL)
+);
+CREATE INDEX idx_repos_owner ON cave_repos (owner_id);
+CREATE UNIQUE INDEX idx_repos_owner_name ON cave_repos (owner_id, name) WHERE owner_id IS NOT NULL;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

@@ -111,7 +111,10 @@
 
 (easy-routes:defroute dashboard ("/" :method :get) ()
   (if *current-user*
-      (html-response (view-dashboard :orgs (list-user-orgs *current-user-id*)))
+      (html-response
+       (view-dashboard :orgs (list-user-orgs *current-user-id*)
+                       :repos (list-user-repos *current-user-id* :include-private t)
+                       :username (getf *current-user* :username)))
       (hunchentoot:redirect "/login")))
 
 ;; ----------------------------------------------------------------------------
@@ -217,7 +220,42 @@
     (hunchentoot:redirect "/-/settings")))
 
 ;; ----------------------------------------------------------------------------
-;; Routes: Orgs
+;; Routes: Personal repo creation
+
+(easy-routes:defroute new-personal-repo-page ("/-/new-repo" :method :get) ()
+  (when (require-login)
+    (html-response (view-new-personal-repo))))
+
+(easy-routes:defroute create-personal-repo-submit ("/-/new-repo" :method :post) ()
+  (when (require-login)
+    (let* ((name (hunchentoot:post-parameter "name"))
+           (description (hunchentoot:post-parameter "description"))
+           (is-private (hunchentoot:post-parameter "is_private"))
+           (username (getf *current-user* :username)))
+      (handler-case
+          (let ((repo (create-repo :owner-id *current-user-id*
+                                   :name name
+                                   :description description
+                                   :is-private (when is-private t))))
+            (init-bare-repo username name)
+            (log-event "repo.created" :user-id *current-user-id*
+                                      :repo-id (getf repo :id))
+            (hunchentoot:redirect (format nil "/~A/~A" username name)))
+        (error (e)
+          (html-response (view-new-personal-repo :error (format nil "~A" e))))))))
+
+;; ----------------------------------------------------------------------------
+;; Routes: User profile (public repos listing)
+
+(easy-routes:defroute user-profile-page ("/u/:username" :method :get) ()
+  (let ((user (find-user-by-username username)))
+    (unless user (return-from user-profile-page (not-found)))
+    (let* ((is-self (and *current-user-id* (= *current-user-id* (getf user :id))))
+           (repos (list-user-repos (getf user :id) :include-private is-self)))
+      (html-response (view-user-profile :user user :repos repos :is-self is-self)))))
+
+;; ----------------------------------------------------------------------------
+;; Routes: Orgs (keep /o/ prefix for explicit org access)
 
 (easy-routes:defroute org-page ("/o/:org-name" :method :get) ()
   (let ((org (find-org-by-name org-name)))
@@ -230,8 +268,8 @@
 ;; ----------------------------------------------------------------------------
 ;; Routes: Repos
 
-(easy-routes:defroute repo-page ("/o/:org-name/:repo-name" :method :get) ()
-  (let ((repo (find-repo org-name repo-name)))
+(easy-routes:defroute repo-page ("/:owner/:repo-name" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from repo-page (not-found)))
     (when (and (getf repo :is-private)
                (not (and *current-user-id*
@@ -239,35 +277,34 @@
       (return-from repo-page (not-found)))
     (let* ((role (and *current-user-id*
                       (repo-member-role (getf repo :id) *current-user-id*)))
-           (org (find-org-by-name org-name))
-           (disk-path (repo-disk-path org-name repo-name))
+           (disk-path (repo-disk-path owner repo-name))
            (empty (git-repo-empty-p disk-path))
            (branches (unless empty (git-branches disk-path)))
            (recent-commits (unless empty (git-log disk-path :limit 5)))
            (open-issues (list-issues (getf repo :id) :status "open" :limit 5))
            (open-changesets (list-changesets (getf repo :id) :status "open" :limit 5)))
       (html-response
-       (view-repo :org org :repo repo :role role
+       (view-repo :owner-name owner :repo repo :role role
                   :empty empty :branches branches
                   :recent-commits recent-commits
                   :issues open-issues :changesets open-changesets)))))
 
-(easy-routes:defroute new-repo-page ("/o/:org-name/-/new-repo" :method :get) ()
+(easy-routes:defroute new-org-repo-page ("/o/:org-name/-/new-repo" :method :get) ()
   (when (require-login)
     (let ((org (find-org-by-name org-name)))
-      (unless org (return-from new-repo-page (not-found)))
+      (unless org (return-from new-org-repo-page (not-found)))
       (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
         (setf (hunchentoot:return-code*) 403)
-        (return-from new-repo-page "Forbidden"))
+        (return-from new-org-repo-page "Forbidden"))
       (html-response (view-new-repo :org org)))))
 
-(easy-routes:defroute create-repo-submit ("/o/:org-name/-/new-repo" :method :post) ()
+(easy-routes:defroute create-org-repo-submit ("/o/:org-name/-/new-repo" :method :post) ()
   (when (require-login)
     (let ((org (find-org-by-name org-name)))
-      (unless org (return-from create-repo-submit (not-found)))
+      (unless org (return-from create-org-repo-submit (not-found)))
       (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
         (setf (hunchentoot:return-code*) 403)
-        (return-from create-repo-submit "Forbidden"))
+        (return-from create-org-repo-submit "Forbidden"))
       (let* ((name (hunchentoot:post-parameter "name"))
              (description (hunchentoot:post-parameter "description"))
              (is-private (hunchentoot:post-parameter "is_private"))
@@ -278,32 +315,30 @@
         (init-bare-repo org-name name)
         (log-event "repo.created" :user-id *current-user-id*
                                   :repo-id (getf repo :id))
-        (hunchentoot:redirect (format nil "/o/~A/~A" org-name name))))))
+        (hunchentoot:redirect (format nil "/~A/~A" org-name name))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Issues
 
-(easy-routes:defroute issues-page ("/o/:org-name/:repo-name/issues" :method :get) ()
-  (let ((repo (find-repo org-name repo-name))
-        (org (find-org-by-name org-name)))
+(easy-routes:defroute issues-page ("/:owner/:repo-name/issues" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from issues-page (not-found)))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (issues (list-issues (getf repo :id) :status status)))
       (html-response
-       (view-issues :org org :repo repo :issues issues :current-status status)))))
+       (view-issues :owner-name owner :repo repo :issues issues :current-status status)))))
 
 (easy-routes:defroute new-issue-page
-    ("/o/:org-name/:repo-name/issues/new" :method :get) ()
+    ("/:owner/:repo-name/issues/new" :method :get) ()
   (when (require-login)
-    (let ((repo (find-repo org-name repo-name))
-          (org (find-org-by-name org-name)))
+    (let ((repo (find-repo owner repo-name)))
       (unless repo (return-from new-issue-page (not-found)))
-      (html-response (view-new-issue :org org :repo repo)))))
+      (html-response (view-new-issue :owner-name owner :repo repo)))))
 
 (easy-routes:defroute create-issue-submit
-    ("/o/:org-name/:repo-name/issues/new" :method :post) ()
+    ("/:owner/:repo-name/issues/new" :method :post) ()
   (when (require-login)
-    (let ((repo (find-repo org-name repo-name)))
+    (let ((repo (find-repo owner repo-name)))
       (unless repo (return-from create-issue-submit (not-found)))
       (let ((issue (create-issue :repo-id (getf repo :id)
                                  :author-id *current-user-id*
@@ -314,38 +349,35 @@
                                    :entity-type "issue"
                                    :entity-id (getf issue :id))
         (hunchentoot:redirect
-         (format nil "/o/~A/~A/issues/~A" org-name repo-name (getf issue :number)))))))
+         (format nil "/~A/~A/issues/~A" owner repo-name (getf issue :number)))))))
 
 (easy-routes:defroute issue-page
-    ("/o/:org-name/:repo-name/issues/:number" :method :get) ()
-  (let ((repo (find-repo org-name repo-name))
-        (org (find-org-by-name org-name)))
+    ("/:owner/:repo-name/issues/:number" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from issue-page (not-found)))
     (let* ((num (parse-integer number :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from issue-page (not-found)))
       (html-response
-       (view-issue :org org :repo repo :issue issue
+       (view-issue :owner-name owner :repo repo :issue issue
                    :author (find-user-by-id (getf issue :author-id)))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Changesets
 
 (easy-routes:defroute changesets-page
-    ("/o/:org-name/:repo-name/changesets" :method :get) ()
-  (let ((repo (find-repo org-name repo-name))
-        (org (find-org-by-name org-name)))
+    ("/:owner/:repo-name/changesets" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from changesets-page (not-found)))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (changesets (list-changesets (getf repo :id) :status status)))
       (html-response
-       (view-changesets :org org :repo repo :changesets changesets
+       (view-changesets :owner-name owner :repo repo :changesets changesets
                         :current-status status)))))
 
 (easy-routes:defroute changeset-page
-    ("/o/:org-name/:repo-name/changesets/:number" :method :get) ()
-  (let ((repo (find-repo org-name repo-name))
-        (org (find-org-by-name org-name)))
+    ("/:owner/:repo-name/changesets/:number" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from changeset-page (not-found)))
     (let* ((num (parse-integer number :junk-allowed t))
            (changeset (when num (find-changeset (getf repo :id) num))))
@@ -369,15 +401,15 @@
              (stack (find-stack-by-id (getf changeset :stack-id)))
              (stack-items (when stack (list-stack-changesets (getf stack :id)))))
         (html-response
-         (view-changeset :org org :repo repo :changeset changeset
+         (view-changeset :owner-name owner :repo repo :changeset changeset
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
                          :stack stack :stack-items stack-items))))))
 
 (easy-routes:defroute submit-review
-    ("/o/:org-name/:repo-name/changesets/:number/review" :method :post) ()
+    ("/:owner/:repo-name/changesets/:number/review" :method :post) ()
   (when (require-login)
-    (let* ((repo (find-repo org-name repo-name))
+    (let* ((repo (find-repo owner repo-name))
            (num (parse-integer number :junk-allowed t))
            (changeset (when (and repo num) (find-changeset (getf repo :id) num))))
       (unless changeset (return-from submit-review (not-found)))
@@ -402,15 +434,15 @@
                    :entity-type "review"
                    :entity-id (getf review :id))
         (hunchentoot:redirect
-         (format nil "/o/~A/~A/changesets/~A" org-name repo-name number))))))
+         (format nil "/~A/~A/changesets/~A" owner repo-name number))))))
 
 (easy-routes:defroute resolve-concern-submit
-    ("/o/:org-name/:repo-name/concerns/:concern-id/resolve" :method :post) ()
+    ("/:owner/:repo-name/concerns/:concern-id/resolve" :method :post) ()
   (when (require-login)
     (let* ((cid (parse-integer concern-id :junk-allowed t))
            (concern (when cid (find-concern-by-id cid))))
       (when concern
-        (let* ((repo (find-repo org-name repo-name))
+        (let* ((repo (find-repo owner repo-name))
                (role (when repo (repo-member-role (getf repo :id) *current-user-id*))))
           (when (or (= (getf concern :author-id) *current-user-id*)
                     (equal role "admin"))
@@ -418,13 +450,13 @@
       (let ((changeset (when concern (find-changeset-by-id (getf concern :changeset-id)))))
         (hunchentoot:redirect
          (if changeset
-             (format nil "/o/~A/~A/changesets/~A" org-name repo-name (getf changeset :number))
-             (format nil "/o/~A/~A" org-name repo-name)))))))
+             (format nil "/~A/~A/changesets/~A" owner repo-name (getf changeset :number))
+             (format nil "/~A/~A" owner repo-name)))))))
 
 (easy-routes:defroute merge-changeset-submit
-    ("/o/:org-name/:repo-name/changesets/:number/merge" :method :post) ()
+    ("/:owner/:repo-name/changesets/:number/merge" :method :post) ()
   (when (require-login)
-    (let* ((repo (find-repo org-name repo-name))
+    (let* ((repo (find-repo owner repo-name))
            (num (parse-integer number :junk-allowed t))
            (changeset (when (and repo num) (find-changeset (getf repo :id) num))))
       (unless changeset (return-from merge-changeset-submit (not-found)))
@@ -442,24 +474,24 @@
                  :entity-type "changeset"
                  :entity-id (getf changeset :id))
       (hunchentoot:redirect
-       (format nil "/o/~A/~A/changesets/~A" org-name repo-name number)))))
+       (format nil "/~A/~A/changesets/~A" owner repo-name number)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Issues
 
 (easy-routes:defroute api-list-issues
-    ("/api/v1/repos/:org-name/:repo-name/issues" :method :get) ()
-  (let ((repo (find-repo org-name repo-name)))
+    ("/api/v1/repos/:owner/:repo-name/issues" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from api-list-issues (json-error "not found" :status 404)))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (issues (list-issues (getf repo :id) :status status)))
       (json-response issues))))
 
 (easy-routes:defroute api-create-issue
-    ("/api/v1/repos/:org-name/:repo-name/issues" :method :post) ()
+    ("/api/v1/repos/:owner/:repo-name/issues" :method :post) ()
   (unless *current-user-id*
     (return-from api-create-issue (json-error "unauthorized" :status 401)))
-  (let ((repo (find-repo org-name repo-name)))
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from api-create-issue (json-error "not found" :status 404)))
     (let* ((body-text (hunchentoot:raw-post-data :force-text t))
            (json (com.inuoe.jzon:parse body-text))
@@ -474,8 +506,8 @@
        :status 201))))
 
 (easy-routes:defroute api-get-issue
-    ("/api/v1/repos/:org-name/:repo-name/issues/:id" :method :get) ()
-  (let ((repo (find-repo org-name repo-name)))
+    ("/api/v1/repos/:owner/:repo-name/issues/:id" :method :get) ()
+  (let ((repo (find-repo owner repo-name)))
     (unless repo (return-from api-get-issue (json-error "not found" :status 404)))
     (let* ((num (parse-integer id :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
@@ -485,13 +517,13 @@
 ;; ----------------------------------------------------------------------------
 ;; Git helpers
 
-(defun repo-disk-path (org-name repo-name)
+(defun repo-disk-path (owner repo-name)
   "Return the on-disk path for a bare git repo."
-  (merge-pathnames (format nil "~A/~A.git/" org-name repo-name) (repos-dir)))
+  (merge-pathnames (format nil "~A/~A.git/" owner repo-name) (repos-dir)))
 
-(defun init-bare-repo (org-name repo-name)
+(defun init-bare-repo (owner repo-name)
   "Initialize a bare git repository on disk."
-  (let ((path (repo-disk-path org-name repo-name)))
+  (let ((path (repo-disk-path owner repo-name)))
     (ensure-directories-exist path)
     (uiop:run-program (list "git" "init" "--bare" (namestring path))
                        :output :string :error-output :string)
