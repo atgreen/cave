@@ -434,7 +434,10 @@ require(['vs/editor/editor.main'], function() {
       (when diff-stat
         (:pre.diff-stat diff-stat))
       (when diff-files
-        (render-diff diff-files owner-name repo-name (getf commit :hash))))))
+        (render-diff diff-files owner-name repo-name (getf commit :hash))
+        (:raw "<link rel='stylesheet' href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css'>")
+        (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
+        (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){hljs.highlightElement(el);});"))))))
 
 ;;; ========================== ISSUE PAGES ==========================
 
@@ -564,12 +567,40 @@ require(['vs/editor/editor.main'], function() {
        (:span.diff-inline-comment-date (princ-to-string (getf c :created-at)))
        (:div.diff-inline-comment-body (getf c :body))))))
 
+(defun hljs-language (filename)
+  "Map filename to highlight.js language class."
+  (let ((ext (pathname-type (pathname filename)))
+        (base (pathname-name (pathname filename))))
+    (cond
+      ((member ext '("lisp" "cl" "asd" "lsp") :test #'equalp) "lisp")
+      ((member ext '("js" "mjs") :test #'equalp) "javascript")
+      ((member ext '("ts" "tsx") :test #'equalp) "typescript")
+      ((equalp ext "py") "python")
+      ((equalp ext "rb") "ruby")
+      ((member ext '("c" "h") :test #'equalp) "c")
+      ((member ext '("cpp" "cc" "cxx" "hpp") :test #'equalp) "cpp")
+      ((equalp ext "go") "go")
+      ((equalp ext "rs") "rust")
+      ((equalp ext "java") "java")
+      ((equalp ext "sql") "sql")
+      ((equalp ext "css") "css")
+      ((equalp ext "html") "html")
+      ((member ext '("md" "markdown") :test #'equalp) "markdown")
+      ((equalp ext "json") "json")
+      ((member ext '("yml" "yaml") :test #'equalp) "yaml")
+      ((member ext '("sh" "bash" "zsh") :test #'equalp) "bash")
+      ((equalp ext "xml") "xml")
+      ((string-equal base "Makefile") "makefile")
+      ((string-equal base "Dockerfile") "dockerfile")
+      (t "plaintext"))))
+
 (defun render-diff (diff-files owner-name repo-name ref
                     &key diff-comments comment-action can-comment)
-  "Render parsed diff files as HTML with inline comments."
+  "Render parsed diff files as HTML with inline comments and syntax highlighting."
   (spinneret:with-html
     (dolist (file diff-files)
-      (let ((filename (getf file :filename)))
+      (let ((filename (getf file :filename))
+            (lang (hljs-language (getf file :filename))))
         (:div.diff-file
          (:div.diff-file-header
           (:a :href (format nil "/~A/~A/blob/~A?path=~A"
@@ -599,7 +630,7 @@ require(['vs/editor/editor.main'], function() {
                    (:td.diff-add-btn
                     :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
                    (:td.diff-gutter "+")
-                   (:td content)))
+                   (:td (:code.diff-code :class (format nil "language-~A" lang) content))))
                  (:del
                   (:tr.diff-line-del
                    :data-file filename :data-line old-ln :data-side "old"
@@ -608,7 +639,7 @@ require(['vs/editor/editor.main'], function() {
                    (:td.diff-add-btn
                     :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
                    (:td.diff-gutter "-")
-                   (:td content)))
+                   (:td (:code.diff-code :class (format nil "language-~A" lang) content))))
                  (:context
                   (:tr.diff-line-context
                    :data-file filename :data-line (or new-ln "") :data-side "new"
@@ -617,7 +648,7 @@ require(['vs/editor/editor.main'], function() {
                    (:td.diff-add-btn
                     :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
                    (:td.diff-gutter " ")
-                   (:td content))))
+                   (:td (:code.diff-code :class (format nil "language-~A" lang) content)))))
                ;; Render existing comments below this line
                (when line-comments
                  (:tr.diff-comment-row
@@ -710,7 +741,10 @@ function caveToggleCommentForm(btn) {
                       :diff-comments diff-comments
                       :can-comment (when *current-user* t)
                       :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
-                                              org-name repo-name cs-num))))
+                                              org-name repo-name cs-num))
+         (:raw "<link rel='stylesheet' href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css'>")
+         (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
+         (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){hljs.highlightElement(el);});"))))
 
       ;; Merge eligibility
       (when (and eligibility
