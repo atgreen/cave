@@ -33,6 +33,8 @@ curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
   -H "Content-Type: application/json" \
   -d '{
     "verifyEmail": true,
+    "loginTheme": "cave",
+    "emailTheme": "cave",
     "smtpServer": {
       "host": "mailpit",
       "port": "1025",
@@ -44,4 +46,4 @@ curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
     }
   }'
 
-echo "Realm configured: email verification enabled, SMTP → mailpit:1025"
+echo "Realm configured: cave theme, email verification, SMTP → mailpit:1025"

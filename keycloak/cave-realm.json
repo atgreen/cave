@@ -5,6 +5,8 @@
   "registrationEmailAsUsername": false,
   "loginWithEmailAllowed": true,
   "verifyEmail": true,
+  "loginTheme": "cave",
+  "emailTheme": "cave",
   "smtpServer": {
     "host": "mailpit",
     "port": "1025",
