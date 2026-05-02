@@ -85,11 +85,31 @@
   (setf (hunchentoot:return-code*) 404)
   "Not found")
 
+(defun sanitize-next-url (next-url)
+  "Return NEXT-URL when it is a safe in-app redirect target, otherwise \"/\"."
+  (if (and next-url
+           (> (length next-url) 0)
+           (char= (char next-url 0) #\/)
+           (or (= (length next-url) 1)
+               (not (char= (char next-url 1) #\/)))
+           (not (find #\Newline next-url))
+           (not (find #\Return next-url)))
+      next-url
+      "/"))
+
 (defun repo-visible-p (repo)
   "Check if the current user can see REPO. Public repos are always visible."
   (or (not (getf repo :is-private))
       (and *current-user-id*
            (repo-member-role (getf repo :id) *current-user-id*))))
+
+(defun ensure-repo-visible (repo responder)
+  "Return REPO when visible, otherwise return RESPONDER's not-found response."
+  (unless repo
+    (return-from ensure-repo-visible (funcall responder)))
+  (unless (repo-visible-p repo)
+    (return-from ensure-repo-visible (funcall responder)))
+  repo)
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Metrics
@@ -103,14 +123,15 @@
 
 ;; Backwards compat: /login redirects to OIDC login
 (easy-routes:defroute login-redirect ("/login" :method :get) ()
-  (hunchentoot:redirect
-   (format nil "/-/auth/login~@[?next=~A~]"
-           (hunchentoot:get-parameter "next"))))
+  (let ((next-url (sanitize-next-url (hunchentoot:get-parameter "next"))))
+    (hunchentoot:redirect
+     (format nil "/-/auth/login?next=~A"
+             (hunchentoot:url-encode next-url)))))
 
 (easy-routes:defroute oidc-login ("/-/auth/login" :method :get) ()
   (if *current-user*
       (hunchentoot:redirect "/")
-      (let* ((next-url (or (hunchentoot:get-parameter "next") "/"))
+      (let* ((next-url (sanitize-next-url (hunchentoot:get-parameter "next")))
              (state (generate-oidc-state)))
         ;; Store state + next-url in a short-lived cookie
         (hunchentoot:set-cookie "cave_oidc_state"
@@ -126,7 +147,7 @@
          (cookie (hunchentoot:cookie-in "cave_oidc_state"))
          (colon-pos (when cookie (position #\: cookie)))
          (saved-state (when colon-pos (subseq cookie 0 colon-pos)))
-         (next-url (if colon-pos (subseq cookie (1+ colon-pos)) "/")))
+         (next-url (sanitize-next-url (if colon-pos (subseq cookie (1+ colon-pos)) "/"))))
     ;; Clear the state cookie
     (hunchentoot:set-cookie "cave_oidc_state" :value "" :path "/" :max-age 0)
     ;; Validate state
@@ -354,9 +375,8 @@
 ;; Routes: Repos
 
 (easy-routes:defroute repo-page ("/:owner/:repo-name" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from repo-page (not-found)))
-    (unless (repo-visible-p repo) (return-from repo-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from repo-page repo))
     (let* ((role (and *current-user-id*
                       (repo-member-role (getf repo :id) *current-user-id*)))
            (disk-path (repo-disk-path owner repo-name))
@@ -392,9 +412,8 @@
 
 ;; Tree (directory) browsing
 (easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from tree-page (not-found)))
-    (unless (repo-visible-p repo) (return-from tree-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from tree-page repo))
     (let* ((disk-path (repo-disk-path owner repo-name))
            (path (or (hunchentoot:get-parameter "path") ""))
            (file-tree (git-tree disk-path :ref ref :path path)))
@@ -404,9 +423,8 @@
 
 ;; Blob (file) viewing
 (easy-routes:defroute blob-page ("/:owner/:repo-name/blob/:ref" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from blob-page (not-found)))
-    (unless (repo-visible-p repo) (return-from blob-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from blob-page repo))
     (let* ((disk-path (repo-disk-path owner repo-name))
            (path (or (hunchentoot:get-parameter "path") ""))
            (file-size (git-blob-size disk-path ref path))
@@ -424,9 +442,8 @@
 
 ;; Raw file content
 (easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from raw-page (not-found)))
-    (unless (repo-visible-p repo) (return-from raw-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from raw-page repo))
     (let* ((disk-path (repo-disk-path owner repo-name))
            (path (or (hunchentoot:get-parameter "path") ""))
            (content (git-blob disk-path ref path)))
@@ -466,8 +483,8 @@
 ;; Routes: Issues
 
 (easy-routes:defroute issues-page ("/:owner/:repo-name/issues" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from issues-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from issues-page repo))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (issues (list-issues (getf repo :id) :status status)))
       (html-response
@@ -476,15 +493,15 @@
 (easy-routes:defroute new-issue-page
     ("/:owner/:repo-name/issues/new" :method :get) ()
   (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from new-issue-page (not-found)))
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from new-issue-page repo))
       (html-response (view-new-issue :owner-name owner :repo repo)))))
 
 (easy-routes:defroute create-issue-submit
     ("/:owner/:repo-name/issues/new" :method :post) ()
   (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from create-issue-submit (not-found)))
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from create-issue-submit repo))
       (let ((issue (create-issue :repo-id (getf repo :id)
                                  :author-id *current-user-id*
                                  :title (hunchentoot:post-parameter "title")
@@ -498,8 +515,8 @@
 
 (easy-routes:defroute issue-page
     ("/:owner/:repo-name/issues/:number" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from issue-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from issue-page repo))
     (let* ((num (parse-integer number :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from issue-page (not-found)))
@@ -543,8 +560,8 @@
 
 (easy-routes:defroute changesets-page
     ("/:owner/:repo-name/changesets" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from changesets-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from changesets-page repo))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (changesets (list-changesets (getf repo :id) :status status)))
       (html-response
@@ -553,8 +570,8 @@
 
 (easy-routes:defroute changeset-page
     ("/:owner/:repo-name/changesets/:number" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from changeset-page (not-found)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from changeset-page repo))
     (let* ((num (parse-integer number :junk-allowed t))
            (changeset (when num (find-changeset (getf repo :id) num))))
       (unless changeset (return-from changeset-page (not-found)))
@@ -593,9 +610,10 @@
 (easy-routes:defroute submit-review
     ("/:owner/:repo-name/changesets/:number/review" :method :post) ()
   (when (require-login)
-    (let* ((repo (find-repo owner repo-name))
+    (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
            (changeset (when (and repo num) (find-changeset (getf repo :id) num))))
+      (unless repo (return-from submit-review repo))
       (unless changeset (return-from submit-review (not-found)))
       (let* ((state (hunchentoot:post-parameter "state"))
              (body (hunchentoot:post-parameter "body"))
@@ -626,7 +644,7 @@
     (let* ((cid (parse-integer concern-id :junk-allowed t))
            (concern (when cid (find-concern-by-id cid))))
       (when concern
-        (let* ((repo (find-repo owner repo-name))
+        (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
                (role (when repo (repo-member-role (getf repo :id) *current-user-id*))))
           (when (or (= (getf concern :author-id) *current-user-id*)
                     (equal role "admin"))
@@ -640,9 +658,10 @@
 (easy-routes:defroute merge-changeset-submit
     ("/:owner/:repo-name/changesets/:number/merge" :method :post) ()
   (when (require-login)
-    (let* ((repo (find-repo owner repo-name))
+    (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
            (changeset (when (and repo num) (find-changeset (getf repo :id) num))))
+      (unless repo (return-from merge-changeset-submit repo))
       (unless changeset (return-from merge-changeset-submit (not-found)))
       (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
         (setf (hunchentoot:return-code*) 403)
@@ -665,8 +684,9 @@
 
 (easy-routes:defroute api-list-issues
     ("/api/v1/repos/:owner/:repo-name/issues" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from api-list-issues (json-error "not found" :status 404)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-list-issues repo))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (issues (list-issues (getf repo :id) :status status)))
       (json-response issues))))
@@ -675,8 +695,9 @@
     ("/api/v1/repos/:owner/:repo-name/issues" :method :post) ()
   (unless *current-user-id*
     (return-from api-create-issue (json-error "unauthorized" :status 401)))
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from api-create-issue (json-error "not found" :status 404)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-create-issue repo))
     (let* ((body-text (hunchentoot:raw-post-data :force-text t))
            (json (com.inuoe.jzon:parse body-text))
            (title (gethash "title" json))
@@ -691,8 +712,9 @@
 
 (easy-routes:defroute api-get-issue
     ("/api/v1/repos/:owner/:repo-name/issues/:id" :method :get) ()
-  (let ((repo (find-repo owner repo-name)))
-    (unless repo (return-from api-get-issue (json-error "not found" :status 404)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-get-issue repo))
     (let* ((num (parse-integer id :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from api-get-issue (json-error "not found" :status 404)))

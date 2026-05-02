@@ -213,11 +213,4 @@
           (setf *current-user-id* user-id)
           (setf *current-user* (find-user-by-id user-id))
           (return-from authenticate-request *current-user*)))))
-  ;; Try query param token (for HTTP clone)
-  (let ((token (hunchentoot:get-parameter "token")))
-    (when-let ((user-id (validate-api-token token)))
-      (setf *current-user-id* user-id)
-      (setf *current-user* (find-user-by-id user-id))
-      (return-from authenticate-request *current-user*)))
   nil)
-
