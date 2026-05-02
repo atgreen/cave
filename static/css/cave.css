@@ -600,7 +600,6 @@ code {
 }
 .diff-file-header a { color: var(--link); }
 .diff-table { width: 100%; border-collapse: collapse; }
-.diff-table { table-layout: fixed; }
 .diff-table td {
   padding: 0 var(--sp-3);
   font-family: var(--font-mono);
@@ -608,7 +607,6 @@ code {
   line-height: 1.5;
   white-space: pre;
   vertical-align: top;
-  overflow: hidden;
 }
 .diff-file { overflow-x: auto; }
 .diff-table .diff-line-add { background: var(--green-bg); color: var(--text); }
