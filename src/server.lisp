@@ -667,10 +667,10 @@
   (merge-pathnames (format nil "~A/~A.git/" owner repo-name) (repos-dir)))
 
 (defun init-bare-repo (owner repo-name)
-  "Initialize a bare git repository on disk."
+  "Initialize a bare git repository on disk with HEAD pointing to main."
   (let ((path (repo-disk-path owner repo-name)))
     (ensure-directories-exist path)
-    (uiop:run-program (list "git" "init" "--bare" (namestring path))
+    (uiop:run-program (list "git" "init" "--bare" "-b" "main" (namestring path))
                        :output :string :error-output :string)
     (llog:info "Initialized bare repo" :path path)
     path))
