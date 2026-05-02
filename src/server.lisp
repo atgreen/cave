@@ -608,13 +608,40 @@
              (target (getf pr :target-branch))
              (diff-raw (git-diff disk-path target source))
              (diff-files (parse-diff diff-raw))
-             (diff-stat (git-diff-stat disk-path target source)))
+             (diff-stat (git-diff-stat disk-path target source))
+             ;; Inline diff comments
+             (raw-comments (list-diff-comments (getf pr :id)))
+             (diff-comments (group-diff-comments raw-comments)))
         (html-response
          (view-pull-request :owner-name owner :repo repo :pr pr
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
                          :stack stack :stack-items stack-items
-                         :diff-files diff-files :diff-stat diff-stat))))))
+                         :diff-files diff-files :diff-stat diff-stat
+                         :diff-comments diff-comments))))))
+
+;; Inline diff comment
+(easy-routes:defroute diff-comment-submit
+    ("/:owner/:repo-name/pulls/:number/diff-comment" :method :post) ()
+  (when (require-login)
+    (let* ((repo (find-repo owner repo-name))
+           (num (parse-integer number :junk-allowed t))
+           (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from diff-comment-submit (not-found)))
+      (let ((file-path (hunchentoot:post-parameter "file_path"))
+            (line-number (parse-integer (or (hunchentoot:post-parameter "line_number") "0")
+                                        :junk-allowed t))
+            (side (or (hunchentoot:post-parameter "side") "new"))
+            (body (hunchentoot:post-parameter "body")))
+        (when (and file-path line-number body (not (uiop:emptyp body)))
+          (create-diff-comment :changeset-id (getf pr :id)
+                               :author-id *current-user-id*
+                               :file-path file-path
+                               :line-number line-number
+                               :side side
+                               :body body)))
+      (hunchentoot:redirect
+       (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
 
 (easy-routes:defroute submit-review
     ("/:owner/:repo-name/pulls/:number/review" :method :post) ()

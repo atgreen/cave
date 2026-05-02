@@ -88,27 +88,41 @@
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
+(defun parse-hunk-header (line)
+  "Parse @@ -old-start,old-count +new-start,new-count @@ from a hunk header.
+   Returns (VALUES old-start new-start)."
+  (let ((at-pos (position #\@ line :start 2)))
+    (when at-pos
+      (let* ((range (string-trim '(#\Space #\@) (subseq line 2 (+ at-pos 1))))
+             (parts (uiop:split-string range :separator '(#\Space)))
+             (old-part (first parts))
+             (new-part (second parts)))
+        (values
+         (when old-part
+           (parse-integer (subseq old-part 1) :junk-allowed t))
+         (when new-part
+           (parse-integer (subseq new-part 1) :junk-allowed t)))))))
+
 (defun parse-diff (diff-text)
   "Parse unified diff text into a list of file diffs.
    Each file is a plist: (:filename :old-filename :lines).
-   Each line in :lines is a plist: (:type :content) where type is
-   :hunk, :add, :del, :context, or :meta."
+   Each line in :lines is a plist with :type, :content, :old-line, :new-line."
   (when (and diff-text (not (uiop:emptyp diff-text)))
     (let ((files nil)
           (current-file nil)
-          (current-lines nil))
+          (current-lines nil)
+          (old-line 0)
+          (new-line 0))
       (dolist (line (uiop:split-string diff-text :separator '(#\Newline)))
         (cond
           ;; New file header
           ((and (>= (length line) 6) (string= "diff --" (subseq line 0 7)))
-           ;; Save previous file
            (when current-file
              (push (list :filename (getf current-file :filename)
                          :old-filename (getf current-file :old-filename)
                          :lines (nreverse current-lines))
                    files))
-           (setf current-lines nil)
-           ;; Parse filenames from "diff --git a/foo b/bar"
+           (setf current-lines nil old-line 0 new-line 0)
            (let* ((parts (uiop:split-string line :separator '(#\Space)))
                   (b-file (car (last parts)))
                   (filename (if (and (>= (length b-file) 2)
@@ -119,20 +133,29 @@
              (setf current-file (list :filename filename :old-filename nil))))
           ;; Hunk header
           ((and (>= (length line) 3) (string= "@@" (subseq line 0 2)))
-           (push (list :type :hunk :content line) current-lines))
+           (multiple-value-bind (os ns) (parse-hunk-header line)
+             (setf old-line (or os 1) new-line (or ns 1)))
+           (push (list :type :hunk :content line
+                       :old-line nil :new-line nil)
+                 current-lines))
           ;; Added line
           ((and (> (length line) 0) (char= (char line 0) #\+)
                 (not (and (>= (length line) 3) (string= "+++" (subseq line 0 3)))))
-           (push (list :type :add :content (subseq line 1)) current-lines))
+           (push (list :type :add :content (subseq line 1)
+                       :old-line nil :new-line new-line)
+                 current-lines)
+           (incf new-line))
           ;; Deleted line
           ((and (> (length line) 0) (char= (char line 0) #\-)
                 (not (and (>= (length line) 3) (string= "---" (subseq line 0 3)))))
-           (push (list :type :del :content (subseq line 1)) current-lines))
-          ;; Meta lines (---, +++, index, etc.)
+           (push (list :type :del :content (subseq line 1)
+                       :old-line old-line :new-line nil)
+                 current-lines)
+           (incf old-line))
+          ;; Meta lines
           ((or (and (>= (length line) 3) (string= "---" (subseq line 0 3)))
                (and (>= (length line) 3) (string= "+++" (subseq line 0 3)))
                (and (>= (length line) 5) (string= "index" (subseq line 0 5))))
-           ;; skip meta
            nil)
           ;; Context line
           (t
@@ -141,9 +164,11 @@
                          :content (if (and (> (length line) 0)
                                            (char= (char line 0) #\Space))
                                       (subseq line 1)
-                                      line))
-                   current-lines)))))
-      ;; Save last file
+                                      line)
+                         :old-line old-line :new-line new-line)
+                   current-lines)
+             (incf old-line)
+             (incf new-line)))))
       (when current-file
         (push (list :filename (getf current-file :filename)
                     :old-filename (getf current-file :old-filename)

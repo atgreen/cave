@@ -340,7 +340,21 @@ CREATE TABLE cave_issue_comments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_issue_comments_issue ON cave_issue_comments (issue_id);"))
+CREATE INDEX idx_issue_comments_issue ON cave_issue_comments (issue_id);")
+
+    (23 . "-- Inline diff comments on pull requests
+CREATE TABLE cave_diff_comments (
+  id BIGSERIAL PRIMARY KEY,
+  changeset_id BIGINT NOT NULL REFERENCES cave_changesets(id) ON DELETE CASCADE,
+  author_id BIGINT NOT NULL REFERENCES cave_users(id),
+  file_path VARCHAR(1024) NOT NULL,
+  line_number INTEGER NOT NULL,
+  side VARCHAR(3) NOT NULL DEFAULT 'new' CHECK (side IN ('old', 'new')),
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_diff_comments_changeset ON cave_diff_comments (changeset_id);
+CREATE INDEX idx_diff_comments_file ON cave_diff_comments (changeset_id, file_path);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

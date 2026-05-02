@@ -515,39 +515,112 @@ require(['vs/editor/editor.main'], function() {
                      (t "open"))))))
           (:p.empty "No pull requests found.")))))
 
-(defun render-diff (diff-files owner-name repo-name ref)
-  "Render parsed diff files as HTML."
+(defun render-inline-comments (comments)
+  "Render inline diff comments in a comment row."
+  (spinneret:with-html
+    (dolist (c comments)
+      (:div.diff-inline-comment
+       (:span.diff-inline-comment-author (getf c :username))
+       (:span.diff-inline-comment-date (princ-to-string (getf c :created-at)))
+       (:div.diff-inline-comment-body (getf c :body))))))
+
+(defun render-diff (diff-files owner-name repo-name ref
+                    &key diff-comments comment-action can-comment)
+  "Render parsed diff files as HTML with inline comments."
   (spinneret:with-html
     (dolist (file diff-files)
-      (:div.diff-file
-       (:div.diff-file-header
-        (:a :href (format nil "/~A/~A/blob/~A?path=~A"
-                          owner-name repo-name ref (getf file :filename))
-         (getf file :filename)))
-       (:table.diff-table
-        (:tbody
-         (dolist (line (getf file :lines))
-           (let ((type (getf line :type))
-                 (content (getf line :content)))
-             (case type
-               (:hunk
-                (:tr.diff-line-hunk
-                 (:td :colspan "2" content)))
-               (:add
-                (:tr.diff-line-add
-                 (:td.diff-gutter "+")
-                 (:td content)))
-               (:del
-                (:tr.diff-line-del
-                 (:td.diff-gutter "-")
-                 (:td content)))
-               (:context
-                (:tr.diff-line-context
-                 (:td.diff-gutter " ")
-                 (:td content))))))))))))
+      (let ((filename (getf file :filename)))
+        (:div.diff-file
+         (:div.diff-file-header
+          (:a :href (format nil "/~A/~A/blob/~A?path=~A"
+                            owner-name repo-name ref filename)
+           filename))
+         (:table.diff-table
+          (:tbody
+           (dolist (line (getf file :lines))
+             (let* ((type (getf line :type))
+                    (content (getf line :content))
+                    (old-ln (getf line :old-line))
+                    (new-ln (getf line :new-line))
+                    (side (if new-ln "new" "old"))
+                    (ln (or new-ln old-ln))
+                    (comment-key (when ln (format nil "~A:~A:~A" filename ln side)))
+                    (line-comments (when (and comment-key diff-comments)
+                                    (gethash comment-key diff-comments))))
+               (case type
+                 (:hunk
+                  (:tr.diff-line-hunk
+                   (:td :colspan "5" content)))
+                 (:add
+                  (:tr.diff-line-add
+                   :data-file filename :data-line new-ln :data-side "new"
+                   (:td.diff-line-num "")
+                   (:td.diff-line-num (princ-to-string new-ln))
+                   (:td.diff-add-btn
+                    :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
+                   (:td.diff-gutter "+")
+                   (:td content)))
+                 (:del
+                  (:tr.diff-line-del
+                   :data-file filename :data-line old-ln :data-side "old"
+                   (:td.diff-line-num (princ-to-string old-ln))
+                   (:td.diff-line-num "")
+                   (:td.diff-add-btn
+                    :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
+                   (:td.diff-gutter "-")
+                   (:td content)))
+                 (:context
+                  (:tr.diff-line-context
+                   :data-file filename :data-line (or new-ln "") :data-side "new"
+                   (:td.diff-line-num (if old-ln (princ-to-string old-ln) ""))
+                   (:td.diff-line-num (if new-ln (princ-to-string new-ln) ""))
+                   (:td.diff-add-btn
+                    :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
+                   (:td.diff-gutter " ")
+                   (:td content))))
+               ;; Render existing comments below this line
+               (when line-comments
+                 (:tr.diff-comment-row
+                  (:td :colspan "5"
+                   (render-inline-comments line-comments))))
+               ;; Hidden comment form
+               (when (and can-comment ln)
+                 (:tr.diff-comment-form :id (format nil "cf-~A-~A-~A" filename ln side)
+                  (:td :colspan "5"
+                   (:form :method "post" :action comment-action
+                    (:input :type "hidden" :name "file_path" :value filename)
+                    (:input :type "hidden" :name "line_number"
+                     :value (princ-to-string ln))
+                    (:input :type "hidden" :name "side" :value side)
+                    (:textarea :name "body" :rows "3" :required t
+                     :placeholder "Write a comment...")
+                    (:div :style "display:flex;gap:var(--sp-2);margin-top:var(--sp-2)"
+                     (:button.btn.btn-primary.btn-sm :type "submit" "Comment")
+                     (:button.btn.btn-sm :type "button"
+                      :onclick "this.closest('tr').classList.remove('active')"
+                      "Cancel"))))))))))))))
+    ;; Inline JS for toggling comment forms
+    (when can-comment
+      (:script (:raw "
+function caveToggleCommentForm(btn) {
+  var row = btn.closest('tr');
+  var file = row.dataset.file;
+  var line = row.dataset.line;
+  var side = row.dataset.side;
+  var formId = 'cf-' + file + '-' + line + '-' + side;
+  var form = document.getElementById(formId);
+  if (form) {
+    form.classList.toggle('active');
+    if (form.classList.contains('active')) {
+      form.querySelector('textarea').focus();
+    }
+  }
+}
+"))))
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
-                             can-merge stack stack-items diff-files diff-stat)
+                             can-merge stack stack-items diff-files diff-stat
+                             diff-comments)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -593,7 +666,11 @@ require(['vs/editor/editor.main'], function() {
          (when diff-stat
            (:pre.diff-stat diff-stat))
          (render-diff diff-files org-name repo-name
-                      (getf pr :source-branch))))
+                      (getf pr :source-branch)
+                      :diff-comments diff-comments
+                      :can-comment (when *current-user* t)
+                      :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
+                                              org-name repo-name cs-num))))
 
       ;; Merge eligibility
       (when (and eligibility

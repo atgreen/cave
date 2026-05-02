@@ -451,6 +451,47 @@
     'cave-issue-comments.created-at)
    :plists))
 
+;;; ========================== DIFF COMMENTS ==========================
+
+(defun create-diff-comment (&key changeset-id author-id file-path line-number side body)
+  "Create an inline diff comment. Returns the comment plist."
+  (postmodern:query
+   (:insert-into 'cave-diff-comments
+    :set 'changeset-id changeset-id
+         'author-id author-id
+         'file-path file-path
+         'line-number line-number
+         'side (or side "new")
+         'body body
+    :returning '*)
+   :plist))
+
+(defun list-diff-comments (changeset-id)
+  "List all inline diff comments for a PR, with author usernames."
+  (postmodern:query
+   (:order-by
+    (:select 'cave-diff-comments.* 'cave-users.username
+     :from 'cave-diff-comments
+     :inner-join 'cave-users :on (:= 'cave-diff-comments.author-id 'cave-users.id)
+     :where (:= 'cave-diff-comments.changeset-id changeset-id))
+    'cave-diff-comments.file-path
+    'cave-diff-comments.line-number
+    'cave-diff-comments.created-at)
+   :plists))
+
+(defun group-diff-comments (comments)
+  "Group diff comments into a hash table keyed by \"file:line:side\"."
+  (let ((table (make-hash-table :test 'equal)))
+    (dolist (c comments)
+      (let ((key (format nil "~A:~A:~A"
+                         (getf c :file-path)
+                         (getf c :line-number)
+                         (getf c :side))))
+        (push c (gethash key table))))
+    ;; Reverse each list so comments are in chronological order
+    (maphash (lambda (k v) (setf (gethash k table) (nreverse v))) table)
+    table))
+
 ;;; ========================== PULL REQUESTS ==========================
 
 (defun create-pull-request (&key repo-id author-id source-branch target-branch head-commit
