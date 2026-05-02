@@ -7,7 +7,8 @@ QUADLET_DIR = $(HOME)/.config/containers/systemd
 .PHONY: help build load lint clean test test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
-       tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status
+       tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
+       prod-backup prod-restore
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -166,6 +167,13 @@ prod-stop: ## Stop production Cave
 
 prod-logs: ## Tail production Cave logs
 	journalctl --user -u cave -f
+
+prod-backup: ## Back up production data (Postgres + repos + config)
+	$(CURDIR)/deploy/backup.sh $(HOME)/cave-backups cave-prod
+
+prod-restore: ## Restore from backup (usage: make prod-restore F=path/to/archive.tar.gz)
+	@if [ -z "$(F)" ]; then echo "Usage: make prod-restore F=~/cave-backups/cave-2026-05-02-120000.tar.gz"; exit 1; fi
+	$(CURDIR)/deploy/restore.sh $(F) cave-prod
 
 prod-status: ## Show production service status
 	@systemctl --user is-active cave-pg cave-keycloak cave cave-mailpit 2>/dev/null || true
