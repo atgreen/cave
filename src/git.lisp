@@ -88,6 +88,69 @@
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
+(defun parse-diff (diff-text)
+  "Parse unified diff text into a list of file diffs.
+   Each file is a plist: (:filename :old-filename :lines).
+   Each line in :lines is a plist: (:type :content) where type is
+   :hunk, :add, :del, :context, or :meta."
+  (when (and diff-text (not (uiop:emptyp diff-text)))
+    (let ((files nil)
+          (current-file nil)
+          (current-lines nil))
+      (dolist (line (uiop:split-string diff-text :separator '(#\Newline)))
+        (cond
+          ;; New file header
+          ((and (>= (length line) 6) (string= "diff --" (subseq line 0 7)))
+           ;; Save previous file
+           (when current-file
+             (push (list :filename (getf current-file :filename)
+                         :old-filename (getf current-file :old-filename)
+                         :lines (nreverse current-lines))
+                   files))
+           (setf current-lines nil)
+           ;; Parse filenames from "diff --git a/foo b/bar"
+           (let* ((parts (uiop:split-string line :separator '(#\Space)))
+                  (b-file (car (last parts)))
+                  (filename (if (and (>= (length b-file) 2)
+                                     (char= (char b-file 0) #\b)
+                                     (char= (char b-file 1) #\/))
+                                (subseq b-file 2)
+                                b-file)))
+             (setf current-file (list :filename filename :old-filename nil))))
+          ;; Hunk header
+          ((and (>= (length line) 3) (string= "@@" (subseq line 0 2)))
+           (push (list :type :hunk :content line) current-lines))
+          ;; Added line
+          ((and (> (length line) 0) (char= (char line 0) #\+)
+                (not (and (>= (length line) 3) (string= "+++" (subseq line 0 3)))))
+           (push (list :type :add :content (subseq line 1)) current-lines))
+          ;; Deleted line
+          ((and (> (length line) 0) (char= (char line 0) #\-)
+                (not (and (>= (length line) 3) (string= "---" (subseq line 0 3)))))
+           (push (list :type :del :content (subseq line 1)) current-lines))
+          ;; Meta lines (---, +++, index, etc.)
+          ((or (and (>= (length line) 3) (string= "---" (subseq line 0 3)))
+               (and (>= (length line) 3) (string= "+++" (subseq line 0 3)))
+               (and (>= (length line) 5) (string= "index" (subseq line 0 5))))
+           ;; skip meta
+           nil)
+          ;; Context line
+          (t
+           (when current-file
+             (push (list :type :context
+                         :content (if (and (> (length line) 0)
+                                           (char= (char line 0) #\Space))
+                                      (subseq line 1)
+                                      line))
+                   current-lines)))))
+      ;; Save last file
+      (when current-file
+        (push (list :filename (getf current-file :filename)
+                    :old-filename (getf current-file :old-filename)
+                    :lines (nreverse current-lines))
+              files))
+      (nreverse files))))
+
 (defun git-commit-count (repo-path &key (branch nil))
   "Count commits on a branch (or all if nil)."
   (let ((args (if branch

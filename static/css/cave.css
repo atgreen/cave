@@ -484,13 +484,59 @@ code {
 .readme-content th { background: var(--bg); }
 .readme-content hr { border: none; border-top: 1px solid var(--border); margin: var(--sp-6) 0; }
 
-/* --- Diff (future) --- */
-.diff-add { background: var(--green-bg); color: var(--green-bright); }
-.diff-del { background: var(--red-bg); color: var(--red); }
-.diff-hunk {
-  color: var(--blue);
+/* --- Diff --- */
+.diff-file {
+  margin-bottom: var(--sp-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.diff-file-header {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   font-family: var(--font-mono);
   font-size: .8rem;
-  padding: var(--sp-1) var(--sp-3);
-  background: var(--blue-bg);
+  color: var(--text-secondary);
 }
+.diff-file-header a { color: var(--link); }
+.diff-table { width: 100%; border-collapse: collapse; }
+.diff-table td {
+  padding: 0 var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  vertical-align: top;
+}
+.diff-table .diff-line-add { background: var(--green-bg); color: var(--text); }
+.diff-table .diff-line-del { background: var(--red-bg); color: var(--text); }
+.diff-table .diff-line-hunk {
+  background: var(--blue-bg);
+  color: var(--blue);
+  padding: var(--sp-1) var(--sp-3);
+}
+.diff-table .diff-line-context { background: transparent; }
+.diff-gutter {
+  width: 1em;
+  text-align: center;
+  color: var(--text-muted);
+  user-select: none;
+  padding: 0 var(--sp-1) !important;
+}
+.diff-line-add .diff-gutter { color: var(--green); }
+.diff-line-del .diff-gutter { color: var(--red); }
+.diff-stat {
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  margin-bottom: var(--sp-4);
+  white-space: pre-wrap;
+}
+.diff-stat-bar { display: inline-block; height: 10px; border-radius: 2px; }
+.diff-stat-add { background: var(--green); }
+.diff-stat-del { background: var(--red); }

@@ -509,8 +509,39 @@ require(['vs/editor/editor.main'], function() {
                      (t "open"))))))
           (:p.empty "No changesets found.")))))
 
+(defun render-diff (diff-files owner-name repo-name ref)
+  "Render parsed diff files as HTML."
+  (spinneret:with-html
+    (dolist (file diff-files)
+      (:div.diff-file
+       (:div.diff-file-header
+        (:a :href (format nil "/~A/~A/blob/~A?path=~A"
+                          owner-name repo-name ref (getf file :filename))
+         (getf file :filename)))
+       (:table.diff-table
+        (:tbody
+         (dolist (line (getf file :lines))
+           (let ((type (getf line :type))
+                 (content (getf line :content)))
+             (case type
+               (:hunk
+                (:tr.diff-line-hunk
+                 (:td :colspan "2" content)))
+               (:add
+                (:tr.diff-line-add
+                 (:td.diff-gutter "+")
+                 (:td content)))
+               (:del
+                (:tr.diff-line-del
+                 (:td.diff-gutter "-")
+                 (:td content)))
+               (:context
+                (:tr.diff-line-context
+                 (:td.diff-gutter " ")
+                 (:td content))))))))))))
+
 (defun view-changeset (&key owner-name repo changeset author reviews eligibility
-                             can-merge stack stack-items)
+                             can-merge stack stack-items diff-files diff-stat)
   "Render a changeset detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -552,6 +583,15 @@ require(['vs/editor/editor.main'], function() {
               (cond ((getf item :is-merged) "merged")
                     ((getf item :is-closed) "closed")
                     (t "open"))))))))
+
+      ;; Diff
+      (when diff-files
+        (:section
+         (:h2 (format nil "Changes (~A file~:P)" (length diff-files)))
+         (when diff-stat
+           (:pre.diff-stat diff-stat))
+         (render-diff diff-files org-name repo-name
+                      (getf changeset :source-branch))))
 
       ;; Merge eligibility
       (when (and eligibility

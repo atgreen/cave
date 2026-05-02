@@ -544,12 +544,20 @@
                              (equal (repo-member-role (getf repo :id) *current-user-id*)
                                     "admin")))
              (stack (find-stack-by-id (getf changeset :stack-id)))
-             (stack-items (when stack (list-stack-changesets (getf stack :id)))))
+             (stack-items (when stack (list-stack-changesets (getf stack :id))))
+             ;; Diff
+             (disk-path (repo-disk-path owner repo-name))
+             (source (getf changeset :source-branch))
+             (target (getf changeset :target-branch))
+             (diff-raw (git-diff disk-path target source))
+             (diff-files (parse-diff diff-raw))
+             (diff-stat (git-diff-stat disk-path target source)))
         (html-response
          (view-changeset :owner-name owner :repo repo :changeset changeset
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
-                         :stack stack :stack-items stack-items))))))
+                         :stack stack :stack-items stack-items
+                         :diff-files diff-files :diff-stat diff-stat))))))
 
 (easy-routes:defroute submit-review
     ("/:owner/:repo-name/changesets/:number/review" :method :post) ()
