@@ -189,6 +189,17 @@
         (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
        (:button.btn.btn-primary :type "submit" "Create repository")))))
 
+(defun render-repo-tabs (owner-name repo-name &optional active-tab)
+  "Render the repo navigation tab bar. ACTIVE-TAB is :code, :issues, or :changesets."
+  (spinneret:with-html
+    (:nav.repo-tabs
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :code))
+      :href (format nil "/~A/~A" owner-name repo-name) "Code")
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :issues))
+      :href (format nil "/~A/~A/issues" owner-name repo-name) "Issues")
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :changesets))
+      :href (format nil "/~A/~A/changesets" owner-name repo-name) "Changesets"))))
+
 (defun render-file-tree (file-tree owner-name repo-name default-branch &optional current-path)
   "Render a file tree table. Shared by view-repo and view-tree."
   (spinneret:with-html
@@ -234,9 +245,7 @@
       (when (getf repo :is-private) (:span.badge "private"))
       (when (getf repo :description) (:p (getf repo :description)))
 
-      (:div.repo-actions
-       (:a.btn :href (format nil "/~A/~A/issues" org-name repo-name) "Issues")
-       (:a.btn :href (format nil "/~A/~A/changesets" org-name repo-name) "Changesets"))
+      (render-repo-tabs org-name repo-name :code)
 
       (if empty
           (:section
@@ -277,29 +286,7 @@
                    (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash))
                    (:span (getf c :subject))
                    (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
-                    (getf c :author)))))))))
-
-      (when changesets
-        (:section
-         (:h2 "Open changesets")
-         (:ul.issue-list
-          (dolist (cs changesets)
-            (:li
-             (:a :href (format nil "/~A/~A/changesets/~A" org-name repo-name
-                                (getf cs :number))
-              (:span.issue-number (format nil "#~A" (getf cs :number)))
-              (format nil " ~A → ~A" (getf cs :source-branch) (getf cs :target-branch))))))))
-
-      (when issues
-        (:section
-         (:h2 "Open issues")
-         (:ul.issue-list
-          (dolist (iss issues)
-            (:li
-             (:a :href (format nil "/~A/~A/issues/~A" org-name repo-name
-                                (getf iss :number))
-              (:span.issue-number (format nil "#~A" (getf iss :number)))
-              (format nil " ~A" (getf iss :title)))))))))))
+                    (getf c :author))))))))))))
 
 ;;; ========================== TREE & BLOB PAGES ==========================
 
@@ -307,6 +294,7 @@
   "Render a directory listing at a path."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :code)
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
@@ -335,6 +323,7 @@
         (filename (let ((slash (position #\/ path :from-end t)))
                     (if slash (subseq path (1+ slash)) path))))
     (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :code)
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
@@ -414,10 +403,7 @@ require(['vs/editor/editor.main'], function() {
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Issues — ~A/~A" org-name repo-name))
-      (render-breadcrumbs
-       (list (list (format nil "/~A" org-name) org-name)
-             (list (format nil "/~A/~A" org-name repo-name) repo-name)
-             "Issues"))
+      (render-repo-tabs org-name repo-name :issues)
       (:div.issues-header
        (:div.issue-filters
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "open"))
@@ -443,11 +429,7 @@ require(['vs/editor/editor.main'], function() {
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title "New issue — Cave")
-      (render-breadcrumbs
-       (list (list (format nil "/~A" org-name) org-name)
-             (list (format nil "/~A/~A" org-name repo-name) repo-name)
-             (list (format nil "/~A/~A/issues" org-name repo-name) "Issues")
-             "New"))
+      (render-repo-tabs org-name repo-name :issues)
       (:h1 "New issue")
       (:form :method "post" :action (format nil "/~A/~A/issues/new" org-name repo-name)
        (:div.field
@@ -464,11 +446,7 @@ require(['vs/editor/editor.main'], function() {
         (repo-name (getf repo :name))
         (issue-num (getf issue :number)))
     (page (:title (format nil "#~A ~A — Cave" issue-num (getf issue :title)))
-      (render-breadcrumbs
-       (list (list (format nil "/~A" org-name) org-name)
-             (list (format nil "/~A/~A" org-name repo-name) repo-name)
-             (list (format nil "/~A/~A/issues" org-name repo-name) "Issues")
-             (format nil "#~A" issue-num)))
+      (render-repo-tabs org-name repo-name :issues)
       (:div.issue-header
        (:h1 (format nil "#~A ~A" issue-num (getf issue :title)))
        (:span.badge (getf issue :status)))
@@ -514,10 +492,7 @@ require(['vs/editor/editor.main'], function() {
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Changesets — ~A/~A" org-name repo-name))
-      (render-breadcrumbs
-       (list (list (format nil "/~A" org-name) org-name)
-             (list (format nil "/~A/~A" org-name repo-name) repo-name)
-             "Changesets"))
+      (render-repo-tabs org-name repo-name :changesets)
       (:div.issues-header
        (:div.issue-filters
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "open"))
@@ -578,11 +553,7 @@ require(['vs/editor/editor.main'], function() {
         (repo-name (getf repo :name))
         (cs-num (getf changeset :number)))
     (page (:title (format nil "#~A ~A — Cave" cs-num (getf changeset :source-branch)))
-      (render-breadcrumbs
-       (list (list (format nil "/~A" org-name) org-name)
-             (list (format nil "/~A/~A" org-name repo-name) repo-name)
-             (list (format nil "/~A/~A/changesets" org-name repo-name) "Changesets")
-             (format nil "#~A" cs-num)))
+      (render-repo-tabs org-name repo-name :changesets)
 
       (:div.issue-header
        (:h1 (format nil "#~A ~A" cs-num (getf changeset :source-branch)))

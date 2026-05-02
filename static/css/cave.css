@@ -281,6 +281,28 @@ section { margin-bottom: var(--sp-8); }
   word-break: break-all;
 }
 
+/* --- Repo tabs --- */
+.repo-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-6);
+}
+.repo-tab {
+  padding: var(--sp-2) var(--sp-4);
+  font-family: var(--font-mono);
+  font-size: .85rem;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.repo-tab:hover { color: var(--text); }
+.repo-tab-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
 /* --- Repo actions --- */
 .repo-actions { margin-bottom: var(--sp-6); display: flex; gap: var(--sp-2); }
 
