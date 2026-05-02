@@ -534,6 +534,29 @@ code {
 .readme-content th { background: var(--bg); }
 .readme-content hr { border: none; border-top: 1px solid var(--border); margin: var(--sp-6) 0; }
 
+/* --- Commit page --- */
+.commit-header { margin-bottom: var(--sp-3); }
+.commit-subject { font-size: 1.2rem; margin-bottom: var(--sp-2); }
+.commit-body {
+  background: var(--surface);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .85rem;
+  color: var(--text-secondary);
+  margin-top: var(--sp-2);
+  white-space: pre-wrap;
+}
+.commit-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--sp-4);
+}
+
 /* --- Comments --- */
 .comment {
   padding: var(--sp-3) var(--sp-4);

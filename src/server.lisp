@@ -462,6 +462,20 @@
       (setf (hunchentoot:content-type*) "text/plain; charset=utf-8")
       content)))
 
+;; Commit detail page
+(easy-routes:defroute commit-page ("/:owner/:repo-name/commit/:hash" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from commit-page repo))
+    (let* ((disk-path (repo-disk-path owner repo-name))
+           (commit (git-show-commit disk-path hash)))
+      (unless commit (return-from commit-page (not-found)))
+      (let* ((diff-raw (git-commit-diff disk-path hash))
+             (diff-files (parse-diff diff-raw))
+             (diff-stat (git-commit-stat disk-path hash)))
+        (html-response
+         (view-commit :owner-name owner :repo repo :commit commit
+                      :diff-files diff-files :diff-stat diff-stat))))))
+
 (easy-routes:defroute new-org-repo-page ("/o/:org-name/-/new-repo" :method :get) ()
   (when (require-login)
     (let ((org (find-org-by-name org-name)))

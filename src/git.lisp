@@ -83,6 +83,38 @@
       (remove-if #'uiop:emptyp
                  (uiop:split-string output :separator '(#\Newline))))))
 
+(defun git-show-commit (repo-path hash)
+  "Get a single commit's metadata. Returns plist or NIL."
+  (let ((format-str "%H%n%h%n%an%n%ae%n%ai%n%s%n%b"))
+    (multiple-value-bind (output _err exit-code)
+        (git-run repo-path "show" "--no-patch" (format nil "--format=~A" format-str) hash)
+      (declare (ignore _err))
+      (when (zerop exit-code)
+        (let ((lines (uiop:split-string output :separator '(#\Newline))))
+          (when (>= (length lines) 6)
+            (list :hash (pop lines)
+                  :short-hash (pop lines)
+                  :author (pop lines)
+                  :author-email (pop lines)
+                  :date (pop lines)
+                  :subject (pop lines)
+                  :body (string-trim '(#\Newline #\Space)
+                                     (format nil "~{~A~^~%~}" lines)))))))))
+
+(defun git-commit-diff (repo-path hash)
+  "Get the diff for a single commit. Returns raw diff text."
+  (multiple-value-bind (output _err exit-code)
+      (git-run repo-path "diff-tree" "-p" "--root" hash)
+    (declare (ignore _err))
+    (when (zerop exit-code) output)))
+
+(defun git-commit-stat (repo-path hash)
+  "Get the diff stat for a single commit."
+  (multiple-value-bind (output _err exit-code)
+      (git-run repo-path "diff-tree" "--stat" "--root" hash)
+    (declare (ignore _err))
+    (when (zerop exit-code) output)))
+
 (defun git-diff (repo-path base-ref head-ref)
   "Get diff between two refs."
   (multiple-value-bind (output _err exit-code)

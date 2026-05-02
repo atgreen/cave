@@ -270,7 +270,9 @@
             (when recent-commits
               (let ((last (first recent-commits)))
                 (:div.repo-last-commit
-                 (:code.repo-last-hash (getf last :short-hash))
+                 (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name
+                                    (getf last :hash))
+                  (:code.repo-last-hash (getf last :short-hash)))
                  (:span.repo-last-msg (getf last :subject))
                  (:span.repo-last-author (getf last :author)))))
             ;; File tree
@@ -295,7 +297,8 @@
                (:ul.issue-list
                 (dolist (c recent-commits)
                   (:li
-                   (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash))
+                   (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name (getf c :hash))
+                    (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
                    (:span (getf c :subject))
                    (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
                     (getf c :author))))))))))))
@@ -407,6 +410,31 @@ require(['vs/editor/editor.main'], function() {
                   (com.inuoe.jzon:stringify content)
                   (com.inuoe.jzon:stringify content)
                   (com.inuoe.jzon:stringify (or language "plaintext"))))))))))
+
+;;; ========================== COMMIT PAGE ==========================
+
+(defun view-commit (&key owner-name repo commit diff-files diff-stat)
+  "Render a commit detail page with diff."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "~A — ~A/~A" (getf commit :short-hash) owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :code)
+      (render-breadcrumbs
+       (list (list (format nil "/~A" owner-name) owner-name)
+             (list (format nil "/~A/~A" owner-name repo-name) repo-name)
+             (getf commit :short-hash)))
+      (:div.commit-header
+       (:h1.commit-subject (getf commit :subject))
+       (when (and (getf commit :body) (not (uiop:emptyp (getf commit :body))))
+         (:pre.commit-body (getf commit :body))))
+      (:div.commit-meta
+       (:strong (getf commit :author))
+       (:span :style "margin-left:var(--sp-2);color:var(--text-muted)"
+        (getf commit :date))
+       (:code :style "margin-left:auto" (getf commit :hash)))
+      (when diff-stat
+        (:pre.diff-stat diff-stat))
+      (when diff-files
+        (render-diff diff-files owner-name repo-name (getf commit :hash))))))
 
 ;;; ========================== ISSUE PAGES ==========================
 
