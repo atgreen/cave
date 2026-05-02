@@ -324,7 +324,12 @@ ALTER TABLE cave_repos ADD CONSTRAINT repo_has_owner CHECK (
   (org_id IS NULL AND owner_id IS NOT NULL)
 );
 CREATE INDEX idx_repos_owner ON cave_repos (owner_id);
-CREATE UNIQUE INDEX idx_repos_owner_name ON cave_repos (owner_id, name) WHERE owner_id IS NOT NULL;"))
+CREATE UNIQUE INDEX idx_repos_owner_name ON cave_repos (owner_id, name) WHERE owner_id IS NOT NULL;")
+
+    (21 . "-- OIDC: add oidc_sub, make password_hash nullable
+ALTER TABLE cave_users ADD COLUMN oidc_sub VARCHAR(256);
+CREATE UNIQUE INDEX idx_users_oidc_sub ON cave_users (oidc_sub) WHERE oidc_sub IS NOT NULL;
+ALTER TABLE cave_users ALTER COLUMN password_hash DROP NOT NULL;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

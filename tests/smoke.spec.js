@@ -3,10 +3,11 @@ const { test, expect } = require("@playwright/test");
 const { login, screenshot } = require("./helpers");
 
 test.describe("public pages", () => {
-  test("login page renders", async ({ page }) => {
-    await page.goto("/login");
-    await expect(page.locator("h1")).toHaveText("Log in to Cave");
-    await screenshot(page, "login");
+  test("login redirects to Keycloak", async ({ page }) => {
+    await page.goto("/-/auth/login");
+    // Should be on Keycloak login page
+    await expect(page).toHaveURL(/\/realms\/cave\//);
+    await screenshot(page, "keycloak-login");
   });
 });
 

@@ -17,9 +17,7 @@
            #:run-migrations)
 
   ;; Auth
-  (:export #:hash-password
-           #:check-password
-           #:generate-api-token
+  (:export #:generate-api-token
            #:current-user)
 
   ;; Domain

@@ -22,6 +22,8 @@
                 :cl-bcrypt
                 :cl-base64
                 :flexi-streams
+                ;; HTTP client (for OIDC token exchange)
+                :dexador
                 ;; JSON
                 :com.inuoe.jzon
                 ;; HTML generation

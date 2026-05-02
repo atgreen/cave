@@ -63,7 +63,7 @@
   "Redirect to login if not authenticated. Returns T if logged in."
   (unless *current-user*
     (hunchentoot:redirect
-     (format nil "/login?next=~A"
+     (format nil "/-/auth/login?next=~A"
              (hunchentoot:url-encode (hunchentoot:request-uri*))))
     (return-from require-login nil))
   t)
@@ -103,31 +103,74 @@
 ;; ----------------------------------------------------------------------------
 ;; Routes: Auth
 
-(easy-routes:defroute login-page ("/login" :method :get) ()
+;; Backwards compat: /login redirects to OIDC login
+(easy-routes:defroute login-redirect ("/login" :method :get) ()
+  (hunchentoot:redirect
+   (format nil "/-/auth/login~@[?next=~A~]"
+           (hunchentoot:get-parameter "next"))))
+
+(easy-routes:defroute oidc-login ("/-/auth/login" :method :get) ()
   (if *current-user*
       (hunchentoot:redirect "/")
-      (html-response (view-login :next (hunchentoot:get-parameter "next")))))
+      (let* ((next-url (or (hunchentoot:get-parameter "next") "/"))
+             (state (generate-oidc-state)))
+        ;; Store state + next-url in a short-lived cookie
+        (hunchentoot:set-cookie "cave_oidc_state"
+                                :value (format nil "~A:~A" state next-url)
+                                :path "/"
+                                :http-only t
+                                :max-age 600)
+        (hunchentoot:redirect (oidc-authorization-url state)))))
 
-(easy-routes:defroute login-submit ("/login" :method :post) ()
-  (let* ((username (hunchentoot:post-parameter "username"))
-         (password (hunchentoot:post-parameter "password"))
-         (next-url (or (hunchentoot:post-parameter "next") "/"))
-         (user (authenticate-user username password)))
-    (if user
-        (let ((token (create-session (getf user :id))))
-          (hunchentoot:set-cookie "cave_session"
-                                  :value token
-                                  :path "/"
-                                  :http-only t
-                                  :max-age (* *session-duration-hours* 3600))
-          (hunchentoot:redirect next-url))
-        (html-response
-         (view-login :error "Invalid username or password" :next next-url)))))
+(easy-routes:defroute oidc-callback ("/-/auth/callback" :method :get) ()
+  (let* ((code (hunchentoot:get-parameter "code"))
+         (state (hunchentoot:get-parameter "state"))
+         (cookie (hunchentoot:cookie-in "cave_oidc_state"))
+         (colon-pos (when cookie (position #\: cookie)))
+         (saved-state (when colon-pos (subseq cookie 0 colon-pos)))
+         (next-url (if colon-pos (subseq cookie (1+ colon-pos)) "/")))
+    ;; Clear the state cookie
+    (hunchentoot:set-cookie "cave_oidc_state" :value "" :path "/" :max-age 0)
+    ;; Validate state
+    (unless (and code state saved-state (string= state saved-state))
+      (setf (hunchentoot:return-code*) 400)
+      (return-from oidc-callback "Invalid OIDC state"))
+    ;; Exchange code for tokens
+    (let ((tokens (exchange-oidc-code code)))
+      (unless tokens
+        (setf (hunchentoot:return-code*) 502)
+        (return-from oidc-callback "Failed to exchange authorization code"))
+      (let* ((access-token (gethash "access_token" tokens))
+             (userinfo (fetch-oidc-userinfo access-token)))
+        (unless userinfo
+          (setf (hunchentoot:return-code*) 502)
+          (return-from oidc-callback "Failed to fetch user info"))
+        ;; Provision/update local user
+        (let ((user (provision-oidc-user userinfo)))
+          (unless (getf user :is-active)
+            (setf (hunchentoot:return-code*) 403)
+            (return-from oidc-callback "Account is deactivated"))
+          ;; Create Cave session
+          (let ((session-token (create-session (getf user :id))))
+            (hunchentoot:set-cookie "cave_session"
+                                    :value session-token
+                                    :path "/"
+                                    :http-only t
+                                    :max-age (* *session-duration-hours* 3600))
+            (hunchentoot:redirect (or next-url "/"))))))))
 
 (easy-routes:defroute logout ("/logout" :method :post) ()
   (delete-session (hunchentoot:cookie-in "cave_session"))
   (hunchentoot:set-cookie "cave_session" :value "" :path "/" :max-age 0)
-  (hunchentoot:redirect "/login"))
+  ;; Redirect to Keycloak logout to end SSO session
+  (let ((issuer (config-value :oidc-issuer)))
+    (if issuer
+        (hunchentoot:redirect
+         (format nil "~A/protocol/openid-connect/logout?post_logout_redirect_uri=~A&client_id=~A"
+                 issuer
+                 (hunchentoot:url-encode (config-value :base-url))
+                 (config-value :oidc-client-id)))
+        (hunchentoot:redirect "/"))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Dashboard
@@ -172,25 +215,6 @@
       (return-from admin-page "Forbidden"))
     (html-response (view-admin :users (list-users :active-only nil)))))
 
-(easy-routes:defroute admin-create-user ("/-/admin/users" :method :post) ()
-  (when (require-login)
-    (unless (getf *current-user* :is-admin)
-      (setf (hunchentoot:return-code*) 403)
-      (return-from admin-create-user "Forbidden"))
-    (let ((username (hunchentoot:post-parameter "username"))
-          (password (hunchentoot:post-parameter "password"))
-          (is-admin (hunchentoot:post-parameter "is_admin")))
-      (handler-case
-          (progn
-            (create-user :username username :password password
-                         :is-admin (when is-admin t))
-            (html-response
-             (view-admin :users (list-users :active-only nil)
-                         :message (format nil "User '~A' created." username))))
-        (error (e)
-          (html-response
-           (view-admin :users (list-users :active-only nil)
-                       :message (format nil "Error: ~A" e))))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: User settings

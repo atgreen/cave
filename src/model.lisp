@@ -9,18 +9,17 @@
 
 ;;; ========================== USERS ==========================
 
-(defun create-user (&key username password display-name email (is-admin nil))
+(defun create-user (&key username display-name email oidc-sub (is-admin nil))
   "Create a new user. Returns the user plist."
-  (let ((hash (hash-password password)))
-    (postmodern:query
-     (:insert-into 'cave-users
-      :set 'username username
-           'password-hash hash
-           'display-name (or display-name username)
-           'email email
-           'is-admin is-admin
-      :returning '*)
-     :plist)))
+  (postmodern:query
+   (:insert-into 'cave-users
+    :set 'username username
+         'display-name (or display-name username)
+         'email email
+         'oidc-sub oidc-sub
+         'is-admin is-admin
+    :returning '*)
+   :plist))
 
 (defun find-user-by-id (id)
   "Find a user by ID."
@@ -34,13 +33,12 @@
    (:select '* :from 'cave-users :where (:= 'username username))
    :plist))
 
-(defun authenticate-user (username password)
-  "Authenticate a user by username and password. Returns user plist or NIL."
-  (let ((user (find-user-by-username username)))
-    (when (and user
-               (getf user :is-active)
-               (check-password password (getf user :password-hash)))
-      user)))
+(defun find-user-by-oidc-sub (oidc-sub)
+  "Find a user by OIDC subject identifier."
+  (when oidc-sub
+    (postmodern:query
+     (:select '* :from 'cave-users :where (:= 'oidc-sub oidc-sub))
+     :plist)))
 
 (defun list-users (&key (active-only t))
   "List all users."
@@ -53,14 +51,6 @@
       (postmodern:query
        (:order-by (:select '* :from 'cave-users) 'username)
        :plists)))
-
-(defun update-user-password (user-id new-password)
-  "Update a user's password."
-  (postmodern:execute
-   (:update 'cave-users
-    :set 'password-hash (hash-password new-password)
-         'updated-at (:now)
-    :where (:= 'id user-id))))
 
 (defun deactivate-user (user-id)
   "Deactivate a user account."

@@ -34,24 +34,51 @@ test-workflow: ## Run org/repo workflow tests only
 
 # --- Podman (local dev) ---
 
-podman-up: cave ## Build container and start cave + postgres via podman
+podman-up: cave ## Build container and start cave + postgres + keycloak via podman
 	podman network exists cave-net 2>/dev/null || podman network create cave-net
 	podman container exists cave-pg 2>/dev/null || \
 		podman run -d --name cave-pg --network cave-net \
 			-e POSTGRES_USER=cave -e POSTGRES_PASSWORD=cave -e POSTGRES_DB=cave \
 			postgres:16-alpine
+	@echo "Waiting for PostgreSQL..."; \
+		for i in $$(seq 1 30); do \
+			podman exec cave-pg pg_isready -U cave -q 2>/dev/null && break; \
+			sleep 1; \
+		done
+	podman exec cave-pg psql -U cave -tc "SELECT 1 FROM pg_database WHERE datname='keycloak'" | grep -q 1 || \
+		podman exec cave-pg psql -U cave -c "CREATE DATABASE keycloak"
+	podman container exists cave-keycloak 2>/dev/null || \
+		podman run -d --name cave-keycloak --network cave-net \
+			-p 8180:8080 \
+			-e KC_DB=postgres \
+			-e KC_DB_URL=jdbc:postgresql://cave-pg:5432/keycloak \
+			-e KC_DB_USERNAME=cave \
+			-e KC_DB_PASSWORD=cave \
+			-e KC_HOSTNAME=http://localhost:8180 \
+			-e KC_HOSTNAME_STRICT=false \
+			-e KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true \
+			-e KC_HTTP_ENABLED=true \
+			-e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+			-e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+			-v $(CURDIR)/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro \
+			quay.io/keycloak/keycloak:26.0 start-dev --import-realm
 	podman build -t cave -f Containerfile.local .
 	podman stop cave 2>/dev/null; podman rm cave 2>/dev/null; true
 	podman run -d --name cave --network cave-net \
 		-p 8080:8080 -p 2222:22 \
 		-e CAVE_DB_HOST=cave-pg \
-		-e CAVE_ADMIN_USER=admin -e CAVE_ADMIN_PASSWORD=admin \
+		-e CAVE_OIDC_ISSUER=http://localhost:8180/realms/cave \
+		-e CAVE_OIDC_ISSUER_INTERNAL=http://cave-keycloak:8080/realms/cave \
+		-e CAVE_OIDC_CLIENT_ID=cave \
+		-e CAVE_OIDC_CLIENT_SECRET=cave-dev-secret \
+		-e CAVE_BASE_URL=http://localhost:8080 \
 		-v cave-data:/var/lib/cave cave:latest
-	@echo "\n  Cave running at http://localhost:8080"
+	@echo "\n  Cave:     http://localhost:8080"
+	@echo "  Keycloak: http://localhost:8180  (admin/admin)"
 
-podman-down: ## Stop and remove cave + postgres containers
-	podman stop cave cave-pg 2>/dev/null; true
-	podman rm cave cave-pg 2>/dev/null; true
+podman-down: ## Stop and remove cave + postgres + keycloak containers
+	podman stop cave cave-keycloak cave-pg 2>/dev/null; true
+	podman rm cave cave-keycloak cave-pg 2>/dev/null; true
 
 podman-rebuild: podman-down podman-up ## Tear down and rebuild everything
 

@@ -27,7 +27,11 @@
     :smtp-password nil
     :smtp-from nil
     :base-url "http://localhost:8080"
-    :log-level :info))
+    :log-level :info
+    :oidc-issuer nil
+    :oidc-issuer-internal nil
+    :oidc-client-id "cave"
+    :oidc-client-secret nil))
 
 (defun load-config (path)
   "Load cave.conf from PATH. Returns the merged config plist."
@@ -80,6 +84,15 @@
     (if colon-pos
         (subseq no-scheme 0 colon-pos)
         no-scheme)))
+
+(defun oidc-redirect-uri ()
+  "Return the OIDC redirect URI, derived from :base-url."
+  (format nil "~A/-/auth/callback" (config-value :base-url)))
+
+(defun oidc-issuer-internal ()
+  "Return the server-to-server OIDC issuer URL. Falls back to :oidc-issuer."
+  (or (config-value :oidc-issuer-internal)
+      (config-value :oidc-issuer)))
 
 (defun ssh-clone-url (owner-name repo-name)
   "Return the SSH clone URL for a repo. Uses git@host:path format on port 22,

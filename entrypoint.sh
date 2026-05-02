@@ -18,7 +18,11 @@ if [ ! -f "$CONFIG" ]; then
  :secret-key "${CAVE_SECRET_KEY:-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
  :base-url "${CAVE_BASE_URL:-http://localhost:8080}"
  :authorized-keys-path "/home/cave/.ssh/authorized_keys"
- :cave-shell "/usr/bin/cave-shell.sh")
+ :cave-shell "/usr/bin/cave-shell.sh"
+ :oidc-issuer "${CAVE_OIDC_ISSUER:-}"
+ :oidc-issuer-internal "${CAVE_OIDC_ISSUER_INTERNAL:-}"
+ :oidc-client-id "${CAVE_OIDC_CLIENT_ID:-cave}"
+ :oidc-client-secret "${CAVE_OIDC_CLIENT_SECRET:-}")
 CONF
 fi
 
@@ -40,14 +44,6 @@ done
 
 # Run migrations
 cave migrate --config "$CONFIG"
-
-# Create admin user if CAVE_ADMIN_USER is set and user doesn't exist
-if [ -n "$CAVE_ADMIN_USER" ] && [ -n "$CAVE_ADMIN_PASSWORD" ]; then
-  cave init \
-    --admin-user "$CAVE_ADMIN_USER" \
-    --admin-password "$CAVE_ADMIN_PASSWORD" \
-    --config "$CONFIG" || true
-fi
 
 # Generate initial authorized_keys
 cave update-keys \

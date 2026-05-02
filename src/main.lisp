@@ -21,28 +21,15 @@
 (defun make-init-command ()
   (clingon:make-command
    :name "init"
-   :description "Initialize the database and create the admin user"
+   :description "Initialize the database and run migrations"
    :options (list
-             (make-config-option)
-             (clingon:make-option :string
-              :long-name "admin-user" :key :admin-user :required t
-              :description "Admin username")
-             (clingon:make-option :string
-              :long-name "admin-password" :key :admin-password :required t
-              :description "Admin password")
-             (clingon:make-option :filepath
-              :long-name "admin-ssh-key" :key :admin-ssh-key
-              :description "Path to admin's SSH public key file"))
+             (make-config-option))
    :handler #'handle-init
    :examples '(("Initialize Cave:" .
-                "cave init --admin-user admin --admin-password secret"))))
+                "cave init --config cave.conf"))))
 
 (defun handle-init (cmd)
-  (let ((config-path (clingon:getopt cmd :config))
-        (admin-user (clingon:getopt cmd :admin-user))
-        (admin-pass (clingon:getopt cmd :admin-password))
-        (ssh-key-path (clingon:getopt cmd :admin-ssh-key)))
-
+  (let ((config-path (clingon:getopt cmd :config)))
     (load-config config-path)
     (ensure-data-dirs)
     (handler-case (connect-db)
@@ -61,22 +48,6 @@
                 e)
         (uiop:quit 1)))
     (run-migrations)
-
-    ;; Create or update admin user
-    (let ((existing (find-user-by-username admin-user)))
-      (if existing
-          (llog:info "Admin user already exists" :user admin-user :id (getf existing :id))
-          (let ((user (create-user :username admin-user
-                                   :password admin-pass
-                                   :is-admin t)))
-            (llog:info "Created admin user" :user admin-user :id (getf user :id))
-
-            ;; Add SSH key if provided
-            (when ssh-key-path
-              (let ((key-data (uiop:read-file-string ssh-key-path)))
-                (add-ssh-key (getf user :id) "admin-key" (string-trim '(#\Newline #\Return) key-data))
-                (llog:info "Added SSH key" :path ssh-key-path))))))
-
     (disconnect-db)
     (format t "~&Cave initialized successfully.~%")))
 

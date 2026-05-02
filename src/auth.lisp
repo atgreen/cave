@@ -14,15 +14,102 @@
     `(let ((,var ,expr))
        (when ,var ,@body))))
 
-;;; --- Password hashing (bcrypt) ---
+;;; --- OIDC (Keycloak) ---
 
-(defun hash-password (plaintext)
-  "Hash a plaintext password using bcrypt. Returns the hash string."
-  (bcrypt:encode (bcrypt:make-password plaintext)))
+(defun generate-oidc-state ()
+  "Generate a random state parameter for OIDC CSRF protection."
+  (ironclad:byte-array-to-hex-string (ironclad:random-data 16)))
 
-(defun check-password (plaintext hash)
-  "Verify PLAINTEXT against a bcrypt HASH. Returns T on match."
-  (bcrypt:password= plaintext hash))
+(defun oidc-authorization-url (state)
+  "Build the OIDC authorization redirect URL (browser-facing)."
+  (format nil "~A/protocol/openid-connect/auth?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email"
+          (config-value :oidc-issuer)
+          (config-value :oidc-client-id)
+          (hunchentoot:url-encode (oidc-redirect-uri))
+          state))
+
+(defun exchange-oidc-code (code)
+  "Exchange an OIDC authorization code for tokens. Returns parsed JSON hash-table or NIL."
+  (handler-case
+      (let ((response (dex:post
+                       (format nil "~A/protocol/openid-connect/token"
+                               (oidc-issuer-internal))
+                       :content `(("grant_type" . "authorization_code")
+                                  ("code" . ,code)
+                                  ("client_id" . ,(config-value :oidc-client-id))
+                                  ("client_secret" . ,(config-value :oidc-client-secret))
+                                  ("redirect_uri" . ,(oidc-redirect-uri))))))
+        (let ((parsed (com.inuoe.jzon:parse response)))
+          (llog:info "OIDC token exchange succeeded"
+                     :has-access-token (if (gethash "access_token" parsed) "yes" "no"))
+          parsed))
+    (error (e)
+      (llog:error "OIDC token exchange failed" :error (princ-to-string e))
+      nil)))
+
+(defun fetch-oidc-userinfo (access-token)
+  "Fetch user info from the OIDC userinfo endpoint. Returns hash-table or NIL.
+   Tries the internal issuer first, falls back to external."
+  (handler-case
+      (let ((response (dex:get
+                       (format nil "~A/protocol/openid-connect/userinfo"
+                               (oidc-issuer-internal))
+                       :headers `(("Authorization" . ,(format nil "Bearer ~A" access-token))))))
+        (com.inuoe.jzon:parse response))
+    (error (e)
+      (llog:error "OIDC userinfo fetch failed" :error (princ-to-string e))
+      nil)))
+
+(defun oidc-user-is-admin-p (userinfo)
+  "Check if the OIDC userinfo includes the cave-admin realm role."
+  (let ((realm-access (gethash "realm_access" userinfo)))
+    (when realm-access
+      (let ((roles (gethash "roles" realm-access)))
+        (when roles
+          (find "cave-admin" roles :test #'string=))))))
+
+(defun provision-oidc-user (userinfo)
+  "Create or update a local user from OIDC claims. Returns user plist."
+  (let* ((sub (gethash "sub" userinfo))
+         (username (gethash "preferred_username" userinfo))
+         (email (gethash "email" userinfo))
+         (display-name (or (gethash "name" userinfo) username))
+         (is-admin (if (oidc-user-is-admin-p userinfo) t nil))
+         (existing (find-user-by-oidc-sub sub)))
+    (cond
+      ;; Known user — sync profile
+      (existing
+       (postmodern:execute
+        (:update 'cave-users
+         :set 'is-admin is-admin
+              'email email
+              'display-name display-name
+              'updated-at (:now)
+         :where (:= 'oidc-sub sub)))
+       (find-user-by-oidc-sub sub))
+      ;; Username match — link existing user to OIDC sub
+      ((find-user-by-username username)
+       (let ((user (find-user-by-username username)))
+         (postmodern:execute
+          (:update 'cave-users
+           :set 'oidc-sub sub
+                'is-admin is-admin
+                'email email
+                'display-name display-name
+                'updated-at (:now)
+           :where (:= 'id (getf user :id))))
+         (find-user-by-id (getf user :id))))
+      ;; New user — create
+      (t
+       (postmodern:query
+        (:insert-into 'cave-users
+         :set 'username username
+              'oidc-sub sub
+              'email email
+              'display-name (or display-name username)
+              'is-admin is-admin
+         :returning '*)
+        :plist)))))
 
 ;;; --- API tokens ---
 

@@ -35,7 +35,7 @@
                  (:span.nav-user (getf *current-user* :username))
                  (:form :method "post" :action "/logout" :style "display:inline"
                   (:button.btn.btn-sm :type "submit" "Log out")))
-               (:a.btn.btn-sm :href "/login" "Log in")))))
+               (:a.btn.btn-sm :href "/-/auth/login" "Log in")))))
         (:main.container ,@body)))))
 
 ;;; --- Breadcrumb helper ---
@@ -52,23 +52,7 @@
                   (:strong (if (listp crumb) (second crumb) crumb)))))))
 
 ;;; ========================== AUTH PAGES ==========================
-
-(defun view-login (&key error next)
-  "Render the login page."
-  (page (:title "Log in — Cave")
-    (:div.auth-form
-     (:h1 "Log in to Cave")
-     (when error
-       (:div.alert.alert-error error))
-     (:form :method "post" :action "/login"
-      (:input :type "hidden" :name "next" :value (or next ""))
-      (:div.field
-       (:label :for "username" "Username")
-       (:input :type "text" :id "username" :name "username" :required t :autofocus t))
-      (:div.field
-       (:label :for "password" "Password")
-       (:input :type "password" :id "password" :name "password" :required t))
-      (:button.btn.btn-primary :type "submit" "Log in")))))
+;;; Login is handled by Keycloak — no local login form needed.
 
 ;;; ========================== DASHBOARD ==========================
 
@@ -502,17 +486,12 @@
           (:td (if (getf u :is-admin) "yes" "no"))
           (:td (if (getf u :is-active) "yes" "no"))
           (:td (princ-to-string (getf u :created-at)))))))
-     (:h3 "Create user")
-     (:form :method "post" :action "/-/admin/users"
-      (:div.field
-       (:label :for "username" "Username")
-       (:input :type "text" :id "username" :name "username" :required t))
-      (:div.field
-       (:label :for "password" "Password")
-       (:input :type "password" :id "password" :name "password" :required t))
-      (:div.field
-       (:label (:input :type "checkbox" :name "is_admin" :value "1") " Instance admin"))
-      (:button.btn.btn-primary :type "submit" "Create user")))))
+     (:p :style "margin-top:1rem"
+      (:a.btn :href (let ((issuer (config-value :oidc-issuer "")))
+                      (if (search "/realms/" issuer)
+                          (format nil "~A/admin/" (subseq issuer 0 (search "/realms/" issuer)))
+                          "#"))
+       "Manage users in Keycloak")))))
 
 (defun view-settings (&key ssh-keys api-tokens new-token ssh-error
                            generated-private-key generated-key-name)

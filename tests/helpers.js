@@ -4,15 +4,18 @@ const ADMIN_USER = process.env.CAVE_ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.CAVE_ADMIN_PASSWORD || "admin";
 
 /**
- * Log in as the admin user and return the authenticated page.
+ * Log in via Keycloak OIDC flow.
+ * Navigates to Cave's login, fills Keycloak's form, waits for redirect back.
  */
 async function login(page) {
-  await page.goto("/login");
+  await page.goto("/-/auth/login");
+  // Now on Keycloak login page
+  await page.waitForSelector("#username");
   await page.fill("#username", ADMIN_USER);
   await page.fill("#password", ADMIN_PASS);
   await Promise.all([
-    page.waitForNavigation(),
-    page.click('.auth-form button[type="submit"]'),
+    page.waitForURL("**/"),
+    page.click("#kc-login"),
   ]);
   return page;
 }
