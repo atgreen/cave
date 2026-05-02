@@ -222,16 +222,14 @@
 
       (:section
        (:h2 "Clone")
-       (:code.clone-url
-        (format nil "ssh://cave@~A:~A/~A/~A.git"
-                (base-hostname) (config-value :ssh-port) org-name repo-name)))
+       (:code.clone-url (ssh-clone-url org-name repo-name)))
 
       (if empty
           (:section
            (:p.empty "This repository is empty. Push some code to get started:")
            (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);font-size:.85rem;overflow-x:auto"
-            (format nil "git remote add origin ssh://cave@~A:~A/~A/~A.git~%git push -u origin main"
-                    (base-hostname) (config-value :ssh-port) org-name repo-name)))
+            (format nil "git remote add origin ~A~%git push -u origin main"
+                    (ssh-clone-url org-name repo-name))))
           (progn
             (when branches
               (:section

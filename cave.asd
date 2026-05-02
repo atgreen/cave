@@ -38,6 +38,7 @@
                 (:file "src/model")
                 (:file "src/git")
                 (:file "src/views")
+                (:file "src/metrics")
                 (:file "src/ssh")
                 (:file "src/server")
                 (:file "src/main"))

@@ -8,6 +8,7 @@ if [ ! -f "$CONFIG" ]; then
   cat > "$CONFIG" <<CONF
 (:http-port 8080
  :ssh-port 22
+ :ssh-user "cave"
  :data-dir "/var/lib/cave"
  :db-host "${CAVE_DB_HOST:-localhost}"
  :db-port ${CAVE_DB_PORT:-5432}

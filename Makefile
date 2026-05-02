@@ -1,7 +1,9 @@
 SBCL ?= /usr/bin/sbcl
 LISP := $(SBCL) --non-interactive --eval '(push (truename ".") asdf:*central-registry*)'
 
-.PHONY: help build load lint clean test test-smoke test-workflow podman-up podman-down podman-rebuild podman-logs
+.PHONY: help build load lint clean test test-smoke test-workflow \
+       podman-up podman-down podman-rebuild podman-logs \
+       observability-up observability-down
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -55,3 +57,33 @@ podman-rebuild: podman-down podman-up ## Tear down and rebuild everything
 
 podman-logs: ## Tail cave container logs
 	podman logs -f cave
+
+# --- Observability ---
+
+observability-up: ## Start Prometheus + Grafana + postgres_exporter
+	podman network exists cave-net 2>/dev/null || podman network create cave-net
+	podman container exists prometheus 2>/dev/null || \
+		podman run -d --name prometheus --network cave-net \
+			-p 9090:9090 \
+			-v $(CURDIR)/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro \
+			docker.io/prom/prometheus:latest
+	podman container exists postgres-exporter 2>/dev/null || \
+		podman run -d --name postgres-exporter --network cave-net \
+			-e DATA_SOURCE_NAME="postgresql://cave:cave@cave-pg:5432/cave?sslmode=disable" \
+			docker.io/prometheuscommunity/postgres-exporter:latest
+	podman container exists grafana 2>/dev/null || \
+		podman run -d --name grafana --network cave-net \
+			-p 3000:3000 \
+			-e GF_SECURITY_ADMIN_USER=admin \
+			-e GF_SECURITY_ADMIN_PASSWORD=admin \
+			-e GF_AUTH_ANONYMOUS_ENABLED=true \
+			-e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
+			-v $(CURDIR)/observability/grafana/provisioning:/etc/grafana/provisioning:ro \
+			-v $(CURDIR)/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro \
+			docker.io/grafana/grafana:latest
+	@echo "\n  Prometheus: http://localhost:9090"
+	@echo "  Grafana:    http://localhost:3000  (admin/admin)"
+
+observability-down: ## Stop and remove observability containers
+	podman stop prometheus postgres-exporter grafana 2>/dev/null; true
+	podman rm prometheus postgres-exporter grafana 2>/dev/null; true

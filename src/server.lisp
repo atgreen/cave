@@ -16,12 +16,23 @@
   (:documentation "Cave HTTP acceptor with per-request auth."))
 
 (defmethod hunchentoot:acceptor-dispatch-request ((acceptor cave-acceptor) request)
-  "Wrap every request with a pooled DB connection and auth context."
-  (postmodern:with-connection *db-spec*
-    (let ((*current-user* nil)
-          (*current-user-id* nil))
-      (authenticate-request)
-      (call-next-method))))
+  "Wrap every request with a pooled DB connection, auth context, and metrics."
+  (let ((method (hunchentoot:request-method request))
+        (start (get-internal-real-time)))
+    (bt:with-lock-held (*metrics-lock*)
+      (incf *active-requests*))
+    (unwind-protect
+         (postmodern:with-connection *db-spec*
+           (let ((*current-user* nil)
+                 (*current-user-id* nil))
+             (authenticate-request)
+             (call-next-method)))
+      (let* ((elapsed (/ (- (get-internal-real-time) start)
+                         (float internal-time-units-per-second 1.0d0)))
+             (status (hunchentoot:return-code*)))
+        (bt:with-lock-held (*metrics-lock*)
+          (decf *active-requests*))
+        (record-request method status elapsed)))))
 
 (defun app-root ()
   "Return the application root directory."
@@ -81,6 +92,13 @@
               (not (and *current-user-id*
                         (repo-member-role (getf ,repo :id) *current-user-id*))))
      (return-from route-handler (not-found))))
+
+;; ----------------------------------------------------------------------------
+;; Routes: Metrics
+
+(easy-routes:defroute metrics-endpoint ("/-/metrics" :method :get) ()
+  (setf (hunchentoot:content-type*) "text/plain; version=0.0.4; charset=utf-8")
+  (collect-metrics))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Auth

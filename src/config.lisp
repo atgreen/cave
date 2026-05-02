@@ -81,6 +81,16 @@
         (subseq no-scheme 0 colon-pos)
         no-scheme)))
 
+(defun ssh-clone-url (owner-name repo-name)
+  "Return the SSH clone URL for a repo. Uses git@host:path format on port 22,
+   falls back to ssh:// URI for non-standard ports."
+  (let ((host (base-hostname))
+        (port (config-value :ssh-port))
+        (user (config-value :ssh-user "git")))
+    (if (= port 22)
+        (format nil "~A@~A:~A/~A.git" user host owner-name repo-name)
+        (format nil "ssh://~A@~A:~A/~A/~A.git" user host port owner-name repo-name))))
+
 (defun repos-dir ()
   "Return the directory where bare git repos are stored."
   (data-dir "repos"))

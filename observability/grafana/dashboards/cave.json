@@ -1,0 +1,396 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(cave_http_requests_total[5m])",
+          "legendFormat": "{{method}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Request Duration (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(cave_http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(cave_http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(cave_http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Active Requests",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 10 },
+          { "color": "red", "value": 50 }
+        ]}}
+      },
+      "targets": [
+        {
+          "expr": "cave_active_requests",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Active Sessions",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [
+          { "color": "green", "value": null }
+        ]}}
+      },
+      "targets": [
+        {
+          "expr": "cave_sessions_active",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Users",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [
+          { "color": "blue", "value": null }
+        ]}}
+      },
+      "targets": [
+        {
+          "expr": "cave_users_total",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Repositories",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [
+          { "color": "blue", "value": null }
+        ]}}
+      },
+      "targets": [
+        {
+          "expr": "cave_repos_total",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Open Issues",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 20 },
+          { "color": "red", "value": 50 }
+        ]}}
+      },
+      "targets": [
+        {
+          "expr": "cave_issues_open",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Open Changesets",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 10 }
+        ]}}
+      },
+      "targets": [
+        {
+          "expr": "cave_changesets_open",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 },
+          "color": { "mode": "fixed", "fixedColor": "red" }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(cave_http_requests_total{status=~\"5..\"}[5m])",
+          "legendFormat": "{{method}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "PostgreSQL — Active Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "PostgreSQL — Transactions / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_xact_commit{datname=\"cave\"}[5m])",
+          "legendFormat": "commits",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(pg_stat_database_xact_rollback{datname=\"cave\"}[5m])",
+          "legendFormat": "rollbacks",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "PostgreSQL — Database Size",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 1073741824 }
+          ]}
+        }
+      },
+      "targets": [
+        {
+          "expr": "pg_database_size_bytes{datname=\"cave\"}",
+          "legendFormat": "cave",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "SBCL — Heap Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sbcl_dynamic_usage_bytes",
+          "legendFormat": "heap used",
+          "refId": "A"
+        },
+        {
+          "expr": "sbcl_dynamic_space_size_bytes",
+          "legendFormat": "heap max",
+          "refId": "B"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "SBCL — Allocation Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(sbcl_bytes_consed_total[5m])",
+          "legendFormat": "alloc rate",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "SBCL — GC Time Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 36 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 },
+          "color": { "mode": "fixed", "fixedColor": "orange" },
+          "max": 1
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(sbcl_gc_run_time_seconds_total[5m])",
+          "legendFormat": "GC time %",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "SBCL — Threads",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 4, "x": 8, "y": 36 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 50 },
+          { "color": "red", "value": 100 }
+        ]}}
+      },
+      "targets": [
+        {
+          "expr": "sbcl_thread_count",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "SBCL — Total GC Time",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 4, "x": 12, "y": 36 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 60 },
+            { "color": "red", "value": 300 }
+          ]}
+        }
+      },
+      "targets": [
+        {
+          "expr": "sbcl_gc_run_time_seconds_total",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    },
+    {
+      "title": "SBCL — Heap Utilization",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 36 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0, "max": 1,
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.7 },
+            { "color": "red", "value": 0.9 }
+          ]}
+        }
+      },
+      "targets": [
+        {
+          "expr": "sbcl_dynamic_usage_bytes / sbcl_dynamic_space_size_bytes",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "datasource": { "type": "prometheus", "uid": "" }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["cave"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cave",
+  "uid": "cave-overview",
+  "version": 1,
+  "refresh": "30s"
+}
