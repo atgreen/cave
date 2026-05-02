@@ -14,7 +14,7 @@ if [ ! -f "$CONFIG" ]; then
  :db-name "${CAVE_DB_NAME:-cave}"
  :db-user "${CAVE_DB_USER:-cave}"
  :db-password "${CAVE_DB_PASSWORD:-cave}"
- :secret-key "${CAVE_SECRET_KEY:-$(openssl rand -hex 32)}"
+ :secret-key "${CAVE_SECRET_KEY:-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
  :base-url "${CAVE_BASE_URL:-http://localhost:8080}"
  :authorized-keys-path "/home/cave/.ssh/authorized_keys"
  :cave-binary "/usr/bin/cave")

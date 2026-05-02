@@ -1,27 +1,7 @@
-## Cave — self-hosted code forge
+## Cave — local dev container (uses pre-built binary)
 ##
-## Build:  podman build -t cave .
-## Run:    podman run -d --name cave --network cave-net \
-##           -p 8080:8080 -p 2222:22 \
-##           -e CAVE_DB_HOST=cave-pg \
-##           -e CAVE_ADMIN_USER=admin -e CAVE_ADMIN_PASSWORD=admin \
-##           -v cave-data:/var/lib/cave cave:latest
-
-FROM fedora:42 AS builder
-
-RUN dnf install -y sbcl make git gcc zlib-devel && dnf clean all
-
-WORKDIR /build
-
-# Copy everything needed for build (ocicl/ has vendored deps)
-COPY cave.asd Makefile ocicl.csv ./
-COPY src/ src/
-COPY ocicl/ ocicl/
-
-# Build
-RUN make
-
-## --- Runtime image ---
+## Build:  make && podman build -t cave -f Containerfile.local .
+## Run:    podman run -d --name cave -p 8080:8080 -p 2222:22 cave:latest
 
 FROM fedora:42
 
@@ -37,7 +17,7 @@ RUN dnf install -y openssh-server git && dnf clean all && \
     chmod 700 /home/cave/.ssh && \
     chown cave:cave /home/cave/.ssh
 
-COPY --from=builder /build/cave /usr/bin/cave
+COPY cave /usr/bin/cave
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /usr/bin/cave

@@ -1,4 +1,5 @@
-LISP := sbcl --non-interactive --eval '(push (truename ".") asdf:*central-registry*)'
+SBCL ?= /usr/bin/sbcl
+LISP := $(SBCL) --non-interactive --eval '(push (truename ".") asdf:*central-registry*)'
 
 cave: src/*.lisp *.asd
 	$(LISP) --eval '(asdf:make :cave)'
