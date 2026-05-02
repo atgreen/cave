@@ -303,6 +303,34 @@ section { margin-bottom: var(--sp-8); }
   border-bottom-color: var(--accent);
 }
 
+/* --- Repo info bar --- */
+.repo-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-family: var(--font-mono);
+  font-size: .8rem;
+}
+.repo-info-left { display: flex; align-items: center; gap: var(--sp-3); }
+.repo-info-stat { color: var(--text-muted); font-size: .8rem; }
+.repo-last-commit {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  font-size: .8rem;
+}
+.repo-last-hash { color: var(--link); font-size: .75rem; }
+.repo-last-msg { color: var(--text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.repo-last-author { color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+
 /* --- Repo actions --- */
 .repo-actions { margin-bottom: var(--sp-6); display: flex; gap: var(--sp-2); }
 
@@ -442,7 +470,7 @@ code {
 }
 
 /* --- File tree --- */
-.file-tree { width: 100%; border-collapse: collapse; }
+.file-tree { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-top: none; }
 .file-tree td {
   padding: var(--sp-2) var(--sp-3);
   border-bottom: 1px solid var(--border-subtle);

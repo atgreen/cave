@@ -232,8 +232,8 @@
                                   owner-name repo-name default-branch entry-path))
              name)))))))))
 
-(defun view-repo (&key owner-name repo role empty branches recent-commits
-                       issues pulls default-branch file-tree
+(defun view-repo (&key owner-name repo role empty branches tags recent-commits
+                       issues pulls default-branch commit-count file-tree
                        readme-html readme-filename)
   "Render a repo page."
   (let ((org-name owner-name)
@@ -254,16 +254,28 @@
             (format nil "git remote add origin ~A~%git push -u origin main"
                     (ssh-clone-url org-name repo-name))))
           (progn
+            ;; Branch/tag bar + last commit
+            (:div.repo-info-bar
+             (:div.repo-info-left
+              (:span.badge default-branch)
+              (:span.repo-info-stat
+               (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
+              (when tags
+                (:span.repo-info-stat
+                 (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))
+             (when commit-count
+               (:span.repo-info-stat
+                (format nil "~A ~:[commits~;commit~]" commit-count (= commit-count 1)))))
+            ;; Last commit bar
+            (when recent-commits
+              (let ((last (first recent-commits)))
+                (:div.repo-last-commit
+                 (:code.repo-last-hash (getf last :short-hash))
+                 (:span.repo-last-msg (getf last :subject))
+                 (:span.repo-last-author (getf last :author)))))
             ;; File tree
             (when file-tree
-              (:section
-               (:h2 "Files")
-               (when branches
-                 (:div :style "margin-bottom:var(--sp-3)"
-                  (:span.badge default-branch)
-                  (:span :style "color:var(--text-muted);font-size:.8rem;margin-left:var(--sp-2)"
-                   (format nil "~A branch~:P" (length branches)))))
-               (render-file-tree file-tree org-name repo-name default-branch)))
+              (render-file-tree file-tree org-name repo-name default-branch))
 
             ;; README
             (when readme-html

@@ -25,6 +25,15 @@
       (remove-if #'uiop:emptyp
                  (uiop:split-string output :separator '(#\Newline))))))
 
+(defun git-tags (repo-path)
+  "List tags in a bare repo. Returns list of tag name strings, newest first."
+  (multiple-value-bind (output _err exit-code)
+      (git-run repo-path "tag" "--sort=-creatordate")
+    (declare (ignore _err))
+    (when (zerop exit-code)
+      (remove-if #'uiop:emptyp
+                 (uiop:split-string output :separator '(#\Newline))))))
+
 (defun git-default-branch (repo-path)
   "Get the default branch (HEAD target) of a bare repo."
   (multiple-value-bind (output _err exit-code)

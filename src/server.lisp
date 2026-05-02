@@ -392,6 +392,8 @@
            (empty (git-repo-empty-p disk-path))
            (default-branch (unless empty (or (git-default-branch disk-path) "main")))
            (branches (unless empty (git-branches disk-path)))
+           (tags (unless empty (git-tags disk-path)))
+           (commit-count (unless empty (git-commit-count disk-path :branch default-branch)))
            (file-tree (unless empty (git-tree disk-path :ref default-branch)))
            (readme-entry (unless empty (git-readme-path disk-path :ref default-branch)))
            (readme-content (when readme-entry
@@ -411,8 +413,8 @@
            (open-pulls (list-pull-requests (getf repo :id) :status "open" :limit 5)))
       (html-response
        (view-repo :owner-name owner :repo repo :role role
-                  :empty empty :branches branches
-                  :default-branch default-branch
+                  :empty empty :branches branches :tags tags
+                  :default-branch default-branch :commit-count commit-count
                   :file-tree file-tree
                   :readme-html readme-html
                   :readme-filename (when readme-entry (getf readme-entry :name))
