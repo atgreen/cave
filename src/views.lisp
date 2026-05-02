@@ -489,15 +489,23 @@ require(['vs/editor/editor.main'], function() {
               (:div.comment-body (getf c :body))))
            (:p.empty "No comments yet.")))
 
-      ;; Comment form
+      ;; Comment form + close/reopen
       (when *current-user*
         (:section
          (:form :method "post"
           :action (format nil "/~A/~A/issues/~A/comment" org-name repo-name issue-num)
           (:div.field
            (:label :for "comment_body" "Add a comment")
-           (:textarea :id "comment_body" :name "body" :rows "4" :required t))
-          (:button.btn.btn-primary :type "submit" "Comment")))))))
+           (:textarea :id "comment_body" :name "body" :rows "4"))
+          (:div :style "display:flex;gap:var(--sp-2);align-items:center"
+           (:button.btn.btn-primary :type "submit" :name "action" :value "comment" "Comment")
+           (if (equal (getf issue :status) "open")
+               (:button.btn :type "submit" :name "action" :value "close"
+                :style "border-color:var(--red);color:var(--red)"
+                "Close issue")
+               (:button.btn :type "submit" :name "action" :value "reopen"
+                :style "border-color:var(--green);color:var(--green-bright)"
+                "Reopen issue")))))))))
 
 ;;; ========================== CHANGESET PAGES ==========================
 

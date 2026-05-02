@@ -515,11 +515,26 @@
            (num (parse-integer number :junk-allowed t))
            (issue (when (and repo num) (find-issue (getf repo :id) num))))
       (unless issue (return-from issue-comment-submit (not-found)))
-      (let ((body (hunchentoot:post-parameter "body")))
+      (let ((body (hunchentoot:post-parameter "body"))
+            (action (hunchentoot:post-parameter "action")))
+        ;; Add comment if body is non-empty
         (when (and body (not (uiop:emptyp body)))
           (create-issue-comment :issue-id (getf issue :id)
                                 :author-id *current-user-id*
-                                :body body)))
+                                :body body))
+        ;; Close or reopen
+        (when (equal action "close")
+          (update-issue (getf issue :id) :status "closed")
+          (when (or (not body) (uiop:emptyp body))
+            (create-issue-comment :issue-id (getf issue :id)
+                                  :author-id *current-user-id*
+                                  :body "Closed this issue.")))
+        (when (equal action "reopen")
+          (update-issue (getf issue :id) :status "open")
+          (when (or (not body) (uiop:emptyp body))
+            (create-issue-comment :issue-id (getf issue :id)
+                                  :author-id *current-user-id*
+                                  :body "Reopened this issue."))))
       (hunchentoot:redirect
        (format nil "/~A/~A/issues/~A" owner repo-name number)))))
 
