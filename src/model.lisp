@@ -118,6 +118,22 @@
                 :plist)))
       row)))
 
+(defun find-ssh-key-by-id (key-id)
+  "Find an SSH key record by ID."
+  (postmodern:query
+   (:select '* :from 'cave-ssh-keys :where (:= 'id key-id))
+   :plist))
+
+(defun all-active-ssh-keys ()
+  "List all SSH keys belonging to active users."
+  (postmodern:query
+   (:select 'cave-ssh-keys.*
+    :from 'cave-ssh-keys
+    :inner-join 'cave-users
+    :on (:= 'cave-ssh-keys.user-id 'cave-users.id)
+    :where (:= 'cave-users.is-active t))
+   :plists))
+
 (defun delete-ssh-key (key-id user-id)
   "Delete an SSH key (must belong to user)."
   (postmodern:execute

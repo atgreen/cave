@@ -182,6 +182,7 @@
                                    (hunchentoot:post-parameter "public_key"))))
       (handler-case
           (progn (add-ssh-key *current-user-id* name public-key)
+                 (sync-authorized-keys)
                  (hunchentoot:redirect "/-/settings"))
         (error (e)
           (html-response
@@ -194,6 +195,7 @@
   (when (require-login)
     (let ((kid (parse-integer key-id :junk-allowed t)))
       (when kid (delete-ssh-key kid *current-user-id*)))
+    (sync-authorized-keys)
     (hunchentoot:redirect "/-/settings")))
 
 (easy-routes:defroute create-token-submit ("/-/settings/tokens" :method :post) ()

@@ -166,6 +166,41 @@
         ;; Wait forever
         (bt:condition-wait *shutdown-cv* *server-lock*)))))
 
+;;; --- GIT-SHELL subcommand ---
+
+(defun make-git-shell-command ()
+  (clingon:make-command
+   :name "git-shell"
+   :description "Handle an SSH git operation (called by sshd, not directly)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :integer
+              :long-name "key-id" :key :key-id :required t
+              :description "SSH key ID from the database"))
+   :handler #'handle-git-shell))
+
+;;; --- UPDATE-KEYS subcommand ---
+
+(defun make-update-keys-command ()
+  (clingon:make-command
+   :name "update-keys"
+   :description "Regenerate the authorized_keys file from the database"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "output" :key :output
+              :description "Path to write authorized_keys"
+              :initial-value (namestring
+                              (merge-pathnames ".ssh/authorized_keys"
+                                               (user-homedir-pathname))))
+             (clingon:make-option :string
+              :long-name "cave-binary" :key :cave-binary
+              :description "Path to the cave binary"
+              :initial-value "/usr/bin/cave"))
+   :handler #'handle-update-keys
+   :examples '(("Update authorized_keys:" .
+                "cave update-keys --config /etc/cave.conf"))))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -178,7 +213,9 @@
    :license "MIT"
    :sub-commands (list (make-init-command)
                        (make-serve-command)
-                       (make-migrate-command))
+                       (make-migrate-command)
+                       (make-git-shell-command)
+                       (make-update-keys-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 
