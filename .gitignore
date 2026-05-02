@@ -2,6 +2,9 @@
 .#*
 ocicl
 /cave
+/cav
+/cavectl
+/.codex
 cave.conf
 data/
 node_modules/
