@@ -156,9 +156,10 @@ prod-uninstall: prod-stop ## Remove quadlet units
 
 prod-start: ## Start production Cave via systemd
 	systemctl --user start cave-pg cave-mailpit cave-init cave-keycloak cave
-	@echo "Starting Cave production..."
-	@echo "  Cave:     http://localhost:9080"
+	$(CURDIR)/keycloak/configure-realm.sh http://localhost:9180 cave-prod-mailpit
+	@echo "\n  Cave:     http://localhost:9080"
 	@echo "  Keycloak: http://localhost:9180"
+	@echo "  Mailpit:  http://localhost:9025"
 
 prod-stop: ## Stop production Cave
 	systemctl --user stop cave cave-keycloak cave-mailpit cave-init cave-pg 2>/dev/null; true

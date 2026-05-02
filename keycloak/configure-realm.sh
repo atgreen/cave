@@ -1,9 +1,10 @@
 #!/bin/bash
 # Configure Keycloak cave realm settings that aren't reliably set via realm import.
 # Requires: curl, python3
-# Usage: ./configure-realm.sh [KEYCLOAK_URL]
+# Usage: ./configure-realm.sh [KEYCLOAK_URL] [MAILPIT_HOST]
 
 KC_URL="${1:-http://localhost:8180}"
+MAILPIT_HOST="${2:-mailpit}"
 
 echo "Configuring Keycloak realm at ${KC_URL}..."
 
@@ -36,7 +37,7 @@ curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
     "loginTheme": "cave",
     "emailTheme": "cave",
     "smtpServer": {
-      "host": "mailpit",
+      "host": "'"${MAILPIT_HOST}"'",
       "port": "1025",
       "from": "cave@localhost",
       "fromDisplayName": "Cave",
@@ -46,4 +47,4 @@ curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
     }
   }'
 
-echo "Realm configured: cave theme, email verification, SMTP → mailpit:1025"
+echo "Realm configured: cave theme, email verification, SMTP → ${MAILPIT_HOST}:1025"
