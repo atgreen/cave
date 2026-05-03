@@ -362,7 +362,7 @@
                                        :registration-token token))
                    (resp (ag-grpc:grpc-call channel
                                             "/cave.runner.RunnerService/RegisterRunner"
-                                            req 'cave::register-runner-response)))
+                                            req :response-type 'cave::register-runner-response)))
               (let ((auth-token (slot-value resp 'cave::auth-token))
                     (runner-id (slot-value resp 'cave::runner-id)))
                 (format t "  Registered as runner #~A~%" runner-id)
@@ -375,7 +375,7 @@
                                          "/cave.runner.RunnerService/DeclareRunner"
                                          (make-instance 'cave::declare-runner-request
                                                         :runner-labels runner-labels)
-                                         'cave::declare-runner-response
+                                         :response-type 'cave::declare-runner-response
                                          :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))
                     (error () nil))
 
@@ -384,7 +384,7 @@
                       (let ((task-resp (ag-grpc:grpc-call channel
                                                           "/cave.runner.RunnerService/FetchTask"
                                                           (make-instance 'cave::fetch-task-request)
-                                                          'cave::fetch-task-response
+                                                          :response-type 'cave::fetch-task-response
                                                           :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
                         (when (slot-value task-resp 'cave::has-task)
                           (let ((run-id (slot-value task-resp 'cave::run-id))
@@ -398,7 +398,7 @@
                                                "/cave.runner.RunnerService/UpdateTaskStatus"
                                                (make-instance 'cave::update-task-status-request
                                                               :run-id run-id :status "running")
-                                               'cave::update-task-status-response
+                                               :response-type 'cave::update-task-status-response
                                                :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))
 
                             ;; Execute the command
@@ -413,7 +413,7 @@
                                                    "/cave.runner.RunnerService/AppendTaskLog"
                                                    (make-instance 'cave::append-task-log-request
                                                                   :run-id run-id :chunk log)
-                                                   'cave::append-task-log-response
+                                                   :response-type 'cave::append-task-log-response
                                                    :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
 
                               ;; Report final status
@@ -423,7 +423,7 @@
                                                    "/cave.runner.RunnerService/UpdateTaskStatus"
                                                    (make-instance 'cave::update-task-status-request
                                                                   :run-id run-id :status status)
-                                                   'cave::update-task-status-response
+                                                   :response-type 'cave::update-task-status-response
                                                    :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
 
                             ;; Exit if ephemeral
