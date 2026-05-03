@@ -101,6 +101,13 @@
                   :body (string-trim '(#\Newline #\Space)
                                      (format nil "~{~A~^~%~}" lines)))))))))
 
+(defun git-format-patch (repo-path hash)
+  "Get a single commit as a git format-patch (email-style patch). Returns string."
+  (multiple-value-bind (output _err exit-code)
+      (git-run repo-path "format-patch" "--stdout" "-1" hash)
+    (declare (ignore _err))
+    (when (zerop exit-code) output)))
+
 (defun git-commit-diff (repo-path hash)
   "Get the diff for a single commit. Returns raw diff text."
   (multiple-value-bind (output _err exit-code)

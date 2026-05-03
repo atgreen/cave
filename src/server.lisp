@@ -462,19 +462,42 @@
       (setf (hunchentoot:content-type*) "text/plain; charset=utf-8")
       content)))
 
-;; Commit detail page
+;; Commit detail page (also handles .patch and .diff suffixes)
 (easy-routes:defroute commit-page ("/:owner/:repo-name/commit/:hash" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from commit-page repo))
     (let* ((disk-path (repo-disk-path owner repo-name))
-           (commit (git-show-commit disk-path hash)))
-      (unless commit (return-from commit-page (not-found)))
-      (let* ((diff-raw (git-commit-diff disk-path hash))
-             (diff-files (parse-diff diff-raw))
-             (diff-stat (git-commit-stat disk-path hash)))
-        (html-response
-         (view-commit :owner-name owner :repo repo :commit commit
-                      :diff-files diff-files :diff-stat diff-stat))))))
+           ;; Strip .patch or .diff suffix
+           (is-patch (and (> (length hash) 6)
+                          (string= ".patch" (subseq hash (- (length hash) 6)))))
+           (is-diff (and (> (length hash) 5)
+                         (string= ".diff" (subseq hash (- (length hash) 5)))))
+           (clean-hash (cond (is-patch (subseq hash 0 (- (length hash) 6)))
+                             (is-diff (subseq hash 0 (- (length hash) 5)))
+                             (t hash))))
+      (cond
+        ;; .patch — git format-patch output
+        (is-patch
+         (let ((patch (git-format-patch disk-path clean-hash)))
+           (unless patch (return-from commit-page (not-found)))
+           (setf (hunchentoot:content-type*) "text/plain; charset=utf-8")
+           patch))
+        ;; .diff — raw unified diff
+        (is-diff
+         (let ((diff (git-commit-diff disk-path clean-hash)))
+           (unless diff (return-from commit-page (not-found)))
+           (setf (hunchentoot:content-type*) "text/plain; charset=utf-8")
+           diff))
+        ;; HTML commit page
+        (t
+         (let ((commit (git-show-commit disk-path clean-hash)))
+           (unless commit (return-from commit-page (not-found)))
+           (let* ((diff-raw (git-commit-diff disk-path clean-hash))
+                  (diff-files (parse-diff diff-raw))
+                  (diff-stat (git-commit-stat disk-path clean-hash)))
+             (html-response
+              (view-commit :owner-name owner :repo repo :commit commit
+                           :diff-files diff-files :diff-stat diff-stat)))))))))
 
 (easy-routes:defroute new-org-repo-page ("/o/:org-name/-/new-repo" :method :get) ()
   (when (require-login)
