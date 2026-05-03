@@ -68,6 +68,17 @@
     (return-from require-login nil))
   t)
 
+(defun require-sudo (return-url)
+  "Redirect to sudo re-authentication if not in sudo mode. Returns T if sudo is active."
+  (unless *current-user*
+    (require-login)
+    (return-from require-sudo nil))
+  (unless (sudo-active-p)
+    (hunchentoot:redirect (format nil "/-/sudo?next=~A"
+                                  (hunchentoot:url-encode return-url)))
+    (return-from require-sudo nil))
+  t)
+
 (defun json-response (data &key (status 200))
   "Return a JSON response."
   (setf (hunchentoot:content-type*) "application/json; charset=utf-8")
@@ -147,7 +158,13 @@
          (cookie (hunchentoot:cookie-in "cave_oidc_state"))
          (colon-pos (when cookie (position #\: cookie)))
          (saved-state (when colon-pos (subseq cookie 0 colon-pos)))
-         (next-url (sanitize-next-url (if colon-pos (subseq cookie (1+ colon-pos)) "/"))))
+         (rest-of-cookie (when colon-pos (subseq cookie (1+ colon-pos))))
+         (is-sudo (and rest-of-cookie (>= (length rest-of-cookie) 5)
+                       (string= "sudo:" (subseq rest-of-cookie 0 5))))
+         (next-url (sanitize-next-url
+                    (cond (is-sudo (subseq rest-of-cookie 5))
+                          (rest-of-cookie rest-of-cookie)
+                          (t "/")))))
     ;; Clear the state cookie
     (hunchentoot:set-cookie "cave_oidc_state" :value "" :path "/" :max-age 0)
     ;; Validate state — if invalid, redirect to login (e.g. after password reset)
@@ -169,14 +186,33 @@
           (unless (getf user :is-active)
             (setf (hunchentoot:return-code*) 403)
             (return-from oidc-callback "Account is deactivated"))
-          ;; Create Cave session
-          (let ((session-token (create-session (getf user :id))))
-            (hunchentoot:set-cookie "cave_session"
-                                    :value session-token
-                                    :path "/"
-                                    :http-only t
-                                    :max-age (* *session-duration-hours* 3600))
-            (hunchentoot:redirect (or next-url "/"))))))))
+          (if is-sudo
+              ;; Sudo flow — set sudo cookie, keep existing session
+              (progn
+                (set-sudo-cookie)
+                (hunchentoot:redirect (or next-url "/-/settings")))
+              ;; Normal login — create new session
+              (let ((session-token (create-session (getf user :id))))
+                (hunchentoot:set-cookie "cave_session"
+                                        :value session-token
+                                        :path "/"
+                                        :http-only t
+                                        :max-age (* *session-duration-hours* 3600))
+                (hunchentoot:redirect (or next-url "/")))))))))
+
+;; Sudo mode — force re-authentication for dangerous actions
+(easy-routes:defroute sudo-redirect ("/-/sudo" :method :get) ()
+  (if *current-user*
+      (let* ((next-url (or (hunchentoot:get-parameter "next") "/-/settings"))
+             (state (generate-oidc-state)))
+        ;; Store state with sudo: prefix so callback knows to set sudo cookie
+        (hunchentoot:set-cookie "cave_oidc_state"
+                                :value (format nil "~A:sudo:~A" state next-url)
+                                :path "/"
+                                :http-only t
+                                :max-age 600)
+        (hunchentoot:redirect (oidc-authorization-url state :force-login t)))
+      (hunchentoot:redirect "/-/auth/login")))
 
 (easy-routes:defroute logout ("/logout" :method :post) ()
   (delete-session (hunchentoot:cookie-in "cave_session"))
@@ -292,7 +328,7 @@
 
 (easy-routes:defroute generate-ssh-key-submit
     ("/-/settings/ssh-keys/generate" :method :post) ()
-  (when (require-login)
+  (when (require-sudo "/-/settings")
     (let ((name (hunchentoot:post-parameter "name")))
       (handler-case
           (multiple-value-bind (private-key _record)
@@ -319,7 +355,7 @@
     (hunchentoot:redirect "/-/settings")))
 
 (easy-routes:defroute create-token-submit ("/-/settings/tokens" :method :post) ()
-  (when (require-login)
+  (when (require-sudo "/-/settings")
     (let ((name (hunchentoot:post-parameter "name")))
       (multiple-value-bind (token-string _record)
           (create-api-token *current-user-id* name)
@@ -746,7 +782,7 @@
 
 (easy-routes:defroute repo-delete-submit
     ("/:owner/:repo-name/settings/delete" :method :post) ()
-  (when (require-login)
+  (when (require-sudo (format nil "/~A/~A/settings" owner repo-name))
     (let ((repo (find-repo owner repo-name)))
       (unless repo (return-from repo-delete-submit (not-found)))
       (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")

@@ -20,13 +20,15 @@
   "Generate a random state parameter for OIDC CSRF protection."
   (ironclad:byte-array-to-hex-string (ironclad:random-data 16)))
 
-(defun oidc-authorization-url (state)
-  "Build the OIDC authorization redirect URL (browser-facing)."
-  (format nil "~A/protocol/openid-connect/auth?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email"
+(defun oidc-authorization-url (state &key force-login)
+  "Build the OIDC authorization redirect URL (browser-facing).
+   If FORCE-LOGIN is T, forces re-authentication (for sudo mode)."
+  (format nil "~A/protocol/openid-connect/auth?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email~@[&max_age=0&prompt=login~]"
           (config-value :oidc-issuer)
           (config-value :oidc-client-id)
           (hunchentoot:url-encode (oidc-redirect-uri))
-          state))
+          state
+          force-login))
 
 (defun exchange-oidc-code (code)
   "Exchange an OIDC authorization code for tokens. Returns parsed JSON hash-table or NIL."
@@ -110,6 +112,28 @@
               'is-admin is-admin
          :returning '*)
         :plist)))))
+
+;;; --- Sudo mode (step-up authentication) ---
+
+(defparameter *sudo-timeout-seconds* 300 "Sudo mode lasts 5 minutes.")
+
+(defun sudo-active-p ()
+  "Check if the current user has recently re-authenticated (sudo mode)."
+  (let ((sudo-cookie (hunchentoot:cookie-in "cave_sudo")))
+    (when sudo-cookie
+      (handler-case
+          (let ((timestamp (parse-integer sudo-cookie :junk-allowed t)))
+            (and timestamp
+                 (< (- (get-universal-time) timestamp) *sudo-timeout-seconds*)))
+        (error () nil)))))
+
+(defun set-sudo-cookie ()
+  "Set the sudo cookie to current time."
+  (hunchentoot:set-cookie "cave_sudo"
+                          :value (princ-to-string (get-universal-time))
+                          :path "/"
+                          :http-only t
+                          :max-age *sudo-timeout-seconds*))
 
 ;;; --- API tokens ---
 
