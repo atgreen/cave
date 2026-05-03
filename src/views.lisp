@@ -437,8 +437,7 @@ require(['vs/editor/editor.main'], function() {
         (:pre.diff-stat diff-stat))
       (when diff-files
         (render-diff diff-files owner-name repo-name (getf commit :hash))
-        (:raw "<link rel='stylesheet' href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css'>")
-        (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
+                (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
         (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){hljs.highlightElement(el);});"))))))
 
 ;;; ========================== ISSUE PAGES ==========================
@@ -741,8 +740,7 @@ function caveToggleCommentForm(btn) {
                       :can-comment (when *current-user* t)
                       :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
                                               org-name repo-name cs-num))
-         (:raw "<link rel='stylesheet' href='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css'>")
-         (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
+                  (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
          (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){hljs.highlightElement(el);});"))))
 
       ;; Merge eligibility
