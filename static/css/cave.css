@@ -622,7 +622,6 @@ code {
 .diff-table td:last-child {
   white-space: pre;
   font-size: 0;
-  width: 100%;
 }
 .diff-table td:last-child > code {
   font-size: .8rem;
