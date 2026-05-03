@@ -32,6 +32,8 @@ cl-postgres_plus_local-time, ghcr.io/ocicl/local-time@sha256:15dc0e56d0ff55bd2a3
 cl-reexport, ghcr.io/ocicl/cl-reexport@sha256:c795feb3e3727a19e61797187eb31bac1e855b1332335d26752200a28e9b9da8, cl-reexport-20240503-03ad7a0/cl-reexport.asd
 cl-reexport-test, ghcr.io/ocicl/cl-reexport@sha256:c795feb3e3727a19e61797187eb31bac1e855b1332335d26752200a28e9b9da8, cl-reexport-20240503-03ad7a0/cl-reexport-test.asd
 cl-slice, ghcr.io/ocicl/cl-slice@sha256:b96efc2a429aabbdf0ffe8f3b5446d08ae40d5f4d8e09acc2e7c5259d5ffaf8a, cl-slice-20240503-c531683/cl-slice.asd
+cl-smtp, ghcr.io/ocicl/cl-smtp@sha256:214ff22f910dcfff454a10db22c67a0e9d5a7be0ea0e547e27c7efa2cdf5401d, cl-smtp-20240807-47139ee/cl-smtp.asd
+cl-smtp-tests, ghcr.io/ocicl/cl-smtp@sha256:214ff22f910dcfff454a10db22c67a0e9d5a7be0ea0e547e27c7efa2cdf5401d, cl-smtp-20240807-47139ee/cl-smtp-tests.asd
 cl-syntax, ghcr.io/ocicl/cl-syntax@sha256:5e2dfa6f354429f2552510032fe7994011d78be0c96ce434e2b88e6b9348a380, cl-syntax-20260203-9bbb6ef/cl-syntax.asd
 cl-syntax-annot, ghcr.io/ocicl/cl-syntax@sha256:5e2dfa6f354429f2552510032fe7994011d78be0c96ce434e2b88e6b9348a380, cl-syntax-20260203-9bbb6ef/cl-syntax-annot.asd
 cl-syntax-anonfun, ghcr.io/ocicl/cl-syntax@sha256:5e2dfa6f354429f2552510032fe7994011d78be0c96ce434e2b88e6b9348a380, cl-syntax-20260203-9bbb6ef/cl-syntax-anonfun.asd
@@ -140,6 +142,7 @@ trivia.quasiquote, ghcr.io/ocicl/trivia@sha256:51db74757bc31ceaf3a643914a8ffa878
 trivia.test, ghcr.io/ocicl/trivia@sha256:51db74757bc31ceaf3a643914a8ffa87825799097dea4912650e6ac62bed5209, trivia-20240904-4383dd8/trivia.test.asd
 trivia.trivial, ghcr.io/ocicl/trivia@sha256:51db74757bc31ceaf3a643914a8ffa87825799097dea4912650e6ac62bed5209, trivia-20240904-4383dd8/trivia.trivial.asd
 trivial-arguments, ghcr.io/ocicl/trivial-arguments@sha256:f143e340645594e6659347bbcfab442de74f6db65df24b20ef0e259e4e060a80, trivial-arguments-20260218-f77147f/trivial-arguments.asd
+trivial-clock, ghcr.io/ocicl/trivial-clock@sha256:0ae7b5e308e5af113b3eed90ca6d96171d229fb953626f90efefad7e75fac98a, cl-trivial-clock-20250518-9cc9469/trivial-clock.asd
 trivial-cltl2, ghcr.io/ocicl/trivial-cltl2@sha256:69470b4f6469314799074b9d944050dc4bcb67d5cbb2ba32c7a8899bb492f04e, trivial-cltl2-20230809-2ada872/trivial-cltl2.asd
 trivial-file-size, ghcr.io/ocicl/trivial-file-size@sha256:dfe138877e024d36e51fa14b1bcabf11e99e5745baa42ef4f627438485030f5c, trivial-file-size-20250427-60fd1bf/trivial-file-size.asd
 trivial-macroexpand-all, ghcr.io/ocicl/trivial-macroexpand-all@sha256:b23da4c2e508efe2396ec8f721cb22b8a4c076b2f0aea014a09f69dfd716d7f8, trivial-macroexpand-all-20250518-b6e4efa/trivial-macroexpand-all.asd

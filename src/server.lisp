@@ -591,6 +591,44 @@
         (when uid (remove-repo-member (getf repo :id) uid)))
       (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
+(easy-routes:defroute repo-archive-submit
+    ("/:owner/:repo-name/settings/archive" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-archive-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-archive-submit "Forbidden"))
+      (archive-repo (getf repo :id) :archived t)
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-unarchive-submit
+    ("/:owner/:repo-name/settings/unarchive" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-unarchive-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-unarchive-submit "Forbidden"))
+      (archive-repo (getf repo :id) :archived nil)
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-delete-submit
+    ("/:owner/:repo-name/settings/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-delete-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-delete-submit "Forbidden"))
+      ;; Delete disk files
+      (let ((disk-path (repo-disk-path owner repo-name)))
+        (when (probe-file disk-path)
+          (uiop:delete-directory-tree disk-path :validate t :if-does-not-exist :ignore)))
+      ;; Delete from DB (cascades to issues, PRs, etc.)
+      (delete-repo (getf repo :id))
+      (hunchentoot:redirect (format nil "/~A" owner)))))
+
 (easy-routes:defroute repo-add-check-submit
     ("/:owner/:repo-name/settings/checks" :method :post) ()
   (when (require-login)
@@ -653,6 +691,7 @@
                                    :repo-id (getf repo :id)
                                    :entity-type "issue"
                                    :entity-id (getf issue :id))
+        (notify-issue-created repo owner repo-name issue)
         (hunchentoot:redirect
          (format nil "/~A/~A/issues/~A" owner repo-name (getf issue :number)))))))
 
@@ -694,7 +733,13 @@
           (when (or (not body) (uiop:emptyp body))
             (create-issue-comment :issue-id (getf issue :id)
                                   :author-id *current-user-id*
-                                  :body "Reopened this issue."))))
+                                  :body "Reopened this issue.")))
+        ;; Notify
+        (let ((comment-text (or body
+                                (cond ((equal action "close") "Closed this issue.")
+                                      ((equal action "reopen") "Reopened this issue.")))))
+          (when comment-text
+            (notify-issue-comment repo owner repo-name issue comment-text))))
       (hunchentoot:redirect
        (format nil "/~A/~A/issues/~A" owner repo-name number)))))
 
@@ -854,6 +899,7 @@
                    :repo-id (getf repo :id)
                    :entity-type "review"
                    :entity-id (getf review :id))
+        (notify-pr-review repo owner repo-name pr state)
         (hunchentoot:redirect
          (format nil "/~A/~A/pulls/~A" owner repo-name number))))))
 
@@ -908,6 +954,7 @@
                  :repo-id (getf repo :id)
                  :entity-type "pull_request"
                  :entity-id (getf pr :id))
+      (notify-pr-merged repo owner repo-name pr)
       (hunchentoot:redirect
        (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
 
@@ -951,6 +998,91 @@
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from api-get-issue (json-error "not found" :status 404)))
       (json-response issue))))
+
+;; ----------------------------------------------------------------------------
+;; Routes: API v1 — Pull Requests
+
+(easy-routes:defroute api-list-pulls
+    ("/api/v1/repos/:owner/:repo-name/pulls" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-list-pulls repo))
+    (let* ((status (or (hunchentoot:get-parameter "status") "open"))
+           (pulls (list-pull-requests (getf repo :id) :status status)))
+      (json-response pulls))))
+
+(easy-routes:defroute api-get-pull
+    ("/api/v1/repos/:owner/:repo-name/pulls/:number" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-get-pull repo))
+    (let* ((num (parse-integer number :junk-allowed t))
+           (pr (when num (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from api-get-pull (json-error "not found" :status 404)))
+      (json-response pr))))
+
+(easy-routes:defroute api-create-pull
+    ("/api/v1/repos/:owner/:repo-name/pulls" :method :post) ()
+  (unless *current-user-id*
+    (return-from api-create-pull (json-error "unauthorized" :status 401)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-create-pull repo))
+    (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+           (json (com.inuoe.jzon:parse body-text))
+           (source (gethash "source_branch" json))
+           (target (gethash "target_branch" json)))
+      (unless (and source target)
+        (return-from api-create-pull (json-error "source_branch and target_branch required")))
+      (let* ((disk-path (repo-disk-path owner repo-name))
+             (head-commit (handler-case
+                              (string-trim '(#\Newline #\Space)
+                                           (uiop:run-program
+                                            (list "git" "-C" (namestring disk-path)
+                                                  "rev-parse" source)
+                                            :output :string))
+                            (error () nil)))
+             (pr (create-pull-request :repo-id (getf repo :id)
+                                      :author-id *current-user-id*
+                                      :source-branch source
+                                      :target-branch target
+                                      :head-commit head-commit)))
+        (json-response pr :status 201)))))
+
+(easy-routes:defroute api-list-reviews
+    ("/api/v1/repos/:owner/:repo-name/pulls/:number/reviews" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-list-reviews repo))
+    (let* ((num (parse-integer number :junk-allowed t))
+           (pr (when num (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from api-list-reviews (json-error "not found" :status 404)))
+      (json-response (list-reviews (getf pr :id))))))
+
+(easy-routes:defroute api-submit-review
+    ("/api/v1/repos/:owner/:repo-name/pulls/:number/reviews" :method :post) ()
+  (unless *current-user-id*
+    (return-from api-submit-review (json-error "unauthorized" :status 401)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-submit-review repo))
+    (let* ((num (parse-integer number :junk-allowed t))
+           (pr (when num (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from api-submit-review (json-error "not found" :status 404)))
+      (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+             (json (com.inuoe.jzon:parse body-text))
+             (state (gethash "state" json))
+             (body (gethash "body" json)))
+        (unless (member state '("approve" "approve_with_concerns" "request_changes" "comment")
+                        :test #'equal)
+          (return-from api-submit-review (json-error "invalid state")))
+        (json-response
+         (create-review :changeset-id (getf pr :id)
+                        :reviewer-id *current-user-id*
+                        :state state
+                        :body (if (eq body 'null) nil body)
+                        :changeset-version (getf pr :version))
+         :status 201)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Git helpers

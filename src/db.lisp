@@ -354,7 +354,10 @@ CREATE TABLE cave_diff_comments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_diff_comments_changeset ON cave_diff_comments (changeset_id);
-CREATE INDEX idx_diff_comments_file ON cave_diff_comments (changeset_id, file_path);"))
+CREATE INDEX idx_diff_comments_file ON cave_diff_comments (changeset_id, file_path);")
+
+    (24 . "-- Repo archival
+ALTER TABLE cave_repos ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

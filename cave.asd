@@ -28,6 +28,8 @@
                 :com.inuoe.jzon
                 ;; HTML generation
                 :spinneret
+                ;; Email
+                :cl-smtp
                 ;; Markdown rendering
                 :3bmd
                 :sanitize-html
@@ -44,6 +46,7 @@
                 (:file "src/git")
                 (:file "src/views")
                 (:file "src/metrics")
+                (:file "src/notify")
                 (:file "src/ssh")
                 (:file "src/server")
                 (:file "src/main"))

@@ -371,6 +371,18 @@
    (:delete-from 'cave-repo-members
     :where (:and (:= 'repo-id repo-id) (:= 'user-id user-id)))))
 
+(defun archive-repo (repo-id &key (archived t))
+  "Archive or unarchive a repo."
+  (postmodern:execute
+   (:update 'cave-repos
+    :set 'is-archived archived 'updated-at (:now)
+    :where (:= 'id repo-id))))
+
+(defun delete-repo (repo-id)
+  "Delete a repo from the database. Caller must also remove disk files."
+  (postmodern:execute
+   (:delete-from 'cave-repos :where (:= 'id repo-id))))
+
 (defun update-repo-settings (repo-id &key required-approvals allow-self-approval
                                           allow-stale-approvals concerns-count-as-approval
                                           block-on-request-changes auto-delete-branch)

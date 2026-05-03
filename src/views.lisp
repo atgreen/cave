@@ -1032,7 +1032,39 @@ function caveShowCommentForm(td) {
          (:label :for "check_timeout" "Timeout (seconds)")
          (:input :type "number" :id "check_timeout" :name "timeout" :value "60"
                  :min "5" :max "600" :style "width:5em"))
-        (:button.btn.btn-primary :type "submit" "Add check"))))))
+        (:button.btn.btn-primary :type "submit" "Add check")))
+
+      ;; Danger zone
+      (:section
+       (:h2 :style "color:var(--red)" "Danger zone")
+       (:div :style "border:1px solid var(--red);border-radius:var(--radius);padding:var(--sp-4)"
+        (if (getf repo :is-archived)
+            (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)"
+             (:div
+              (:strong "Unarchive this repository")
+              (:p :style "color:var(--text-muted);font-size:.85rem;margin:0"
+               "This will make the repository writable again."))
+             (:form :method "post"
+              :action (format nil "/~A/~A/settings/unarchive" owner-name repo-name)
+              (:button.btn :type "submit" "Unarchive")))
+            (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)"
+             (:div
+              (:strong "Archive this repository")
+              (:p :style "color:var(--text-muted);font-size:.85rem;margin:0"
+               "Mark as read-only. No new pushes, issues, or PRs."))
+             (:form :method "post"
+              :action (format nil "/~A/~A/settings/archive" owner-name repo-name)
+              (:button.btn :type "submit" :style "border-color:var(--red);color:var(--red)"
+               "Archive"))))
+        (:div :style "display:flex;justify-content:space-between;align-items:center"
+         (:div
+          (:strong "Delete this repository")
+          (:p :style "color:var(--text-muted);font-size:.85rem;margin:0"
+           "Permanently delete this repository and all its data."))
+         (:form :method "post"
+          :action (format nil "/~A/~A/settings/delete" owner-name repo-name)
+          (:button.btn :type "submit" :style "border-color:var(--red);color:var(--red)"
+           "Delete repository"))))))))
 
 ;;; ========================== ADMIN & SETTINGS ==========================
 
