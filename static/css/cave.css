@@ -619,7 +619,6 @@ code {
   white-space: nowrap;
   vertical-align: top;
 }
-.diff-table td:last-child { white-space: pre; }
 .diff-file { overflow-x: auto; }
 .diff-table .diff-line-add { background: var(--green-bg); color: var(--text); }
 .diff-table .diff-line-del { background: var(--red-bg); color: var(--text); }
