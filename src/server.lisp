@@ -644,7 +644,8 @@
        (view-repo-settings :owner-name owner :repo repo
                            :members (list-repo-members (getf repo :id))
                            :checks (list-check-configs (getf repo :id))
-                           :mirrors (list-mirrors (getf repo :id)))))))
+                           :mirrors (list-mirrors (getf repo :id))
+                           :webhooks (list-webhooks (getf repo :id)))))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -733,6 +734,36 @@
       ;; Delete from DB (cascades to issues, PRs, etc.)
       (delete-repo (getf repo :id))
       (hunchentoot:redirect (format nil "/~A" owner)))))
+
+(easy-routes:defroute repo-add-webhook-submit
+    ("/:owner/:repo-name/settings/webhooks" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-add-webhook-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-add-webhook-submit "Forbidden"))
+      (let ((url (hunchentoot:post-parameter "url"))
+            (secret (hunchentoot:post-parameter "secret"))
+            (events (hunchentoot:post-parameter "events")))
+        (when (and url (not (uiop:emptyp url)))
+          (create-webhook :repo-id (getf repo :id)
+                          :url url
+                          :secret (unless (uiop:emptyp secret) secret)
+                          :events (or events "push,pull_request,issue"))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-delete-webhook-submit
+    ("/:owner/:repo-name/settings/webhooks/:webhook-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-delete-webhook-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-delete-webhook-submit "Forbidden"))
+      (let ((wid (parse-integer webhook-id :junk-allowed t)))
+        (when wid (delete-webhook wid (getf repo :id))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
 (easy-routes:defroute repo-add-mirror-submit
     ("/:owner/:repo-name/settings/mirrors" :method :post) ()
@@ -838,6 +869,7 @@
                                    :entity-type "issue"
                                    :entity-id (getf issue :id))
         (notify-issue-created repo owner repo-name issue)
+        (fire-webhooks (getf repo :id) "issue" (make-webhook-payload "issue.created" :owner owner :repo repo-name :number (getf issue :number) :title (getf issue :title)))
         (hunchentoot:redirect
          (format nil "/~A/~A/issues/~A" owner repo-name (getf issue :number)))))))
 
@@ -885,7 +917,8 @@
                                 (cond ((equal action "close") "Closed this issue.")
                                       ((equal action "reopen") "Reopened this issue.")))))
           (when comment-text
-            (notify-issue-comment repo owner repo-name issue comment-text))))
+            (notify-issue-comment repo owner repo-name issue comment-text)
+            (fire-webhooks (getf repo :id) "issue" (make-webhook-payload "issue.comment" :owner owner :repo repo-name :number (getf issue :number))))))
       (hunchentoot:redirect
        (format nil "/~A/~A/issues/~A" owner repo-name number)))))
 
@@ -992,7 +1025,10 @@
                          :diff-raw diff-raw
                          :diff-comments-json comments-json
                          :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
-                                                 owner repo-name num)))))))
+                                                 owner repo-name num)
+                         :commit-statuses (when (getf pr :head-commit)
+                                            (list-commit-statuses (getf repo :id)
+                                                                  (getf pr :head-commit)))))))))
 
 ;; Inline diff comment
 (easy-routes:defroute diff-comment-submit
@@ -1046,6 +1082,7 @@
                    :entity-type "review"
                    :entity-id (getf review :id))
         (notify-pr-review repo owner repo-name pr state)
+        (fire-webhooks (getf repo :id) "pull_request" (make-webhook-payload "pull_request.reviewed" :owner owner :repo repo-name :number (getf pr :number) :state state))
         (hunchentoot:redirect
          (format nil "/~A/~A/pulls/~A" owner repo-name number))))))
 
@@ -1101,6 +1138,7 @@
                  :entity-type "pull_request"
                  :entity-id (getf pr :id))
       (notify-pr-merged repo owner repo-name pr)
+      (fire-webhooks (getf repo :id) "pull_request" (make-webhook-payload "pull_request.merged" :owner owner :repo repo-name :number (getf pr :number)))
       (hunchentoot:redirect
        (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
 
@@ -1229,6 +1267,40 @@
                         :body (if (eq body 'null) nil body)
                         :changeset-version (getf pr :version))
          :status 201)))))
+
+;; ----------------------------------------------------------------------------
+;; Routes: API v1 — Commit Statuses
+
+(easy-routes:defroute api-list-commit-statuses
+    ("/api/v1/repos/:owner/:repo-name/statuses/:sha" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-list-commit-statuses repo))
+    (json-response (list-commit-statuses (getf repo :id) sha))))
+
+(easy-routes:defroute api-set-commit-status
+    ("/api/v1/repos/:owner/:repo-name/statuses/:sha" :method :post) ()
+  (unless *current-user-id*
+    (return-from api-set-commit-status (json-error "unauthorized" :status 401)))
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
+                                   (lambda () (json-error "not found" :status 404)))))
+    (unless repo (return-from api-set-commit-status repo))
+    (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+           (json (com.inuoe.jzon:parse body-text))
+           (state (gethash "state" json))
+           (context (gethash "context" json))
+           (description (gethash "description" json))
+           (target-url (gethash "target_url" json)))
+      (unless (member state '("pending" "success" "failure" "error") :test #'equal)
+        (return-from api-set-commit-status (json-error "invalid state")))
+      (json-response
+       (set-commit-status :repo-id (getf repo :id)
+                          :commit-sha sha
+                          :state state
+                          :context (or context "default")
+                          :description (when (and description (not (eq description 'null))) description)
+                          :target-url (when (and target-url (not (eq target-url 'null))) target-url))
+       :status 201))))
 
 ;; ----------------------------------------------------------------------------
 ;; Git helpers

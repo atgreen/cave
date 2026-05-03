@@ -48,6 +48,7 @@ clingon.intro, ghcr.io/ocicl/clingon@sha256:519c73567f308b0eac75a4a4ba468a8b4331
 clingon.test, ghcr.io/ocicl/clingon@sha256:519c73567f308b0eac75a4a4ba468a8b433184aa344eac2b79b8ab9f44b9db3c, clingon-20260429-94d4e2f/clingon.test.asd
 clss, ghcr.io/ocicl/clss@sha256:be439e8c90b3070c98206448a7ee867af9aecef97c1faf698e09fa3be4c0025a, CLSS-20260218-cd5f603/clss.asd
 collectors, ghcr.io/ocicl/collectors@sha256:38e5f0b915e1ed7e49fc75c97749e3cdc4ce1ca8fbdaee1aa2131fb9b00582bf, collectors-20240524-4c5e70c/collectors.asd
+colorize, ghcr.io/ocicl/colorize@sha256:6a4c03efd20266dd630b9009620b29c0e22fffdb30781e258bf5ae308b8bb8a2, colorize-20241110-c41fcc5/colorize.asd
 com.inuoe.jzon, ghcr.io/ocicl/com.inuoe.jzon@sha256:b0cfbc3d8fb3c09526d92575b40b13a68ad93be7edeb48fd69dcea053c5611a5, jzon-20251113-f05afbb/com.inuoe.jzon.asd
 com.inuoe.jzon-tests, ghcr.io/ocicl/com.inuoe.jzon@sha256:b0cfbc3d8fb3c09526d92575b40b13a68ad93be7edeb48fd69dcea053c5611a5, jzon-20251113-f05afbb/com.inuoe.jzon-tests.asd
 dexador, ghcr.io/ocicl/dexador@sha256:2e1ffc553039088c4ef9d30dc34f6b436fcccfa911340eb50f42199cd235394a, dexador-20260406-f068b40/dexador.asd
@@ -81,6 +82,7 @@ frugal-uuid, ghcr.io/ocicl/frugal-uuid@sha256:93f42fd1d2533631fab7bd53d2d6c0ba84
 gettext, ghcr.io/ocicl/gettext@sha256:ff132350df89f5fb7311acf2633480d5ccf715835920cd7530a36e3c0663f18a, gettext-20240503-a432020/gettext.asd
 gettext-example, ghcr.io/ocicl/gettext@sha256:ff132350df89f5fb7311acf2633480d5ccf715835920cd7530a36e3c0663f18a, gettext-20240503-a432020/gettext-example/gettext-example.asd
 gettext-tests, ghcr.io/ocicl/gettext@sha256:ff132350df89f5fb7311acf2633480d5ccf715835920cd7530a36e3c0663f18a, gettext-20240503-a432020/gettext-tests/gettext-tests.asd
+html-encode, ghcr.io/ocicl/html-encode@sha256:3e3248ba94ccd5a49f5272b44e0341de29924c52346759f16b0beae4888ec440, html-encode-1.2/html-encode.asd
 hunchentoot, ghcr.io/ocicl/hunchentoot@sha256:1dbccc1f9770d3d8917ef87d71720b4ec7f2d6bebf24a3072afca478b00b4427, hunchentoot-1.3.1/hunchentoot.asd
 in-nomine, ghcr.io/ocicl/in-nomine@sha256:deec864294e9c9631e972bbf0c5a1452af17568dbe4920c6fb329861583ae252, in-nomine-20250908-24bb48d/in-nomine.asd
 inferior-shell, ghcr.io/ocicl/inferior-shell@sha256:7e0f0ddd1bf490f3caabc421acfd184c57759d8623918f0dadce54526e76a52d, inferior-shell-20240503-1edd2e4/inferior-shell.asd

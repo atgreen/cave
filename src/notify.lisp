@@ -79,6 +79,51 @@
     (notify-repo-participants (getf repo :id) subject body
                               :exclude-user-id *current-user-id*)))
 
+;;; --- Webhooks ---
+
+(defun fire-webhooks (repo-id event payload)
+  "Fire all enabled webhooks for REPO-ID that subscribe to EVENT.
+   PAYLOAD is a hash-table that will be JSON-encoded."
+  (let ((hooks (list-repo-webhooks-for-event repo-id event)))
+    (dolist (hook hooks)
+      (handler-case
+          (let* ((json-body (com.inuoe.jzon:stringify payload))
+                 (headers `(("Content-Type" . "application/json")
+                            ("X-Cave-Event" . ,event)))
+                 ;; HMAC signature if secret is set
+                 (secret (getf hook :secret)))
+            (when (and secret (not (eq secret :null)))
+              (let ((sig (ironclad:byte-array-to-hex-string
+                          (ironclad:produce-mac
+                           (let ((mac (ironclad:make-mac :hmac
+                                       (flexi-streams:string-to-octets secret :external-format :utf-8)
+                                       :sha256)))
+                             (ironclad:update-mac mac
+                              (flexi-streams:string-to-octets json-body :external-format :utf-8))
+                             mac)))))
+                (push (cons "X-Cave-Signature" (format nil "sha256=~A" sig)) headers)))
+            (multiple-value-bind (body status)
+                (dex:post (getf hook :url)
+                          :content json-body
+                          :headers headers
+                          :connect-timeout 10
+                          :read-timeout 30)
+              (declare (ignore body))
+              (update-webhook-status (getf hook :id) status)))
+        (error (e)
+          (update-webhook-status (getf hook :id) 0 (princ-to-string e))
+          (llog:warn "Webhook delivery failed" :url (getf hook :url)
+                     :error (princ-to-string e)))))))
+
+(defun make-webhook-payload (event &rest pairs)
+  "Build a webhook payload hash-table."
+  (let ((ht (make-hash-table :test 'equal)))
+    (setf (gethash "event" ht) event)
+    (setf (gethash "timestamp" ht) (princ-to-string (get-universal-time)))
+    (loop for (k v) on pairs by #'cddr
+          do (setf (gethash (string-downcase (symbol-name k)) ht) v))
+    ht))
+
 (defun notify-pr-merged (repo owner-name repo-name pr)
   "Notify about a PR merge."
   (let ((subject (format nil "[~A/~A] PR #~A merged: ~A → ~A"

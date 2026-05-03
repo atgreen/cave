@@ -409,6 +409,99 @@
          'updated-at (:now)
     :where (:= 'id repo-id))))
 
+;;; ========================== WEBHOOKS ==========================
+
+(defun create-webhook (&key repo-id url secret events)
+  "Create a webhook config."
+  (postmodern:query
+   (:insert-into 'cave-webhooks
+    :set 'repo-id repo-id 'url url
+         'secret (or secret :null)
+         'events (or events "push,pull_request,issue")
+    :returning '*)
+   :plist))
+
+(defun list-webhooks (repo-id)
+  "List all webhooks for a repo."
+  (postmodern:query
+   (:order-by
+    (:select '* :from 'cave-webhooks :where (:= 'repo-id repo-id))
+    'created-at)
+   :plists))
+
+(defun delete-webhook (webhook-id repo-id)
+  "Delete a webhook."
+  (postmodern:execute
+   (:delete-from 'cave-webhooks
+    :where (:and (:= 'id webhook-id) (:= 'repo-id repo-id)))))
+
+(defun update-webhook-status (webhook-id status &optional error)
+  "Update last delivery status."
+  (postmodern:execute
+   (:update 'cave-webhooks
+    :set 'last-status status 'last-error (or error :null)
+    :where (:= 'id webhook-id))))
+
+(defun list-repo-webhooks-for-event (repo-id event)
+  "List enabled webhooks for a repo that subscribe to EVENT."
+  (postmodern:query
+   (:select '* :from 'cave-webhooks
+    :where (:and (:= 'repo-id repo-id)
+                 (:= 'enabled t)
+                 (:like 'events (format nil "%~A%" event))))
+   :plists))
+
+;;; ========================== COMMIT STATUSES ==========================
+
+(defun set-commit-status (&key repo-id commit-sha state context description target-url)
+  "Set or update a commit status. Upserts by (repo_id, commit_sha, context)."
+  (let ((existing (postmodern:query
+                   (:select 'id :from 'cave-commit-statuses
+                    :where (:and (:= 'repo-id repo-id)
+                                 (:= 'commit-sha commit-sha)
+                                 (:= 'context (or context "default"))))
+                   :single)))
+    (if existing
+        (progn
+          (postmodern:execute
+           (:update 'cave-commit-statuses
+            :set 'state state
+                 'description (or description :null)
+                 'target-url (or target-url :null)
+                 'updated-at (:now)
+            :where (:= 'id existing)))
+          (postmodern:query
+           (:select '* :from 'cave-commit-statuses :where (:= 'id existing))
+           :plist))
+        (postmodern:query
+         (:insert-into 'cave-commit-statuses
+          :set 'repo-id repo-id
+               'commit-sha commit-sha
+               'state state
+               'context (or context "default")
+               'description (or description :null)
+               'target-url (or target-url :null)
+          :returning '*)
+         :plist))))
+
+(defun list-commit-statuses (repo-id commit-sha)
+  "List all statuses for a commit."
+  (postmodern:query
+   (:order-by
+    (:select '* :from 'cave-commit-statuses
+     :where (:and (:= 'repo-id repo-id) (:= 'commit-sha commit-sha)))
+    'context)
+   :plists))
+
+(defun combined-commit-status (repo-id commit-sha)
+  "Get the combined status for a commit. Returns :success, :pending, :failure, or NIL."
+  (let ((statuses (list-commit-statuses repo-id commit-sha)))
+    (cond
+      ((null statuses) nil)
+      ((every (lambda (s) (equal (getf s :state) "success")) statuses) :success)
+      ((some (lambda (s) (member (getf s :state) '("failure" "error") :test #'equal)) statuses) :failure)
+      (t :pending))))
+
 ;;; ========================== USER THEMES ==========================
 
 (defun set-user-theme (user-id theme-name)

@@ -375,6 +375,35 @@ CREATE TABLE cave_repo_mirrors (
 CREATE INDEX idx_mirrors_repo ON cave_repo_mirrors (repo_id);
 CREATE INDEX idx_mirrors_direction ON cave_repo_mirrors (direction, enabled);")
 
+    (27 . "-- Webhooks
+CREATE TABLE cave_webhooks (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  secret VARCHAR(256),
+  events TEXT NOT NULL DEFAULT 'push,pull_request,issue',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  last_status INTEGER,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_webhooks_repo ON cave_webhooks (repo_id);")
+
+    (28 . "-- Commit statuses (external CI reports)
+CREATE TABLE cave_commit_statuses (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  commit_sha VARCHAR(64) NOT NULL,
+  state VARCHAR(16) NOT NULL CHECK (state IN ('pending', 'success', 'failure', 'error')),
+  context VARCHAR(128) NOT NULL DEFAULT 'default',
+  description TEXT,
+  target_url TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_commit_statuses_repo ON cave_commit_statuses (repo_id, commit_sha);
+CREATE UNIQUE INDEX idx_commit_statuses_unique ON cave_commit_statuses (repo_id, commit_sha, context);")
+
     (26 . "-- User themes
 ALTER TABLE cave_users ADD COLUMN theme VARCHAR(64) NOT NULL DEFAULT 'terminal-warmth';
 CREATE TABLE cave_user_themes (

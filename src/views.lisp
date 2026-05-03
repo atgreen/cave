@@ -806,7 +806,8 @@ function caveToggleCommentForm(btn) {
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge stack stack-items diff-raw
-                             diff-comments-json comment-action)
+                             diff-comments-json comment-action
+                             commit-statuses)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -935,6 +936,25 @@ function caveShowCommentForm(td) {
                     (or diff-comments-json "[]")
                     (com.inuoe.jzon:stringify (or comment-action ""))))))))
 
+      ;; Commit statuses (CI)
+      (when commit-statuses
+        (:section
+         (:h2 "Checks")
+         (:ul.eligibility-list
+          (dolist (s commit-statuses)
+            (:li :class (cond ((equal (getf s :state) "success") "rule-pass")
+                              ((equal (getf s :state) "pending") "")
+                              (t "rule-fail"))
+             (format nil "~A ~A — ~A"
+                     (cond ((equal (getf s :state) "success") "✓")
+                           ((equal (getf s :state) "pending") "⏳")
+                           (t "✗"))
+                     (getf s :context)
+                     (or (getf s :description) (getf s :state)))
+             (when (and (getf s :target-url) (not (eq (getf s :target-url) :null)))
+               (:a :href (getf s :target-url) :style "margin-left:var(--sp-2);font-size:.8rem"
+                "details")))))))
+
       ;; Merge eligibility
       (when (and eligibility
                  (not (getf pr :is-merged))
@@ -1005,7 +1025,7 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members checks mirrors message)
+(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks message)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
@@ -1111,6 +1131,46 @@ function caveShowCommentForm(td) {
          (:input :type "number" :id "check_timeout" :name "timeout" :value "60"
                  :min "5" :max "600" :style "width:5em"))
         (:button.btn.btn-primary :type "submit" "Add check")))
+
+      ;; Webhooks
+      (:section
+       (:h2 "Webhooks")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "HTTP callbacks fired on push, issue, and pull request events.")
+       (if webhooks
+           (:ul.data-list
+            (dolist (wh webhooks)
+              (:li
+               (:code :style "flex:1" (getf wh :url))
+               (:span.badge (getf wh :events))
+               (when (getf wh :last-status)
+                 (:span.badge
+                  :style (if (and (getf wh :last-status)
+                                  (>= (getf wh :last-status) 200)
+                                  (< (getf wh :last-status) 300))
+                             "border-color:var(--green);color:var(--green)"
+                             "border-color:var(--red);color:var(--red)")
+                  (format nil "~A" (getf wh :last-status))))
+               (:form :method "post" :style "display:inline;margin-left:auto"
+                :action (format nil "/~A/~A/settings/webhooks/~A/delete"
+                                owner-name repo-name (getf wh :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No webhooks configured."))
+       (:h3 "Add webhook")
+       (:form :method "post" :action (format nil "/~A/~A/settings/webhooks" owner-name repo-name)
+        (:div.field
+         (:label :for "wh_url" "Payload URL")
+         (:input :type "text" :id "wh_url" :name "url" :required t
+                 :placeholder "https://example.com/webhook"))
+        (:div.field
+         (:label :for "wh_secret" "Secret (optional, for HMAC signature)")
+         (:input :type "password" :id "wh_secret" :name "secret"
+                 :placeholder "a shared secret"))
+        (:div.field
+         (:label :for "wh_events" "Events (comma-separated)")
+         (:input :type "text" :id "wh_events" :name "events"
+                 :value "push,pull_request,issue"))
+        (:button.btn.btn-primary :type "submit" "Add webhook")))
 
       ;; Mirrors
       (:section
