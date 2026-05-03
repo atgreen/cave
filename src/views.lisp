@@ -608,75 +608,72 @@ require(['vs/editor/editor.main'], function() {
           (:a :href (format nil "/~A/~A/blob/~A?path=~A"
                             owner-name repo-name ref filename)
            filename))
-         (:table.diff-table
-          (:tbody
-           (dolist (line (getf file :lines))
-             (let* ((type (getf line :type))
-                    (content (getf line :content))
-                    (old-ln (getf line :old-line))
-                    (new-ln (getf line :new-line))
-                    (side (if new-ln "new" "old"))
-                    (ln (or new-ln old-ln))
-                    (comment-key (when ln (format nil "~A:~A:~A" filename ln side)))
-                    (line-comments (when (and comment-key diff-comments)
-                                    (gethash comment-key diff-comments))))
-               (case type
-                 (:hunk
-                  (:tr.diff-line-hunk
-                   (:td :colspan "5" content)))
-                 (:add
-                  (:tr.diff-line-add
-                   :data-file filename :data-line new-ln :data-side "new"
-                   (:td.diff-line-num "")
-                   (:td.diff-line-num (princ-to-string new-ln))
-                   (:td.diff-add-btn
-                    :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
-                   (:td.diff-gutter "+")
-                   (:td (:code.diff-code :class (format nil "language-~A" lang) content))))
-                 (:del
-                  (:tr.diff-line-del
-                   :data-file filename :data-line old-ln :data-side "old"
-                   (:td.diff-line-num (princ-to-string old-ln))
-                   (:td.diff-line-num "")
-                   (:td.diff-add-btn
-                    :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
-                   (:td.diff-gutter "-")
-                   (:td (:code.diff-code :class (format nil "language-~A" lang) content))))
-                 (:context
-                  (:tr.diff-line-context
-                   :data-file filename :data-line (or new-ln "") :data-side "new"
-                   (:td.diff-line-num (if old-ln (princ-to-string old-ln) ""))
-                   (:td.diff-line-num (if new-ln (princ-to-string new-ln) ""))
-                   (:td.diff-add-btn
-                    :onclick "caveToggleCommentForm(this)" (when can-comment "+"))
-                   (:td.diff-gutter " ")
-                   (:td (:code.diff-code :class (format nil "language-~A" lang) content)))))
-               ;; Render existing comments below this line
-               (when line-comments
-                 (:tr.diff-comment-row
-                  (:td :colspan "5"
-                   (render-inline-comments line-comments))))
-               ;; Hidden comment form
-               (when (and can-comment ln)
-                 (:tr.diff-comment-form :id (format nil "cf-~A-~A-~A" filename ln side)
-                  (:td :colspan "5"
-                   (:form :method "post" :action comment-action
-                    (:input :type "hidden" :name "file_path" :value filename)
-                    (:input :type "hidden" :name "line_number"
-                     :value (princ-to-string ln))
-                    (:input :type "hidden" :name "side" :value side)
-                    (:textarea :name "body" :rows "3" :required t
-                     :placeholder "Write a comment...")
-                    (:div :style "display:flex;gap:var(--sp-2);margin-top:var(--sp-2)"
-                     (:button.btn.btn-primary.btn-sm :type "submit" "Comment")
-                     (:button.btn.btn-sm :type "button"
-                      :onclick "this.closest('tr').classList.remove('active')"
-                      "Cancel"))))))))))))))
+         (:div.diff-body
+          (dolist (line (getf file :lines))
+            (let* ((type (getf line :type))
+                   (content (getf line :content))
+                   (old-ln (getf line :old-line))
+                   (new-ln (getf line :new-line))
+                   (side (if new-ln "new" "old"))
+                   (ln (or new-ln old-ln))
+                   (comment-key (when ln (format nil "~A:~A:~A" filename ln side)))
+                   (line-comments (when (and comment-key diff-comments)
+                                   (gethash comment-key diff-comments))))
+              (case type
+                (:hunk
+                 (:div.diff-line.diff-line-hunk
+                  (:span.diff-hunk-text content)))
+                (:add
+                 (:div.diff-line.diff-line-add
+                  :data-file filename :data-line new-ln :data-side "new"
+                  (:span.diff-line-num "")
+                  (:span.diff-line-num (princ-to-string new-ln))
+                  (:span.diff-add-btn :onclick "caveToggleCommentForm(this)"
+                   (when can-comment "+"))
+                  (:span.diff-gutter "+")
+                  (:code.diff-code :class (format nil "language-~A" lang) content)))
+                (:del
+                 (:div.diff-line.diff-line-del
+                  :data-file filename :data-line old-ln :data-side "old"
+                  (:span.diff-line-num (princ-to-string old-ln))
+                  (:span.diff-line-num "")
+                  (:span.diff-add-btn :onclick "caveToggleCommentForm(this)"
+                   (when can-comment "+"))
+                  (:span.diff-gutter "-")
+                  (:code.diff-code :class (format nil "language-~A" lang) content)))
+                (:context
+                 (:div.diff-line.diff-line-context
+                  :data-file filename :data-line (or new-ln "") :data-side "new"
+                  (:span.diff-line-num (if old-ln (princ-to-string old-ln) ""))
+                  (:span.diff-line-num (if new-ln (princ-to-string new-ln) ""))
+                  (:span.diff-add-btn :onclick "caveToggleCommentForm(this)"
+                   (when can-comment "+"))
+                  (:span.diff-gutter " ")
+                  (:code.diff-code :class (format nil "language-~A" lang) content))))
+              ;; Existing comments
+              (when line-comments
+                (:div.diff-comment-row
+                 (render-inline-comments line-comments)))
+              ;; Hidden comment form
+              (when (and can-comment ln)
+                (:div.diff-comment-form :id (format nil "cf-~A-~A-~A" filename ln side)
+                 (:form :method "post" :action comment-action
+                  (:input :type "hidden" :name "file_path" :value filename)
+                  (:input :type "hidden" :name "line_number"
+                   :value (princ-to-string ln))
+                  (:input :type "hidden" :name "side" :value side)
+                  (:textarea :name "body" :rows "3" :required t
+                   :placeholder "Write a comment...")
+                  (:div :style "display:flex;gap:var(--sp-2);margin-top:var(--sp-2)"
+                   (:button.btn.btn-primary.btn-sm :type "submit" "Comment")
+                   (:button.btn.btn-sm :type "button"
+                    :onclick "this.closest('.diff-comment-form').classList.remove('active')"
+                    "Cancel")))))))))))
     ;; Inline JS for toggling comment forms
     (when can-comment
       (:script (:raw "
 function caveToggleCommentForm(btn) {
-  var row = btn.closest('tr');
+  var row = btn.closest('.diff-line');
   var file = row.dataset.file;
   var line = row.dataset.line;
   var side = row.dataset.side;
@@ -689,7 +686,7 @@ function caveToggleCommentForm(btn) {
     }
   }
 }
-"))))
+")))))
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge stack stack-items diff-files diff-stat

@@ -610,53 +610,39 @@ code {
   color: var(--text-secondary);
 }
 .diff-file-header a { color: var(--link); }
-.diff-table { border-collapse: collapse; }
-.diff-table td {
-  padding: 0 var(--sp-3);
-  font-family: var(--font-mono);
-  font-size: .8rem;
-  line-height: 1.2;
-  white-space: nowrap;
-  vertical-align: top;
-}
-.diff-table td:last-child {
-  white-space: pre;
-  font-size: 0;
-}
-.diff-table td:last-child > code {
-  font-size: .8rem;
-  white-space: pre;
-}
 .diff-file { overflow-x: auto; }
-.diff-table .diff-line-add { background: var(--green-bg); color: var(--text); }
-.diff-table .diff-line-del { background: var(--red-bg); color: var(--text); }
-.diff-table .diff-line-hunk {
-  background: var(--blue-bg);
-  color: var(--blue);
-  padding: var(--sp-1) var(--sp-3);
+.diff-body { font-family: var(--font-mono); font-size: .8rem; }
+.diff-line {
+  display: grid;
+  grid-template-columns: 3.5em 3.5em 1.5em 1.2em 1fr;
+  line-height: 1.4;
 }
-.diff-table .diff-line-context { background: transparent; }
+.diff-line > span, .diff-line > code { padding: 0 2px; }
+.diff-line-add { background: var(--green-bg); color: var(--text); }
+.diff-line-del { background: var(--red-bg); color: var(--text); }
+.diff-line-hunk { display: block; background: var(--blue-bg); color: var(--blue); padding: var(--sp-1) var(--sp-3); }
+.diff-line-context { background: transparent; }
 code.diff-code,
 code.diff-code.hljs {
   background: none !important;
-  padding: 0 !important;
+  padding: 0 2px !important;
   margin: 0 !important;
   font-size: inherit;
   color: inherit;
-  display: inline;
-  line-height: inherit;
   white-space: pre;
+  min-width: 0;
 }
-.diff-table tr { line-height: 1.2; }
-.diff-table td { padding-top: 0 !important; padding-bottom: 0 !important; line-height: 1.2 !important; }
-.diff-table .hljs { line-height: 1.2 !important; }
+.diff-line-num {
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+  opacity: .6;
+  padding-right: var(--sp-2) !important;
+}
 .diff-gutter {
-  width: 1em;
   text-align: center;
   color: var(--text-muted);
   user-select: none;
-  padding: 0 var(--sp-1) !important;
-  line-height: inherit;
 }
 .diff-line-add .diff-gutter { color: var(--green); }
 .diff-line-del .diff-gutter { color: var(--red); }
