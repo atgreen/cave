@@ -618,6 +618,11 @@ code {
 .d2h-file-name { color: var(--link) !important; }
 .d2h-code-linenumber { color: var(--text-muted) !important; }
 .d2h-code-line { color: var(--text) !important; }
+.d2h-wrapper, .d2h-code-line, .d2h-code-linenumber,
+.d2h-code-side-line, .d2h-file-name {
+  font-family: var(--font-mono) !important;
+  font-size: .8rem !important;
+}
 .diff-body { font-family: var(--font-mono); font-size: .8rem; }
 .diff-line {
   display: flex;
