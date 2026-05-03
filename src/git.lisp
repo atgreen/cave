@@ -122,6 +122,37 @@
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
+(defun git-merge-branch (repo-path source-branch target-branch)
+  "Merge SOURCE-BRANCH into TARGET-BRANCH in a bare repo.
+   Uses a temporary worktree to perform the merge. Returns T on success, NIL on failure."
+  (let ((tmpdir (format nil "/tmp/cave-merge-~A" (ironclad:byte-array-to-hex-string
+                                                   (ironclad:random-data 8)))))
+    (unwind-protect
+         (let ((exit-code
+                (progn
+                  ;; Create temp worktree on the target branch
+                  (multiple-value-bind (_o _e code)
+                      (git-run repo-path "worktree" "add" tmpdir target-branch)
+                    (declare (ignore _o _e))
+                    (unless (zerop code) (return-from git-merge-branch nil)))
+                  ;; Merge source into target
+                  (multiple-value-bind (_o _e code)
+                      (uiop:run-program
+                       (list "git" "-C" tmpdir "merge" "--no-edit" source-branch)
+                       :output '(:string :stripped t)
+                       :error-output '(:string :stripped t)
+                       :ignore-error-status t)
+                    (declare (ignore _o _e))
+                    code))))
+           (zerop exit-code))
+      ;; Cleanup worktree
+      (uiop:run-program (list "git" "-C" (namestring repo-path)
+                              "worktree" "remove" "--force" tmpdir)
+                         :ignore-error-status t
+                         :output :string :error-output :string)
+      (when (probe-file tmpdir)
+        (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
+
 (defun git-diff (repo-path base-ref head-ref)
   "Get diff between two refs."
   (multiple-value-bind (output _err exit-code)

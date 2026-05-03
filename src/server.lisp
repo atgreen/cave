@@ -792,6 +792,14 @@
         (unless (pull-request-mergeable-p eligibility)
           (setf (hunchentoot:return-code*) 422)
           (return-from merge-pull-request-submit "Pull request is not mergeable")))
+      ;; Perform the actual git merge
+      (let* ((disk-path (repo-disk-path owner repo-name))
+             (source (getf pr :source-branch))
+             (target (getf pr :target-branch))
+             (merged (git-merge-branch disk-path source target)))
+        (unless merged
+          (setf (hunchentoot:return-code*) 409)
+          (return-from merge-pull-request-submit "Merge failed — conflicts?")))
       (merge-pull-request (getf pr :id))
       (log-event "pr.merged"
                  :user-id *current-user-id*
