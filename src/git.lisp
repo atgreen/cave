@@ -122,30 +122,50 @@
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-merge-branch (repo-path source-branch target-branch)
+(defun git-merge-branch (repo-path source-branch target-branch &key squash)
   "Merge SOURCE-BRANCH into TARGET-BRANCH in a bare repo.
-   Uses a temporary worktree to perform the merge. Returns T on success, NIL on failure."
+   If SQUASH is T, squash all commits into one.
+   Uses a temporary worktree. Returns T on success, NIL on failure."
   (let ((tmpdir (format nil "/tmp/cave-merge-~A" (ironclad:byte-array-to-hex-string
                                                    (ironclad:random-data 8)))))
     (unwind-protect
          (let ((exit-code
                 (progn
-                  ;; Create temp worktree on the target branch
                   (multiple-value-bind (_o _e code)
                       (git-run repo-path "worktree" "add" tmpdir target-branch)
                     (declare (ignore _o _e))
                     (unless (zerop code) (return-from git-merge-branch nil)))
-                  ;; Merge source into target
-                  (multiple-value-bind (_o _e code)
-                      (uiop:run-program
-                       (list "git" "-C" tmpdir "merge" "--no-edit" source-branch)
-                       :output '(:string :stripped t)
-                       :error-output '(:string :stripped t)
-                       :ignore-error-status t)
-                    (declare (ignore _o _e))
-                    code))))
+                  (if squash
+                      ;; Squash merge: merge --squash then commit
+                      (multiple-value-bind (_o _e code)
+                          (uiop:run-program
+                           (list "git" "-C" tmpdir "merge" "--squash" source-branch)
+                           :output '(:string :stripped t)
+                           :error-output '(:string :stripped t)
+                           :ignore-error-status t)
+                        (declare (ignore _o _e))
+                        (unless (zerop code) (return-from git-merge-branch nil))
+                        ;; Commit the squashed changes
+                        (multiple-value-bind (_o2 _e2 code2)
+                            (uiop:run-program
+                             (list "git" "-C" tmpdir "commit" "--no-edit"
+                                   "-m" (format nil "Squash merge ~A into ~A"
+                                                source-branch target-branch))
+                             :output '(:string :stripped t)
+                             :error-output '(:string :stripped t)
+                             :ignore-error-status t)
+                          (declare (ignore _o2 _e2))
+                          code2))
+                      ;; Regular merge
+                      (multiple-value-bind (_o _e code)
+                          (uiop:run-program
+                           (list "git" "-C" tmpdir "merge" "--no-edit" source-branch)
+                           :output '(:string :stripped t)
+                           :error-output '(:string :stripped t)
+                           :ignore-error-status t)
+                        (declare (ignore _o _e))
+                        code)))))
            (zerop exit-code))
-      ;; Cleanup worktree
       (uiop:run-program (list "git" "-C" (namestring repo-path)
                               "worktree" "remove" "--force" tmpdir)
                          :ignore-error-status t

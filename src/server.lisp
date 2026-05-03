@@ -199,7 +199,8 @@
       (html-response
        (view-dashboard :orgs (list-user-orgs *current-user-id*)
                        :repos (list-user-repos *current-user-id* :include-private t)
-                       :username (getf *current-user* :username)))
+                       :username (getf *current-user* :username)
+                       :events (list-recent-events :limit 20)))
       (hunchentoot:redirect "/login")))
 
 ;; ----------------------------------------------------------------------------
@@ -1125,7 +1126,9 @@
       (let* ((disk-path (repo-disk-path owner repo-name))
              (source (getf pr :source-branch))
              (target (getf pr :target-branch))
-             (merged (git-merge-branch disk-path source target)))
+             (strategy (hunchentoot:post-parameter "strategy"))
+             (merged (git-merge-branch disk-path source target
+                                       :squash (equal strategy "squash"))))
         (unless merged
           (setf (hunchentoot:return-code*) 409)
           (return-from merge-pull-request-submit "Merge failed — conflicts?")))

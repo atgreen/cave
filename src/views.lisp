@@ -80,7 +80,20 @@
 
 ;;; ========================== DASHBOARD ==========================
 
-(defun view-dashboard (&key orgs repos username)
+(defun format-event (event)
+  "Format an event for display. Returns a human-readable string."
+  (let ((type (getf event :event-type))
+        (actor (or (getf event :actor) "someone")))
+    (cond
+      ((equal type "issue.created") (format nil "~A opened an issue" actor))
+      ((equal type "review.submitted") (format nil "~A submitted a review" actor))
+      ((equal type "pr.merged") (format nil "~A merged a pull request" actor))
+      ((equal type "repo.created") (format nil "~A created a repository" actor))
+      ((equal type "repo.forked") (format nil "~A forked a repository" actor))
+      ((equal type "changeset.merged") (format nil "~A merged a changeset" actor))
+      (t (format nil "~A: ~A" actor type)))))
+
+(defun view-dashboard (&key orgs repos username events)
   "Render the dashboard."
   (page (:title "Dashboard — Cave")
     (:h1 "Dashboard")
@@ -110,7 +123,19 @@
              (:a :href (format nil "/o/~A" (getf org :name))
               (getf org :display-name))
              (:span.badge (getf org :role)))))
-         (:p.empty "You're not a member of any organization yet.")))))
+         (:p.empty "You're not a member of any organization yet.")))
+
+    (when events
+      (:section
+       (:h2 "Recent activity")
+       (:ul.issue-list
+        (dolist (ev events)
+          (:li
+           (:span :style "color:var(--text-muted);font-size:.8rem;width:12em;flex-shrink:0"
+            (princ-to-string (getf ev :created-at)))
+           (:span (format-event ev))
+           (when (and (getf ev :repo-name) (not (eq (getf ev :repo-name) :null)))
+             (:span.badge :style "margin-left:auto" (getf ev :repo-name))))))))))
 
 ;;; ========================== PERSONAL REPO CREATION ==========================
 
@@ -970,7 +995,11 @@ function caveShowCommentForm(td) {
          (when can-merge
            (:form :method "post"
             :action (format nil "/~A/~A/pulls/~A/merge" org-name repo-name cs-num)
-            (:button.btn.btn-primary :type "submit" "Merge pull request")))))
+            (:div :style "display:flex;gap:var(--sp-2)"
+             (:button.btn.btn-primary :type "submit" :name "strategy" :value "merge"
+              "Merge")
+             (:button.btn :type "submit" :name "strategy" :value "squash"
+              "Squash and merge"))))))
 
       ;; Reviews
       (:section
