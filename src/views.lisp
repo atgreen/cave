@@ -927,7 +927,7 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members message)
+(defun view-repo-settings (&key owner-name repo members checks message)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
@@ -999,7 +999,40 @@ function caveShowCommentForm(td) {
            (:option :value "writer" "Writer")
            (:option :value "reviewer" "Reviewer")
            (:option :value "admin" "Admin")))
-         (:button.btn.btn-primary :type "submit" "Add member")))))))
+         (:button.btn.btn-primary :type "submit" "Add member"))))
+
+      ;; Server-side checks
+      (:section
+       (:h2 "Push checks")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Commands that run on every push. Push is rejected if any check exits non-zero.")
+       (if checks
+           (:ul.data-list
+            (dolist (chk checks)
+              (:li
+               (:strong (getf chk :name))
+               (:code :style "margin-left:var(--sp-2)" (getf chk :command))
+               (:span.badge (format nil "~As timeout" (getf chk :timeout-seconds)))
+               (:form :method "post" :style "display:inline;margin-left:auto"
+                :action (format nil "/~A/~A/settings/checks/~A/delete"
+                                owner-name repo-name (getf chk :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No push checks configured."))
+       (:h3 "Add check")
+       (:form :method "post" :action (format nil "/~A/~A/settings/checks" owner-name repo-name)
+        (:div.field
+         (:label :for "check_name" "Name")
+         (:input :type "text" :id "check_name" :name "name" :required t
+                 :placeholder "e.g. lint"))
+        (:div.field
+         (:label :for "check_command" "Command")
+         (:input :type "text" :id "check_command" :name "command" :required t
+                 :placeholder "e.g. make lint"))
+        (:div.field
+         (:label :for "check_timeout" "Timeout (seconds)")
+         (:input :type "number" :id "check_timeout" :name "timeout" :value "60"
+                 :min "5" :max "600" :style "width:5em"))
+        (:button.btn.btn-primary :type "submit" "Add check"))))))
 
 ;;; ========================== ADMIN & SETTINGS ==========================
 

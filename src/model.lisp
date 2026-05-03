@@ -386,6 +386,36 @@
          'updated-at (:now)
     :where (:= 'id repo-id))))
 
+;;; ========================== CHECK CONFIGS ==========================
+
+(defun list-check-configs (repo-id)
+  "List all check configs for a repo."
+  (postmodern:query
+   (:order-by
+    (:select '* :from 'cave-check-configs
+     :where (:= 'repo-id repo-id))
+    'name)
+   :plists))
+
+(defun create-check-config (&key repo-id name command timeout-seconds)
+  "Create a check config."
+  (postmodern:query
+   (:insert-into 'cave-check-configs
+    :set 'repo-id repo-id
+         'name name
+         'command command
+         'timeout-seconds (or timeout-seconds 60)
+    :returning '*)
+   :plist))
+
+(defun delete-check-config (config-id repo-id)
+  "Delete a check config."
+  (postmodern:execute
+   (:delete-from 'cave-check-configs
+    :where (:and (:= 'id config-id) (:= 'repo-id repo-id)))))
+
+;;; ========================== REPO NUMBERS ==========================
+
 (defun next-repo-number (repo-id)
   "Atomically get and increment the next number for a repo (shared by issues and pull requests)."
   (let ((result (postmodern:query

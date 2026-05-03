@@ -538,7 +538,8 @@
         (return-from repo-settings-page "Forbidden"))
       (html-response
        (view-repo-settings :owner-name owner :repo repo
-                           :members (list-repo-members (getf repo :id)))))))
+                           :members (list-repo-members (getf repo :id))
+                           :checks (list-check-configs (getf repo :id)))))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -588,6 +589,38 @@
         (return-from repo-remove-member-submit "Forbidden"))
       (let ((uid (parse-integer user-id :junk-allowed t)))
         (when uid (remove-repo-member (getf repo :id) uid)))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-add-check-submit
+    ("/:owner/:repo-name/settings/checks" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-add-check-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-add-check-submit "Forbidden"))
+      (let ((name (hunchentoot:post-parameter "name"))
+            (command (hunchentoot:post-parameter "command"))
+            (timeout (parse-integer (or (hunchentoot:post-parameter "timeout") "60")
+                                    :junk-allowed t)))
+        (when (and name command (not (uiop:emptyp name)) (not (uiop:emptyp command)))
+          (handler-case
+              (create-check-config :repo-id (getf repo :id)
+                                   :name name :command command
+                                   :timeout-seconds (or timeout 60))
+            (error () nil))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-delete-check-submit
+    ("/:owner/:repo-name/settings/checks/:check-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-delete-check-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-delete-check-submit "Forbidden"))
+      (let ((cid (parse-integer check-id :junk-allowed t)))
+        (when cid (delete-check-config cid (getf repo :id))))
       (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
 ;; Routes: Issues
@@ -933,6 +966,13 @@
     (ensure-directories-exist path)
     (uiop:run-program (list "git" "init" "--bare" "-b" "main" (namestring path))
                        :output :string :error-output :string)
+    ;; Install pre-receive hook
+    (let ((hook-path (merge-pathnames "hooks/pre-receive" path)))
+      (with-open-file (out hook-path :direction :output :if-exists :supersede)
+        (format out "#!/bin/bash~%exec cave run-checks --config /etc/cave.conf --repo ~A/~A~%"
+                owner repo-name))
+      (uiop:run-program (list "chmod" "+x" (namestring hook-path))
+                         :ignore-error-status t))
     ;; Ensure the cave user owns the repo (server may run as root)
     (uiop:run-program (list "chown" "-R" "cave:cave" (namestring path))
                        :output :string :error-output :string :ignore-error-status t)

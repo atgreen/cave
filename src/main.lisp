@@ -172,6 +172,66 @@
    :examples '(("Update authorized_keys:" .
                 "cave update-keys --config /etc/cave.conf"))))
 
+;;; --- RUN-CHECKS subcommand ---
+
+(defun make-run-checks-command ()
+  (clingon:make-command
+   :name "run-checks"
+   :description "Run server-side push checks for a repo (called by pre-receive hook)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "repo" :key :repo :required t
+              :description "Repo path as owner/name"))
+   :handler #'handle-run-checks))
+
+(defun handle-run-checks (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (repo-path (clingon:getopt cmd :repo)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
+           (owner (first parts))
+           (name (second parts))
+           (repo (find-repo owner name)))
+      (unless repo
+        (format *error-output* "~&cave: repo not found: ~A~%" repo-path)
+        (disconnect-db)
+        (uiop:quit 0)) ;; Don't block push for unknown repos
+      (let ((checks (list-check-configs (getf repo :id)))
+            (disk-path (repo-disk-path owner name))
+            (failed nil))
+        (dolist (chk checks)
+          (when (getf chk :enabled)
+            (format t "~&Running check: ~A~%" (getf chk :name))
+            (handler-case
+                (multiple-value-bind (output error-output exit-code)
+                    (uiop:run-program
+                     (list "bash" "-c" (getf chk :command))
+                     :output '(:string :stripped t)
+                     :error-output '(:string :stripped t)
+                     :ignore-error-status t
+                     :directory (namestring disk-path))
+                  (if (zerop exit-code)
+                      (format t "  ✓ ~A passed~%" (getf chk :name))
+                      (progn
+                        (format t "  ✗ ~A failed (exit ~A)~%" (getf chk :name) exit-code)
+                        (when output (format t "    ~A~%" output))
+                        (when (and error-output (not (uiop:emptyp error-output)))
+                          (format t "    ~A~%" error-output))
+                        (push (getf chk :name) failed))))
+              (error (e)
+                (format t "  ✗ ~A error: ~A~%" (getf chk :name) e)
+                (push (getf chk :name) failed)))))
+        (disconnect-db)
+        (when failed
+          (format *error-output* "~&cave: push rejected — ~A check~:P failed: ~{~A~^, ~}~%"
+                  (length failed) (nreverse failed))
+          (uiop:quit 1))))))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -186,7 +246,8 @@
                        (make-serve-command)
                        (make-migrate-command)
                        (make-git-shell-command)
-                       (make-update-keys-command))
+                       (make-update-keys-command)
+                       (make-run-checks-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 
