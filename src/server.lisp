@@ -221,6 +221,9 @@
                         :description (unless (uiop:emptyp description) description)
                         :creator-id *current-user-id*)
             (hunchentoot:redirect (format nil "/o/~A" name)))
+        (cl-postgres-error:unique-violation ()
+          (html-response
+           (view-new-org :error (format nil "An organization named \"~A\" already exists." name))))
         (error (e)
           (html-response (view-new-org :error (format nil "~A" e))))))))
 
