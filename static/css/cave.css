@@ -611,6 +611,13 @@ code {
   color: var(--text-secondary);
 }
 .diff-file-header a { color: var(--link); }
+/* diff2html dark theme overrides */
+#diff2html-container { margin-top: var(--sp-4); }
+.d2h-wrapper { background: transparent !important; }
+.d2h-file-header { background: var(--surface) !important; border-color: var(--border) !important; }
+.d2h-file-name { color: var(--link) !important; }
+.d2h-code-linenumber { color: var(--text-muted) !important; }
+.d2h-code-line { color: var(--text) !important; }
 .diff-body { font-family: var(--font-mono); font-size: .8rem; }
 .diff-line {
   display: flex;

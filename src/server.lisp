@@ -492,12 +492,10 @@
         (t
          (let ((commit (git-show-commit disk-path clean-hash)))
            (unless commit (return-from commit-page (not-found)))
-           (let* ((diff-raw (git-commit-diff disk-path clean-hash))
-                  (diff-files (parse-diff diff-raw))
-                  (diff-stat (git-commit-stat disk-path clean-hash)))
+           (let ((diff-raw (git-commit-diff disk-path clean-hash)))
              (html-response
               (view-commit :owner-name owner :repo repo :commit commit
-                           :diff-files diff-files :diff-stat diff-stat)))))))))
+                           :diff-raw diff-raw)))))))))
 
 (easy-routes:defroute new-org-repo-page ("/o/:org-name/-/new-repo" :method :get) ()
   (when (require-login)
@@ -645,19 +643,13 @@
              (disk-path (repo-disk-path owner repo-name))
              (source (getf pr :source-branch))
              (target (getf pr :target-branch))
-             (diff-raw (git-diff disk-path target source))
-             (diff-files (parse-diff diff-raw))
-             (diff-stat (git-diff-stat disk-path target source))
-             ;; Inline diff comments
-             (raw-comments (list-diff-comments (getf pr :id)))
-             (diff-comments (group-diff-comments raw-comments)))
+             (diff-raw (git-diff disk-path target source)))
         (html-response
          (view-pull-request :owner-name owner :repo repo :pr pr
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
                          :stack stack :stack-items stack-items
-                         :diff-files diff-files :diff-stat diff-stat
-                         :diff-comments diff-comments))))))
+                         :diff-raw diff-raw))))))
 
 ;; Inline diff comment
 (easy-routes:defroute diff-comment-submit

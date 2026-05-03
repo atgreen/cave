@@ -415,7 +415,26 @@ require(['vs/editor/editor.main'], function() {
 
 ;;; ========================== COMMIT PAGE ==========================
 
-(defun view-commit (&key owner-name repo commit diff-files diff-stat)
+(defun render-diff2html (raw-diff)
+  "Render a raw unified diff using diff2html. Emits a div + scripts."
+  (spinneret:with-html
+    (:div#diff2html-container "")
+    (:raw "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/css/diff2html.min.css'>")
+    (:script :src "https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html-ui.min.js" "")
+    (:script
+     (:raw (format nil "
+document.addEventListener('DOMContentLoaded', function() {
+  var diff = ~A;
+  var target = document.getElementById('diff2html-container');
+  var config = {drawFileList: true, matching: 'lines', outputFormat: 'line-by-line',
+                highlight: true, colorScheme: 'dark'};
+  var ui = new Diff2HtmlUI(target, diff, config);
+  ui.draw();
+  ui.highlightCode();
+});
+" (com.inuoe.jzon:stringify (or raw-diff "")))))))
+
+(defun view-commit (&key owner-name repo commit diff-raw diff-stat)
   "Render a commit detail page with diff."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" (getf commit :short-hash) owner-name repo-name))
@@ -433,12 +452,8 @@ require(['vs/editor/editor.main'], function() {
        (:span :style "margin-left:var(--sp-2);color:var(--text-muted)"
         (getf commit :date))
        (:code :style "margin-left:auto" (getf commit :hash)))
-      (when diff-stat
-        (:pre.diff-stat diff-stat))
-      (when diff-files
-        (render-diff diff-files owner-name repo-name (getf commit :hash))
-                (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
-        (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){var lang=el.className.match(/language-(\\S+)/);var result=lang?hljs.highlight(el.textContent,{language:lang[1],ignoreIllegals:true}):null;if(result)el.innerHTML=result.value;});"))))))
+      (when diff-raw
+        (render-diff2html diff-raw)))))
 
 ;;; ========================== ISSUE PAGES ==========================
 
@@ -688,8 +703,7 @@ function caveToggleCommentForm(btn) {
 ")))))
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
-                             can-merge stack stack-items diff-files diff-stat
-                             diff-comments)
+                             can-merge stack stack-items diff-raw)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -729,19 +743,10 @@ function caveToggleCommentForm(btn) {
                     (t "open"))))))))
 
       ;; Diff
-      (when diff-files
+      (when diff-raw
         (:section
-         (:h2 (format nil "Changes (~A file~:P)" (length diff-files)))
-         (when diff-stat
-           (:pre.diff-stat diff-stat))
-         (render-diff diff-files org-name repo-name
-                      (getf pr :source-branch)
-                      :diff-comments diff-comments
-                      :can-comment (when *current-user* t)
-                      :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
-                                              org-name repo-name cs-num))
-                  (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
-         (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){var lang=el.className.match(/language-(\\S+)/);var result=lang?hljs.highlight(el.textContent,{language:lang[1],ignoreIllegals:true}):null;if(result)el.innerHTML=result.value;});"))))
+         (:h2 "Changes")
+         (render-diff2html diff-raw)))
 
       ;; Merge eligibility
       (when (and eligibility
