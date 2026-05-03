@@ -273,6 +273,13 @@
     (page (:title (format nil "~A/~A — Cave" org-name repo-name))
       (render-repo-tabs org-name repo-name :overview :repo repo)
       (when (getf repo :description) (:p (getf repo :description)))
+      ;; Fork button (don't show on own repos)
+      (when (and *current-user*
+                 (not (equal (getf *current-user* :username) org-name)))
+        (:form :method "post" :style "margin-bottom:var(--sp-4)"
+         :action (format nil "/~A/~A/fork" org-name repo-name)
+         (:button.btn :type "submit"
+          (format nil "Fork to ~A/~A" (getf *current-user* :username) repo-name))))
 
       (if empty
           (:section

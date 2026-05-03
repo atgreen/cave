@@ -437,6 +437,54 @@
                       :recent-commits recent-commits
                       :file-tree file-tree))))))
 
+;; Fork
+(easy-routes:defroute fork-repo-submit
+    ("/:owner/:repo-name/fork" :method :post) ()
+  (when (require-login)
+    (let ((source-repo (find-repo owner repo-name)))
+      (unless source-repo (return-from fork-repo-submit (not-found)))
+      (let* ((username (getf *current-user* :username))
+             (existing (find-repo username repo-name)))
+        (when existing
+          ;; Already forked
+          (hunchentoot:redirect (format nil "/~A/~A" username repo-name))
+          (return-from fork-repo-submit nil))
+        ;; Create the repo record
+        (let ((repo (create-repo :owner-id *current-user-id*
+                                 :name repo-name
+                                 :description (format nil "Fork of ~A/~A" owner repo-name))))
+          ;; Clone the bare repo on disk
+          (let ((source-path (repo-disk-path owner repo-name))
+                (dest-path (repo-disk-path username repo-name)))
+            (ensure-directories-exist dest-path)
+            (uiop:run-program (list "git" "clone" "--bare"
+                                    (namestring source-path)
+                                    (namestring dest-path))
+                               :output :string :error-output :string)
+            ;; Install hooks
+            (let ((pre-hook (merge-pathnames "hooks/pre-receive" dest-path)))
+              (with-open-file (out pre-hook :direction :output :if-exists :supersede)
+                (format out "#!/bin/bash~%exec cave run-checks --config /etc/cave.conf --repo ~A/~A~%"
+                        username repo-name))
+              (uiop:run-program (list "chmod" "+x" (namestring pre-hook))
+                                 :ignore-error-status t))
+            (let ((post-hook (merge-pathnames "hooks/post-receive" dest-path)))
+              (with-open-file (out post-hook :direction :output :if-exists :supersede)
+                (format out "#!/bin/bash~%cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
+                        username repo-name)
+                (when (string= repo-name "cave-themes")
+                  (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
+                          username)))
+              (uiop:run-program (list "chmod" "+x" (namestring post-hook))
+                                 :ignore-error-status t))
+            ;; Fix ownership
+            (uiop:run-program (list "chown" "-R" "cave:cave" (namestring dest-path))
+                               :output :string :error-output :string :ignore-error-status t))
+          (log-event "repo.forked" :user-id *current-user-id*
+                                   :repo-id (getf repo :id)
+                                   :metadata (format nil "{\"source\": \"~A/~A\"}" owner repo-name))
+          (hunchentoot:redirect (format nil "/~A/~A" username repo-name)))))))
+
 ;; Tree (directory) browsing
 (easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
