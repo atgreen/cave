@@ -171,16 +171,20 @@
       (:input :type "text" :id "description" :name "description"))
      (:button.btn.btn-primary :type "submit" "Create organization"))))
 
-(defun view-org (&key org repos is-member)
+(defun view-org (&key org repos is-member is-admin)
   "Render an org page."
   (let ((org-name (getf org :name)))
     (page (:title (format nil "~A — Cave" (getf org :display-name)))
       (:h1 (getf org :display-name))
       (when (getf org :description)
         (:p (getf org :description)))
-      (when is-member
-        (:a.btn.btn-primary :href (format nil "/o/~A/-/new-repo" org-name)
-         "New repository"))
+      (:div :style "display:flex;gap:var(--sp-2);margin-bottom:var(--sp-4)"
+       (when is-member
+         (:a.btn.btn-primary :href (format nil "/o/~A/-/new-repo" org-name)
+          "New repository"))
+       (when is-admin
+         (:a.btn :href (format nil "/o/~A/-/settings" org-name)
+          "Settings")))
       (:h2 "Repositories")
       (if repos
           (:ul.repo-list
@@ -193,6 +197,39 @@
               (when (getf repo :description)
                 (:span.desc (getf repo :description))))))
           (:p.empty "No repositories yet.")))))
+
+(defun view-org-settings (&key org members)
+  "Render org settings page with member management."
+  (let ((org-name (getf org :name)))
+    (page (:title (format nil "Settings — ~A" (getf org :display-name)))
+      (:h1 (format nil "~A settings" (getf org :display-name)))
+
+      (:section
+       (:h2 "Members")
+       (if members
+           (:ul.data-list
+            (dolist (m members)
+              (:li
+               (render-avatar (getf m :email) :size 20)
+               (:strong (getf m :username))
+               (:span.badge (getf m :role))
+               (:form :method "post" :style "display:inline;margin-left:auto"
+                :action (format nil "/o/~A/-/settings/members/~A/remove"
+                                org-name (getf m :user-id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No members."))
+       (:h3 "Add member")
+       (:form :method "post" :action (format nil "/o/~A/-/settings/members" org-name)
+        (:div :style "display:flex;gap:var(--sp-2);align-items:end"
+         (:div.field :style "margin-bottom:0"
+          (:label :for "member_username" "Username")
+          (:input :type "text" :id "member_username" :name "username" :required t))
+         (:div.field :style "margin-bottom:0"
+          (:label :for "member_role" "Role")
+          (:select :id "member_role" :name "role"
+           (:option :value "member" "Member")
+           (:option :value "admin" "Admin")))
+         (:button.btn.btn-primary :type "submit" "Add member")))))))
 
 ;;; ========================== REPO PAGES ==========================
 

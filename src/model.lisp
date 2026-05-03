@@ -226,6 +226,17 @@
     :where (:and (:= 'org-id org-id) (:= 'user-id user-id)))
    :single))
 
+(defun list-org-members (org-id)
+  "List all members of an org with usernames."
+  (postmodern:query
+   (:order-by
+    (:select 'cave-org-members.* 'cave-users.username 'cave-users.email
+     :from 'cave-org-members
+     :inner-join 'cave-users :on (:= 'cave-org-members.user-id 'cave-users.id)
+     :where (:= 'cave-org-members.org-id org-id))
+    'cave-users.username)
+   :plists))
+
 (defun add-org-member (org-id user-id &key (role "member"))
   "Add a member to an org."
   (postmodern:execute

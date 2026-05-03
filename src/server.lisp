@@ -365,7 +365,46 @@
     (let* ((is-member (and *current-user-id*
                            (org-member-role (getf org :id) *current-user-id*)))
            (repos (list-org-repos (getf org :id) :include-private is-member)))
-      (html-response (view-org :org org :repos repos :is-member is-member)))))
+      (html-response (view-org :org org :repos repos :is-member is-member
+                               :is-admin (equal is-member "admin"))))))
+
+(easy-routes:defroute org-settings-page ("/o/:org-name/-/settings" :method :get) ()
+  (when (require-login)
+    (let ((org (find-org-by-name org-name)))
+      (unless org (return-from org-settings-page (not-found)))
+      (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from org-settings-page "Forbidden"))
+      (html-response
+       (view-org-settings :org org :members (list-org-members (getf org :id)))))))
+
+(easy-routes:defroute org-add-member-submit ("/o/:org-name/-/settings/members" :method :post) ()
+  (when (require-login)
+    (let ((org (find-org-by-name org-name)))
+      (unless org (return-from org-add-member-submit (not-found)))
+      (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from org-add-member-submit "Forbidden"))
+      (let* ((username (hunchentoot:post-parameter "username"))
+             (role (or (hunchentoot:post-parameter "role") "member"))
+             (user (find-user-by-username username)))
+        (when user
+          (handler-case
+              (add-org-member (getf org :id) (getf user :id) :role role)
+            (error () nil))))
+      (hunchentoot:redirect (format nil "/o/~A/-/settings" org-name)))))
+
+(easy-routes:defroute org-remove-member-submit
+    ("/o/:org-name/-/settings/members/:user-id/remove" :method :post) ()
+  (when (require-login)
+    (let ((org (find-org-by-name org-name)))
+      (unless org (return-from org-remove-member-submit (not-found)))
+      (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from org-remove-member-submit "Forbidden"))
+      (let ((uid (parse-integer user-id :junk-allowed t)))
+        (when uid (remove-org-member (getf org :id) uid)))
+      (hunchentoot:redirect (format nil "/o/~A/-/settings" org-name)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Owner (user or org) profile — single-segment catch-all
@@ -384,7 +423,8 @@
                              (org-member-role (getf org :id) *current-user-id*)))
              (repos (list-org-repos (getf org :id) :include-private is-member)))
         (return-from owner-page
-          (html-response (view-org :org org :repos repos :is-member is-member))))))
+          (html-response (view-org :org org :repos repos :is-member is-member
+                                   :is-admin (equal is-member "admin")))))))
   (not-found))
 
 ;; ----------------------------------------------------------------------------
