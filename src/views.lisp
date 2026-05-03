@@ -206,12 +206,14 @@
         (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
        (:button.btn.btn-primary :type "submit" "Create repository")))))
 
-(defun render-repo-tabs (owner-name repo-name &optional active-tab)
+(defun render-repo-tabs (owner-name repo-name &optional active-tab &key repo)
   "Render the repo breadcrumb and navigation tab bar."
   (spinneret:with-html
     (render-breadcrumbs
      (list (list (format nil "/~A" owner-name) owner-name)
            repo-name))
+    (when (and repo (getf repo :is-private)) (:span.badge "private"))
+    (when (and repo (getf repo :is-archived)) (:span.badge "archived"))
     (:nav.repo-tabs
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :overview))
       :href (format nil "/~A/~A" owner-name repo-name) "Overview")
@@ -262,10 +264,8 @@
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "~A/~A — Cave" org-name repo-name))
-      (when (getf repo :is-private) (:span.badge "private"))
+      (render-repo-tabs org-name repo-name :overview :repo repo)
       (when (getf repo :description) (:p (getf repo :description)))
-
-      (render-repo-tabs org-name repo-name :overview)
 
       (if empty
           (:section
@@ -291,7 +291,7 @@
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Code — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :code)
+      (render-repo-tabs org-name repo-name :code :repo repo)
 
       ;; Branch/tag bar + last commit
       (:div.repo-info-bar
@@ -337,7 +337,7 @@
   "Render a directory listing at a path."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :code)
+      (render-repo-tabs owner-name repo-name :code :repo repo)
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
@@ -366,7 +366,7 @@
         (filename (let ((slash (position #\/ path :from-end t)))
                     (if slash (subseq path (1+ slash)) path))))
     (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :code)
+      (render-repo-tabs owner-name repo-name :code :repo repo)
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
@@ -464,7 +464,7 @@ document.addEventListener('DOMContentLoaded', function() {
   "Render a commit detail page with diff."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" (getf commit :short-hash) owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :code)
+      (render-repo-tabs owner-name repo-name :code :repo repo)
       (render-breadcrumbs
        (list (list (format nil "/~A" owner-name) owner-name)
              (list (format nil "/~A/~A" owner-name repo-name) repo-name)
@@ -488,7 +488,7 @@ document.addEventListener('DOMContentLoaded', function() {
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Issues — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :issues)
+      (render-repo-tabs org-name repo-name :issues :repo repo)
       (:div.issues-header
        (:div.issue-filters
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "open"))
@@ -514,7 +514,7 @@ document.addEventListener('DOMContentLoaded', function() {
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title "New issue — Cave")
-      (render-repo-tabs org-name repo-name :issues)
+      (render-repo-tabs org-name repo-name :issues :repo repo)
       (:h1 "New issue")
       (:form :method "post" :action (format nil "/~A/~A/issues/new" org-name repo-name)
        (:div.field
@@ -531,7 +531,7 @@ document.addEventListener('DOMContentLoaded', function() {
         (repo-name (getf repo :name))
         (issue-num (getf issue :number)))
     (page (:title (format nil "#~A ~A — Cave" issue-num (getf issue :title)))
-      (render-repo-tabs org-name repo-name :issues)
+      (render-repo-tabs org-name repo-name :issues :repo repo)
       (:div.issue-header
        (:h1 (format nil "#~A ~A" issue-num (getf issue :title)))
        (:span.badge (getf issue :status)))
@@ -579,7 +579,7 @@ document.addEventListener('DOMContentLoaded', function() {
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Pull requests — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :pulls)
+      (render-repo-tabs org-name repo-name :pulls :repo repo)
       (:div.issues-header
        (:div.issue-filters
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "open"))
@@ -609,7 +609,7 @@ document.addEventListener('DOMContentLoaded', function() {
   "Render the new pull request form."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "New pull request — %s/%s" owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :pulls)
+      (render-repo-tabs owner-name repo-name :pulls :repo repo)
       (:h1 "New pull request")
       (:form :method "post" :action (format nil "/~A/~A/pulls/new" owner-name repo-name)
        (:div.field
@@ -761,7 +761,7 @@ function caveToggleCommentForm(btn) {
         (repo-name (getf repo :name))
         (cs-num (getf pr :number)))
     (page (:title (format nil "#~A ~A — Cave" cs-num (getf pr :source-branch)))
-      (render-repo-tabs org-name repo-name :pulls)
+      (render-repo-tabs org-name repo-name :pulls :repo repo)
 
       (:div.issue-header
        (:h1 (format nil "#~A ~A" cs-num (getf pr :source-branch)))
@@ -958,7 +958,7 @@ function caveShowCommentForm(td) {
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :settings)
+      (render-repo-tabs owner-name repo-name :settings :repo repo)
       (:h1 "Repository settings")
       (when message
         (:div.alert message))
