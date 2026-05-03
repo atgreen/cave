@@ -1143,9 +1143,9 @@ function caveShowCommentForm(td) {
               (:li
                (:code :style "flex:1" (getf wh :url))
                (:span.badge (getf wh :events))
-               (when (getf wh :last-status)
+               (when (and (getf wh :last-status) (not (eq (getf wh :last-status) :null)))
                  (:span.badge
-                  :style (if (and (getf wh :last-status)
+                  :style (if (and (numberp (getf wh :last-status))
                                   (>= (getf wh :last-status) 200)
                                   (< (getf wh :last-status) 300))
                              "border-color:var(--green);color:var(--green)"
