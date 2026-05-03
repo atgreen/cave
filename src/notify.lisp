@@ -124,6 +124,25 @@
           do (setf (gethash (string-downcase (symbol-name k)) ht) v))
     ht))
 
+;;; --- Automation scheduling ---
+
+(defun schedule-automations (repo-id trigger &key commit-sha ref triggered-by-id)
+  "Schedule automation runs for all enabled definitions matching TRIGGER."
+  (let ((defs (list-automation-definitions repo-id :trigger trigger)))
+    (dolist (def defs)
+      (let ((run (create-automation-run
+                  :repo-id repo-id
+                  :definition-id (getf def :id)
+                  :definition-name (getf def :name)
+                  :trigger-event trigger
+                  :commit-sha commit-sha
+                  :ref ref
+                  :triggered-by-id triggered-by-id)))
+        (llog:info "Scheduled automation"
+                   :name (getf def :name)
+                   :trigger trigger
+                   :run-id (getf run :id))))))
+
 (defun notify-pr-merged (repo owner-name repo-name pr)
   "Notify about a PR merge."
   (let ((subject (format nil "[~A/~A] PR #~A merged: ~A → ~A"

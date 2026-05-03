@@ -7,7 +7,7 @@ QUADLET_DIR = $(HOME)/.config/containers/systemd
 .PHONY: help build cav load lint clean test test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
-       tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
+       runner-image tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
        prod-backup prod-restore prod-rollback prod-images
 
 help: ## Show available targets
@@ -131,6 +131,9 @@ observability-down: ## Stop and remove observability containers
 	podman rm prometheus postgres-exporter grafana 2>/dev/null; true
 
 # --- Production (quadlet/systemd) ---
+
+runner-image: cave ## Build the runner container image
+	podman build -t cave-runner:latest -f Containerfile.runner .
 
 tag: ## Tag current commit as a release (e.g., make tag V=0.2.0)
 	@if [ -z "$(V)" ]; then echo "Usage: make tag V=0.2.0"; exit 1; fi

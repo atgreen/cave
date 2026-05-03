@@ -1,0 +1,32 @@
+## Cave Runner — self-hosted automation runner with Podman-in-Podman
+##
+## Build:  make runner-image
+## Run:    podman run --privileged cave-runner:latest \
+##           --url grpc://cave:9443 --token <registration-token>
+
+FROM fedora:42
+
+# Install Podman (for nested container execution), git, and build tools
+RUN dnf install -y podman fuse-overlayfs git make gcc && dnf clean all && \
+    useradd -m -s /bin/bash runner && \
+    echo "runner:100000:65536" > /etc/subuid && \
+    echo "runner:100000:65536" > /etc/subgid
+
+# Configure rootless Podman for the runner user
+RUN mkdir -p /home/runner/.config/containers && \
+    echo '[storage]' > /home/runner/.config/containers/storage.conf && \
+    echo 'driver = "overlay"' >> /home/runner/.config/containers/storage.conf && \
+    echo '[storage.options.overlay]' >> /home/runner/.config/containers/storage.conf && \
+    echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/runner/.config/containers/storage.conf && \
+    chown -R runner:runner /home/runner
+
+# Copy the cave binary
+COPY cave /usr/bin/cave
+RUN chmod +x /usr/bin/cave
+
+# Create workspace directory
+RUN mkdir -p /workspace && chown runner:runner /workspace
+WORKDIR /workspace
+
+USER runner
+ENTRYPOINT ["cave", "runner"]

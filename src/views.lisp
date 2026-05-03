@@ -292,6 +292,8 @@
       :href (format nil "/~A/~A/issues" owner-name repo-name) "Issues")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulls))
       :href (format nil "/~A/~A/pulls" owner-name repo-name) "Pull requests")
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :runs))
+      :href (format nil "/~A/~A/runs" owner-name repo-name) "Runs")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
       :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings"))))
 
@@ -1052,9 +1054,40 @@ function caveShowCommentForm(td) {
             :style "border-color:var(--danger)" "Request changes")
            (:button.btn :type "submit" :name "state" :value "comment" "Comment"))))))))
 
+;;; ========================== AUTOMATION RUNS ==========================
+
+(defun view-runs (&key owner-name repo runs)
+  "Render the automation runs list."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Runs — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :runs :repo repo)
+      (:h2 "Automation runs")
+      (if runs
+          (:ul.data-list
+           (dolist (r runs)
+             (:li :style "flex-wrap:wrap"
+              (:strong (getf r :definition-name))
+              (:span.badge (getf r :trigger-event))
+              (:span.badge
+               :style (cond ((equal (getf r :status) "success")
+                              "border-color:var(--green);color:var(--green)")
+                             ((member (getf r :status) '("failure" "timed_out" "cancelled")
+                                      :test #'equal)
+                              "border-color:var(--red);color:var(--red)")
+                             ((equal (getf r :status) "running")
+                              "border-color:var(--accent);color:var(--accent)")
+                             (t ""))
+               (getf r :status))
+              (when (and (getf r :commit-sha) (not (eq (getf r :commit-sha) :null)))
+                (:code :style "font-size:.75rem;color:var(--text-muted)"
+                 (subseq (getf r :commit-sha) 0 (min 7 (length (getf r :commit-sha))))))
+              (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
+               (princ-to-string (getf r :created-at))))))
+          (:p.empty "No automation runs yet.")))))
+
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks message)
+(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations message)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
@@ -1127,6 +1160,54 @@ function caveShowCommentForm(td) {
            (:option :value "reviewer" "Reviewer")
            (:option :value "admin" "Admin")))
          (:button.btn.btn-primary :type "submit" "Add member"))))
+
+      ;; Automations
+      (:section
+       (:h2 "Automations")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Commands executed by runners on repo events.")
+       (if automations
+           (:ul.data-list
+            (dolist (a automations)
+              (:li
+               (:strong (getf a :name))
+               (:span.badge (getf a :trigger))
+               (:code :style "margin-left:var(--sp-2)" (getf a :command))
+               (when (and (getf a :runner-labels) (not (uiop:emptyp (getf a :runner-labels))))
+                 (:span.badge (getf a :runner-labels)))
+               (:form :method "post" :style "display:inline;margin-left:auto"
+                :action (format nil "/~A/~A/settings/automations/~A/delete"
+                                owner-name repo-name (getf a :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No automations configured."))
+       (:h3 "Add automation")
+       (:form :method "post" :action (format nil "/~A/~A/settings/automations" owner-name repo-name)
+        (:div.field
+         (:label :for "auto_name" "Name")
+         (:input :type "text" :id "auto_name" :name "name" :required t
+                 :placeholder "e.g. lint"))
+        (:div.field
+         (:label :for "auto_trigger" "Trigger")
+         (:select :id "auto_trigger" :name "trigger"
+          (:option :value "post_receive" "Post receive (after push)")
+          (:option :value "pre_receive" "Pre receive (block push)")
+          (:option :value "changeset_opened" "PR opened")
+          (:option :value "changeset_updated" "PR updated")
+          (:option :value "changeset_merged" "PR merged")
+          (:option :value "manual" "Manual")))
+        (:div.field
+         (:label :for "auto_command" "Command")
+         (:input :type "text" :id "auto_command" :name "command" :required t
+                 :placeholder "e.g. make test"))
+        (:div.field
+         (:label :for "auto_labels" "Runner labels (optional)")
+         (:input :type "text" :id "auto_labels" :name "runner_labels"
+                 :placeholder "e.g. linux,fast"))
+        (:div.field
+         (:label :for "auto_timeout" "Timeout (seconds)")
+         (:input :type "number" :id "auto_timeout" :name "timeout" :value "60"
+                 :min "5" :max "3600" :style "width:5em"))
+        (:button.btn.btn-primary :type "submit" "Add automation")))
 
       ;; Server-side checks
       (:section
@@ -1277,7 +1358,7 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== ADMIN & SETTINGS ==========================
 
-(defun view-admin (&key users message)
+(defun view-admin (&key users runners registration-token message)
   "Render the admin panel."
   (page (:title "Admin — Cave")
     (:h1 "Instance administration")
@@ -1300,7 +1381,43 @@ function caveShowCommentForm(td) {
                       (if (search "/realms/" issuer)
                           (format nil "~A/admin/" (subseq issuer 0 (search "/realms/" issuer)))
                           "#"))
-       "Manage users in Keycloak")))))
+       "Manage users in Keycloak"))
+
+    (:section
+     (:h2 "Runners")
+     (if runners
+         (:table.data-table
+          (:thead (:tr (:th "Name") (:th "Scope") (:th "Labels") (:th "Status") (:th "Last seen") (:th "")))
+          (:tbody
+           (dolist (r runners)
+             (:tr
+              (:td (getf r :name))
+              (:td (:span.badge (getf r :scope)))
+              (:td (let ((l (getf r :labels)))
+                     (if (and l (not (uiop:emptyp l)) (not (eq l :null))) l "")))
+              (:td (:span.badge
+                    :style (cond ((equal (getf r :status) "online")
+                                   "border-color:var(--green);color:var(--green)")
+                                  ((equal (getf r :status) "disabled")
+                                   "border-color:var(--red);color:var(--red)")
+                                  (t ""))
+                    (getf r :status)))
+              (:td :style "color:var(--text-muted);font-size:.75rem"
+               (let ((ls (getf r :last-seen-at)))
+                 (if (and ls (not (eq ls :null))) (princ-to-string ls) "never")))
+              (:td
+               (:form :method "post" :style "display:inline"
+                :action (format nil "/-/admin/runners/~A/delete" (getf r :id))
+                (:button.btn.btn-sm :type "submit" "Delete")))))))
+         (:p.empty "No runners registered."))
+     (when registration-token
+       (:div.alert :style "border:1px solid var(--accent);padding:.75rem;margin:1rem 0"
+        (:strong "Registration token created.") " Use this to register a runner:" (:br)
+        (:code :style "word-break:break-all" (getf registration-token :token))
+        (:p :style "margin-top:.5rem;color:var(--text-muted);font-size:.85rem"
+         "Run: " (:code "cave runner --url grpc://cave-host:9443 --token <token>"))))
+     (:form :method "post" :action "/-/admin/runners/token"
+      (:button.btn.btn-primary :type "submit" "Generate registration token"))))))
 
 (defun view-settings (&key ssh-keys api-tokens new-token ssh-error
                            generated-private-key generated-key-name)

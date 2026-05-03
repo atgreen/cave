@@ -236,7 +236,27 @@
     (unless (getf *current-user* :is-admin)
       (setf (hunchentoot:return-code*) 403)
       (return-from admin-page "Forbidden"))
-    (html-response (view-admin :users (list-users :active-only nil)))))
+    (html-response (view-admin :users (list-users :active-only nil)
+                               :runners (list-runners)))))
+
+(easy-routes:defroute admin-create-runner-token ("/-/admin/runners/token" :method :post) ()
+  (when (require-login)
+    (unless (getf *current-user* :is-admin)
+      (setf (hunchentoot:return-code*) 403)
+      (return-from admin-create-runner-token "Forbidden"))
+    (let ((token (create-registration-token :created-by-id *current-user-id*)))
+      (html-response (view-admin :users (list-users :active-only nil)
+                                 :runners (list-runners)
+                                 :registration-token token)))))
+
+(easy-routes:defroute admin-delete-runner ("/-/admin/runners/:runner-id/delete" :method :post) ()
+  (when (require-login)
+    (unless (getf *current-user* :is-admin)
+      (setf (hunchentoot:return-code*) 403)
+      (return-from admin-delete-runner "Forbidden"))
+    (let ((rid (parse-integer runner-id :junk-allowed t)))
+      (when rid (delete-runner rid)))
+    (hunchentoot:redirect "/-/admin")))
 
 
 ;; ----------------------------------------------------------------------------
@@ -649,7 +669,8 @@
                            :members (list-repo-members (getf repo :id))
                            :checks (list-check-configs (getf repo :id))
                            :mirrors (list-mirrors (getf repo :id))
-                           :webhooks (list-webhooks (getf repo :id)))))))
+                           :webhooks (list-webhooks (getf repo :id))
+                           :automations (list-automation-definitions (getf repo :id)))))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -738,6 +759,51 @@
       ;; Delete from DB (cascades to issues, PRs, etc.)
       (delete-repo (getf repo :id))
       (hunchentoot:redirect (format nil "/~A" owner)))))
+
+;; Automation runs page
+(easy-routes:defroute runs-page ("/:owner/:repo-name/runs" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from runs-page repo))
+    (html-response
+     (view-runs :owner-name owner :repo repo
+                :runs (list-automation-runs (getf repo :id))))))
+
+;; Automation definition management
+(easy-routes:defroute repo-add-automation-submit
+    ("/:owner/:repo-name/settings/automations" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-add-automation-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-add-automation-submit "Forbidden"))
+      (let ((name (hunchentoot:post-parameter "name"))
+            (trigger (hunchentoot:post-parameter "trigger"))
+            (command (hunchentoot:post-parameter "command"))
+            (runner-labels (hunchentoot:post-parameter "runner_labels"))
+            (timeout (parse-integer (or (hunchentoot:post-parameter "timeout") "60")
+                                    :junk-allowed t)))
+        (when (and name command (not (uiop:emptyp name)) (not (uiop:emptyp command)))
+          (handler-case
+              (create-automation-definition
+               :repo-id (getf repo :id)
+               :name name :trigger trigger :command command
+               :runner-labels (or runner-labels "")
+               :timeout-seconds (or timeout 60))
+            (error () nil))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-delete-automation-submit
+    ("/:owner/:repo-name/settings/automations/:auto-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-delete-automation-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-delete-automation-submit "Forbidden"))
+      (let ((aid (parse-integer auto-id :junk-allowed t)))
+        (when aid (delete-automation-definition aid (getf repo :id))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
 (easy-routes:defroute repo-add-webhook-submit
     ("/:owner/:repo-name/settings/webhooks" :method :post) ()
@@ -972,6 +1038,11 @@
                                       :source-branch source
                                       :target-branch target
                                       :head-commit head-commit)))
+        ;; Schedule automations
+        (schedule-automations (getf repo :id) "changeset_opened"
+                              :commit-sha head-commit
+                              :ref source
+                              :triggered-by-id *current-user-id*)
         (hunchentoot:redirect
          (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number)))))))
 
@@ -1144,6 +1215,10 @@
                  :entity-type "pull_request"
                  :entity-id (getf pr :id))
       (notify-pr-merged repo owner repo-name pr)
+      (schedule-automations (getf repo :id) "changeset_merged"
+                            :commit-sha (getf pr :head-commit)
+                            :ref (getf pr :source-branch)
+                            :triggered-by-id *current-user-id*)
       (fire-webhooks (getf repo :id) "pull_request" (make-webhook-payload "pull_request.merged" :owner owner :repo repo-name :number (getf pr :number)))
       (hunchentoot:redirect
        (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
@@ -1329,10 +1404,12 @@
                 owner repo-name))
       (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                          :ignore-error-status t))
-    ;; Install post-receive hook (push mirrors + theme sync)
+    ;; Install post-receive hook (mirrors, themes, automations)
     (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
       (with-open-file (out hook-path :direction :output :if-exists :supersede)
         (format out "#!/bin/bash~%cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
+                owner repo-name)
+        (format out "cave post-receive --config /etc/cave.conf --repo ~A/~A &~%"
                 owner repo-name)
         (when (string= repo-name "cave-themes")
           (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"

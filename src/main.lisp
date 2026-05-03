@@ -293,6 +293,191 @@
                   (length failed) (nreverse failed))
           (uiop:quit 1))))))
 
+;;; --- RUNNER subcommand ---
+
+(defun make-runner-command ()
+  (clingon:make-command
+   :name "runner"
+   :description "Start a Cave runner agent"
+   :options (list
+             (clingon:make-option :string
+              :long-name "url" :key :url :required t
+              :description "Cave gRPC server URL (e.g. grpc://localhost:9443)")
+             (clingon:make-option :string
+              :long-name "token" :key :token :required t
+              :description "Registration token")
+             (clingon:make-option :string
+              :long-name "name" :key :name
+              :description "Runner name (default: hostname)")
+             (clingon:make-option :string
+              :long-name "labels" :key :labels
+              :description "Comma-separated labels (e.g. linux,fast)")
+             (clingon:make-option :boolean
+              :long-name "ephemeral" :key :ephemeral
+              :description "Exit after one task"))
+   :handler #'handle-runner))
+
+(defun parse-grpc-url (url)
+  "Parse grpc://host:port into (host port)."
+  (let* ((stripped (if (search "grpc://" url)
+                       (subseq url 7)
+                       url))
+         (colon (position #\: stripped)))
+    (if colon
+        (list (subseq stripped 0 colon)
+              (parse-integer (subseq stripped (1+ colon)) :junk-allowed t))
+        (list stripped 9443))))
+
+(defun handle-runner (cmd)
+  (let* ((url (clingon:getopt cmd :url))
+         (token (clingon:getopt cmd :token))
+         (name (or (clingon:getopt cmd :name)
+                   (machine-instance)
+                   "cave-runner"))
+         (runner-labels (or (clingon:getopt cmd :labels) ""))
+         (ephemeral (clingon:getopt cmd :ephemeral))
+         (parsed (parse-grpc-url url))
+         (host (first parsed))
+         (port (second parsed)))
+
+    (format t "~&Cave Runner~%  Server: ~A:~A~%  Name: ~A~%  Labels: ~A~%  Ephemeral: ~A~%"
+            host port name runner-labels ephemeral)
+
+    ;; Connect to gRPC server
+    (let ((channel (ag-grpc:make-channel host port)))
+      (handler-case
+          (progn
+            ;; Register
+            (format t "~&Registering...~%")
+            (let* ((req (make-instance 'cave::register-runner-request
+                                       :name name
+                                       :runner-labels runner-labels
+                                       :ephemeral ephemeral
+                                       :registration-token token))
+                   (resp (ag-grpc:grpc-call channel
+                                            "/cave.runner.RunnerService/RegisterRunner"
+                                            req 'cave::register-runner-response)))
+              (let ((auth-token (slot-value resp 'cave::auth-token))
+                    (runner-id (slot-value resp 'cave::runner-id)))
+                (format t "  Registered as runner #~A~%" runner-id)
+
+                ;; Main loop: heartbeat + poll for tasks
+                (loop
+                  ;; Heartbeat
+                  (handler-case
+                      (ag-grpc:grpc-call channel
+                                         "/cave.runner.RunnerService/DeclareRunner"
+                                         (make-instance 'cave::declare-runner-request
+                                                        :runner-labels runner-labels)
+                                         'cave::declare-runner-response
+                                         :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))
+                    (error () nil))
+
+                  ;; Fetch task
+                  (handler-case
+                      (let ((task-resp (ag-grpc:grpc-call channel
+                                                          "/cave.runner.RunnerService/FetchTask"
+                                                          (make-instance 'cave::fetch-task-request)
+                                                          'cave::fetch-task-response
+                                                          :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
+                        (when (slot-value task-resp 'cave::has-task)
+                          (let ((run-id (slot-value task-resp 'cave::run-id))
+                                (repo-owner (slot-value task-resp 'cave::repo-owner))
+                                (repo-name (slot-value task-resp 'cave::repo-name))
+                                (command (slot-value task-resp 'cave::command)))
+                            (format t "~&Task #~A: ~A/~A — ~A~%" run-id repo-owner repo-name command)
+
+                            ;; Update status to running
+                            (ag-grpc:grpc-call channel
+                                               "/cave.runner.RunnerService/UpdateTaskStatus"
+                                               (make-instance 'cave::update-task-status-request
+                                                              :run-id run-id :status "running")
+                                               'cave::update-task-status-response
+                                               :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))
+
+                            ;; Execute the command
+                            (multiple-value-bind (output error-output exit-code)
+                                (uiop:run-program (list "bash" "-c" command)
+                                                  :output '(:string :stripped t)
+                                                  :error-output '(:string :stripped t)
+                                                  :ignore-error-status t)
+                              ;; Send log
+                              (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
+                                (ag-grpc:grpc-call channel
+                                                   "/cave.runner.RunnerService/AppendTaskLog"
+                                                   (make-instance 'cave::append-task-log-request
+                                                                  :run-id run-id :chunk log)
+                                                   'cave::append-task-log-response
+                                                   :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
+
+                              ;; Report final status
+                              (let ((status (if (zerop exit-code) "success" "failure")))
+                                (format t "  Result: ~A (exit ~A)~%" status exit-code)
+                                (ag-grpc:grpc-call channel
+                                                   "/cave.runner.RunnerService/UpdateTaskStatus"
+                                                   (make-instance 'cave::update-task-status-request
+                                                                  :run-id run-id :status status)
+                                                   'cave::update-task-status-response
+                                                   :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
+
+                            ;; Exit if ephemeral
+                            (when ephemeral
+                              (format t "~&Ephemeral runner — exiting.~%")
+                              (return)))))
+                    (error (e)
+                      (format *error-output* "  Poll error: ~A~%" e)))
+
+                  ;; Wait before next poll
+                  (sleep 5)))))
+        (error (e)
+          (format *error-output* "~&Runner error: ~A~%" e)
+          (uiop:quit 1))))))
+
+;;; --- POST-RECEIVE subcommand ---
+
+(defun make-post-receive-command ()
+  (clingon:make-command
+   :name "post-receive"
+   :description "Handle post-receive events (schedule automations)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "repo" :key :repo :required t
+              :description "Repo path as owner/name"))
+   :handler #'handle-post-receive))
+
+(defun handle-post-receive (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (repo-path (clingon:getopt cmd :repo)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
+           (owner (first parts))
+           (name (second parts))
+           (repo (find-repo owner name)))
+      (when repo
+        ;; Read stdin for updated refs (format: oldsha newsha refname)
+        (let ((refs nil))
+          (handler-case
+              (loop for line = (read-line *standard-input* nil nil)
+                    while line
+                    do (let ((parts (uiop:split-string line :separator '(#\Space))))
+                         (when (>= (length parts) 3)
+                           (push (list :old (first parts)
+                                       :new (second parts)
+                                       :ref (third parts))
+                                 refs))))
+            (error () nil))
+          ;; Schedule post_receive automations for each updated ref
+          (dolist (r refs)
+            (schedule-automations (getf repo :id) "post_receive"
+                                  :commit-sha (getf r :new)
+                                  :ref (getf r :ref))))))
+    (disconnect-db)))
+
 ;;; --- SYNC-THEMES subcommand ---
 
 (defun make-sync-themes-command ()
@@ -507,6 +692,8 @@
                        (make-git-shell-command)
                        (make-update-keys-command)
                        (make-run-checks-command)
+                       (make-post-receive-command)
+                       (make-runner-command)
                        (make-sync-mirrors-command)
                        (make-sync-themes-command))
    :handler (lambda (cmd)
