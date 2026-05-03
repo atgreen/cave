@@ -615,6 +615,8 @@ code {
 .diff-line {
   display: flex;
   line-height: 1.4;
+  width: max-content;
+  min-width: 100%;
 }
 .diff-line > span { flex-shrink: 0; }
 .diff-line-num { width: 3.5em; }
