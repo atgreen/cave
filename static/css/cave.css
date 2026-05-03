@@ -618,6 +618,46 @@ code {
 .d2h-file-name { color: var(--link) !important; }
 .d2h-code-linenumber { color: var(--text-muted) !important; }
 .d2h-code-line { color: var(--text) !important; }
+/* diff2html inline comments */
+.cave-add-comment-btn {
+  position: absolute;
+  left: -2px;
+  top: 0;
+  color: var(--accent-dim);
+  cursor: pointer;
+  font-size: .7rem;
+  opacity: 0;
+  transition: opacity 0.1s;
+  user-select: none;
+}
+tr:hover .cave-add-comment-btn { opacity: 1; }
+.cave-add-comment-btn:hover { color: var(--accent); }
+.cave-comment-cell {
+  background: var(--surface) !important;
+  padding: var(--sp-3) var(--sp-4) !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+.cave-ic {
+  border-left: 2px solid var(--accent-dim);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: .8rem;
+}
+.cave-ic:last-child { margin-bottom: 0; }
+.cave-ic-date { color: var(--text-muted); font-size: .7rem; margin-left: var(--sp-2); }
+.cave-ic-body { margin-top: var(--sp-1); white-space: pre-wrap; color: var(--text); }
+.cave-comment-form-row textarea {
+  width: 100%;
+  min-height: 60px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: .9rem;
+  padding: var(--sp-2) var(--sp-3);
+}
 .d2h-wrapper, .d2h-code-line, .d2h-code-linenumber,
 .d2h-code-side-line, .d2h-file-name {
   font-family: var(--font-mono) !important;

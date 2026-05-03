@@ -703,7 +703,8 @@ function caveToggleCommentForm(btn) {
 ")))))
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
-                             can-merge stack stack-items diff-raw)
+                             can-merge stack stack-items diff-raw
+                             diff-comments-json comment-action)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -742,11 +743,91 @@ function caveToggleCommentForm(btn) {
                     ((getf item :is-closed) "closed")
                     (t "open"))))))))
 
-      ;; Diff
+      ;; Diff with inline comments
       (when diff-raw
         (:section
          (:h2 "Changes")
-         (render-diff2html diff-raw)))
+         (render-diff2html diff-raw)
+         (when (and comment-action *current-user*)
+           (:script
+            (:raw (format nil "
+var caveComments = ~A;
+var caveCommentAction = ~A;
+document.addEventListener('DOMContentLoaded', function() {
+  // Wait for diff2html to render
+  setTimeout(function() {
+    // Inject existing comments
+    caveComments.forEach(function(c) {
+      var file = c.file_path, line = c.line_number, side = c.side;
+      var wrapper = caveGetFileWrapper(file);
+      if (!wrapper) return;
+      var tr = caveGetLineRow(wrapper, line, side);
+      if (!tr) return;
+      var commentRow = document.createElement('tr');
+      commentRow.className = 'cave-inline-comment';
+      commentRow.innerHTML = '<td colspan=\"2\" class=\"cave-comment-cell\"><div class=\"cave-ic\"><strong>' +
+        caveEsc(c.username) + '</strong> <span class=\"cave-ic-date\">' + caveEsc(c.created_at) + '</span>' +
+        '<div class=\"cave-ic-body\">' + caveEsc(c.body) + '</div></div></td>';
+      tr.parentNode.insertBefore(commentRow, tr.nextSibling);
+    });
+    // Inject + buttons on each line
+    document.querySelectorAll('.d2h-code-linenumber:not(.d2h-info)').forEach(function(td) {
+      var btn = document.createElement('span');
+      btn.className = 'cave-add-comment-btn';
+      btn.textContent = '+';
+      btn.onclick = function() { caveShowCommentForm(td); };
+      td.style.position = 'relative';
+      td.appendChild(btn);
+    });
+  }, 500);
+});
+function caveEsc(s) { var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function caveGetFileWrapper(filename) {
+  var wrappers = document.querySelectorAll('.d2h-file-wrapper');
+  for (var i=0; i<wrappers.length; i++) {
+    var nameEl = wrappers[i].querySelector('.d2h-file-name');
+    if (nameEl && nameEl.textContent.trim() === filename) return wrappers[i];
+  }
+  return null;
+}
+function caveGetLineRow(wrapper, lineNum, side) {
+  var cls = side === 'old' ? 'line-num1' : 'line-num2';
+  var divs = wrapper.querySelectorAll('.' + cls);
+  for (var i=0; i<divs.length; i++) {
+    if (parseInt(divs[i].textContent) === lineNum) return divs[i].closest('tr');
+  }
+  return null;
+}
+function caveShowCommentForm(td) {
+  var existing = td.closest('tr').nextElementSibling;
+  if (existing && existing.classList.contains('cave-comment-form-row')) {
+    existing.remove(); return;
+  }
+  var tr = td.closest('tr');
+  var wrapper = td.closest('.d2h-file-wrapper');
+  var filename = wrapper.querySelector('.d2h-file-name').textContent.trim();
+  var num1 = td.querySelector('.line-num1');
+  var num2 = td.querySelector('.line-num2');
+  var lineNum = num2 && num2.textContent.trim() ? num2.textContent.trim() : (num1 ? num1.textContent.trim() : '0');
+  var side = num2 && num2.textContent.trim() ? 'new' : 'old';
+  var formRow = document.createElement('tr');
+  formRow.className = 'cave-comment-form-row';
+  formRow.innerHTML = '<td colspan=\"2\" class=\"cave-comment-cell\">' +
+    '<form method=\"post\" action=\"' + caveCommentAction + '\">' +
+    '<input type=\"hidden\" name=\"file_path\" value=\"' + caveEsc(filename) + '\">' +
+    '<input type=\"hidden\" name=\"line_number\" value=\"' + lineNum + '\">' +
+    '<input type=\"hidden\" name=\"side\" value=\"' + side + '\">' +
+    '<textarea name=\"body\" rows=\"3\" required placeholder=\"Write a comment...\"></textarea>' +
+    '<div style=\"display:flex;gap:8px;margin-top:4px\">' +
+    '<button type=\"submit\" class=\"btn btn-primary btn-sm\">Comment</button>' +
+    '<button type=\"button\" class=\"btn btn-sm\" onclick=\"this.closest(\\\\x27tr\\\\x27).remove()\">Cancel</button>' +
+    '</div></form></td>';
+  tr.parentNode.insertBefore(formRow, tr.nextSibling);
+  formRow.querySelector('textarea').focus();
+}
+"
+                    (or diff-comments-json "[]")
+                    (com.inuoe.jzon:stringify (or comment-action ""))))))))
 
       ;; Merge eligibility
       (when (and eligibility

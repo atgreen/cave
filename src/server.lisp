@@ -643,13 +643,30 @@
              (disk-path (repo-disk-path owner repo-name))
              (source (getf pr :source-branch))
              (target (getf pr :target-branch))
-             (diff-raw (git-diff disk-path target source)))
+             (diff-raw (git-diff disk-path target source))
+             ;; Inline diff comments
+             (raw-comments (list-diff-comments (getf pr :id)))
+             (comments-json (com.inuoe.jzon:stringify
+                             (mapcar (lambda (c)
+                                       (let ((ht (make-hash-table :test 'equal)))
+                                         (setf (gethash "file_path" ht) (getf c :file-path))
+                                         (setf (gethash "line_number" ht) (getf c :line-number))
+                                         (setf (gethash "side" ht) (getf c :side))
+                                         (setf (gethash "body" ht) (getf c :body))
+                                         (setf (gethash "username" ht) (getf c :username))
+                                         (setf (gethash "created_at" ht)
+                                               (princ-to-string (getf c :created-at)))
+                                         ht))
+                                     raw-comments))))
         (html-response
          (view-pull-request :owner-name owner :repo repo :pr pr
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
                          :stack stack :stack-items stack-items
-                         :diff-raw diff-raw))))))
+                         :diff-raw diff-raw
+                         :diff-comments-json comments-json
+                         :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
+                                                 owner repo-name num)))))))
 
 ;; Inline diff comment
 (easy-routes:defroute diff-comment-submit
