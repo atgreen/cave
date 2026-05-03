@@ -171,7 +171,8 @@
       (values (zerop exit-code) err))))
 
 (defun git-pull-mirror (repo-path remote-url &optional auth-token)
-  "Fetch all refs from a remote URL into a bare repo. Returns (VALUES success-p error-string)."
+  "Fetch all refs from a remote URL into a bare repo.
+   Auto-detects default branch and updates HEAD. Returns (VALUES success-p error-string)."
   (let ((url (if auth-token
                  (let ((pos (search "://" remote-url)))
                    (if pos
@@ -184,6 +185,19 @@
     (multiple-value-bind (output err exit-code)
         (git-run repo-path "fetch" "--prune" url "+refs/*:refs/*")
       (declare (ignore output))
+      (when (zerop exit-code)
+        ;; Auto-detect default branch: try remote HEAD, fall back to master/main
+        (multiple-value-bind (remote-head _e rc)
+            (git-run repo-path "remote" "show" url)
+          (declare (ignore _e))
+          (when (zerop rc)
+            (let ((line (find-if (lambda (l) (search "HEAD branch:" l))
+                                 (uiop:split-string remote-head :separator '(#\Newline)))))
+              (when line
+                (let ((branch (string-trim '(#\Space) (subseq line (+ (search ":" line) 1)))))
+                  (when (and branch (not (uiop:emptyp branch)))
+                    (git-run repo-path "symbolic-ref" "HEAD"
+                             (format nil "refs/heads/~A" branch)))))))))
       (values (zerop exit-code) err))))
 
 (defun git-delete-branch (repo-path branch)

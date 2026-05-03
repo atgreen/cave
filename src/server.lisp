@@ -644,11 +644,19 @@
             (interval (parse-integer (or (hunchentoot:post-parameter "interval") "60")
                                      :junk-allowed t)))
         (when (and direction remote-url (not (uiop:emptyp remote-url)))
-          (create-mirror :repo-id (getf repo :id)
-                         :direction direction
-                         :remote-url remote-url
-                         :auth-token (unless (uiop:emptyp auth-token) auth-token)
-                         :interval-minutes (or interval 60))))
+          (let ((mirror (create-mirror :repo-id (getf repo :id)
+                                       :direction direction
+                                       :remote-url remote-url
+                                       :auth-token (unless (uiop:emptyp auth-token) auth-token)
+                                       :interval-minutes (or interval 60))))
+            ;; Immediately sync pull mirrors
+            (when (equal direction "pull")
+              (let ((disk-path (repo-disk-path owner repo-name))
+                    (token (unless (uiop:emptyp auth-token) auth-token)))
+                (multiple-value-bind (ok err)
+                    (git-pull-mirror disk-path remote-url token)
+                  (update-mirror-sync (getf mirror :id)
+                                      :error (unless ok err))))))))
       (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
 (easy-routes:defroute repo-delete-mirror-submit

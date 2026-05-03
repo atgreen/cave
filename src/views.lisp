@@ -1063,9 +1063,9 @@ function caveShowCommentForm(td) {
               (:li
                (:span.badge (getf m :direction))
                (:code :style "margin-left:var(--sp-2);flex:1" (getf m :remote-url))
-               (when (getf m :last-error)
+               (when (and (getf m :last-error) (not (eq (getf m :last-error) :null)))
                  (:span.badge :style "border-color:var(--red);color:var(--red)" "error"))
-               (when (getf m :last-sync-at)
+               (when (and (getf m :last-sync-at) (not (eq (getf m :last-sync-at) :null)))
                  (:span :style "color:var(--text-muted);font-size:.75rem;margin-left:var(--sp-2)"
                   (format nil "last sync: ~A" (princ-to-string (getf m :last-sync-at)))))
                (:form :method "post" :style "display:inline;margin-left:auto"
