@@ -28,6 +28,7 @@
     :smtp-from nil
     :base-url "http://localhost:8080"
     :log-level :info
+    :grpc-port 9443
     :oidc-issuer nil
     :oidc-issuer-internal nil
     :oidc-client-id "cave"

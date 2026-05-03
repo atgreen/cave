@@ -187,6 +187,12 @@
 
         ;; Start HTTP
         (start-server port)
+
+        ;; Start gRPC runner service
+        (let ((grpc-port (config-value :grpc-port 9443)))
+          (handler-case (start-grpc-server grpc-port)
+            (error (e)
+              (llog:warn "gRPC server failed to start" :error (princ-to-string e)))))
         (llog:info "Cave listening" :version +version+ :port port)
 
         ;; Wait forever

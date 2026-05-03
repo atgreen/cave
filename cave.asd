@@ -51,6 +51,7 @@
                 (:file "src/views")
                 (:file "src/metrics")
                 (:file "src/notify")
+                (:file "src/runner-service")
                 (:file "src/ssh")
                 (:file "src/server")
                 (:file "src/main"))

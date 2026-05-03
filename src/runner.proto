@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package cave.runner;
+
+message RegisterRunnerRequest {
+  string name = 1;
+  string runner_labels = 2;
+  bool ephemeral = 3;
+  string registration_token = 4;
+}
+
+message RegisterRunnerResponse {
+  int64 runner_id = 1;
+  string auth_token = 2;
+}
+
+message DeclareRunnerRequest {
+  string runner_labels = 1;
+}
+
+message DeclareRunnerResponse {
+  bool ok = 1;
+}
+
+message FetchTaskRequest {
+}
+
+message FetchTaskResponse {
+  bool has_task = 1;
+  int64 run_id = 2;
+  string repo_owner = 3;
+  string repo_name = 4;
+  string command = 5;
+  string commit_sha = 6;
+  string ref = 7;
+  int32 timeout_seconds = 8;
+}
+
+message AppendTaskLogRequest {
+  int64 run_id = 1;
+  string chunk = 2;
+}
+
+message AppendTaskLogResponse {
+  bool ok = 1;
+}
+
+message UpdateTaskStatusRequest {
+  int64 run_id = 1;
+  string status = 2;
+}
+
+message UpdateTaskStatusResponse {
+  bool ok = 1;
+}
