@@ -5,6 +5,7 @@
   "registrationEmailAsUsername": false,
   "loginWithEmailAllowed": true,
   "verifyEmail": true,
+  "resetPasswordAllowed": true,
   "loginTheme": "cave",
   "emailTheme": "cave",
   "smtpServer": {

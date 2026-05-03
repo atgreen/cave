@@ -34,6 +34,7 @@ curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
   -H "Content-Type: application/json" \
   -d '{
     "verifyEmail": true,
+    "resetPasswordAllowed": true,
     "loginTheme": "cave",
     "emailTheme": "cave",
     "smtpServer": {
