@@ -8,6 +8,11 @@
 3bmd-youtube, ghcr.io/ocicl/3bmd@sha256:8271fdd8c5916501e07004a9ccce66091db16dfd704e1c916ec9b0495277e1a1, 3bmd-20250614-f850c88/3bmd-youtube.asd
 3bmd-youtube-tests, ghcr.io/ocicl/3bmd@sha256:8271fdd8c5916501e07004a9ccce66091db16dfd704e1c916ec9b0495277e1a1, 3bmd-20250614-f850c88/3bmd-youtube-tests.asd
 access, ghcr.io/ocicl/access@sha256:96f4ea8a447a99bf4e94de86b2134e1167d45c7a1ca961e986931f06930f1bbd, access-20250418-346e97b/access.asd
+ag-grpc, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-grpc.asd
+ag-grpc-all, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-grpc-all.asd
+ag-http2, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-http2.asd
+ag-proto, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-proto.asd
+ag-proto-cli, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-proto-cli.asd
 anaphora, ghcr.io/ocicl/anaphora@sha256:55f1c61b7826c5451a60b4b4522e35e770504bbfa2036d8becbf21f6d654925a, anaphora-20240503-bcf0f74/anaphora.asd
 arnesi, ghcr.io/ocicl/arnesi@sha256:2608e157cb9628c624dd0f8ca41b74a87558a5f6ec56b70c330e3621b6e8063e, arnesi-20241212-93dc906/arnesi.asd
 array-utils, ghcr.io/ocicl/array-utils@sha256:a74a7050591fc003ec9c35f1de8f41a5c8ac1a6157ced767ed6e5a73c2596cbf, array-utils-20260218-16e108a/array-utils.asd
@@ -84,6 +89,7 @@ gettext-example, ghcr.io/ocicl/gettext@sha256:ff132350df89f5fb7311acf2633480d5cc
 gettext-tests, ghcr.io/ocicl/gettext@sha256:ff132350df89f5fb7311acf2633480d5ccf715835920cd7530a36e3c0663f18a, gettext-20240503-a432020/gettext-tests/gettext-tests.asd
 html-encode, ghcr.io/ocicl/html-encode@sha256:3e3248ba94ccd5a49f5272b44e0341de29924c52346759f16b0beae4888ec440, html-encode-1.2/html-encode.asd
 hunchentoot, ghcr.io/ocicl/hunchentoot@sha256:1dbccc1f9770d3d8917ef87d71720b4ec7f2d6bebf24a3072afca478b00b4427, hunchentoot-1.3.1/hunchentoot.asd
+ieee-floats, ghcr.io/ocicl/ieee-floats@sha256:dcc1ef35f12ab6c611839a64338dc55a1c8e9b211274ffa8cbfd95d15b55c766, ieee-floats-20240503-9566ce8/ieee-floats.asd
 in-nomine, ghcr.io/ocicl/in-nomine@sha256:deec864294e9c9631e972bbf0c5a1452af17568dbe4920c6fb329861583ae252, in-nomine-20250908-24bb48d/in-nomine.asd
 inferior-shell, ghcr.io/ocicl/inferior-shell@sha256:7e0f0ddd1bf490f3caabc421acfd184c57759d8623918f0dadce54526e76a52d, inferior-shell-20240503-1edd2e4/inferior-shell.asd
 introspect-environment, ghcr.io/ocicl/introspect-environment@sha256:4fa482690dee130996f1d0f89b470e0e84c92f22caea7649d3b83ce3e49c78ba, introspect-environment-20240503-69a50ac/introspect-environment.asd
@@ -121,6 +127,7 @@ quri-test, ghcr.io/ocicl/quri@sha256:e2559f91600e4895e115b42dde88fcaac3677f05133
 rfc2388, ghcr.io/ocicl/rfc2388@sha256:4190f6eb36b3b2f53def6eff56b44e76edf4086ada2feb6d88bb671a40fc9f70, rfc2388-20240503-591bcf7/rfc2388.asd
 routes, ghcr.io/ocicl/routes@sha256:e64fe3e85f8c0f19ada40f6cbda843f63ee73c705d5c243a2b8730b6308d664e, cl-routes-20240503-1b79e85/routes.asd
 s-sql, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a578371d1125786f4f43101169e4857cdd, postmodern-1.33.11/s-sql.asd
+salza2, ghcr.io/ocicl/salza2@sha256:0f9d930524b469e1442372a6e12b26742d9e6a1144e6a455006943190d1ea71e, salza2-2.1/salza2.asd
 sanitize-html, ghcr.io/ocicl/sanitize-html@sha256:b980df2e67cd22cc91dd738bc9fcfdd4f2b0bfaff782aef1417fdd1b5b29d0ff, cl-sanitize-html-20251102-5e5b3f4/sanitize-html.asd
 serapeum, ghcr.io/ocicl/serapeum@sha256:31bccc85079addd0cb5583b484b121e54fab8cb156e8919f5e7ff2ae9b1de076, serapeum-20260213-71f35c9/serapeum.asd
 simple-date, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a578371d1125786f4f43101169e4857cdd, postmodern-1.33.11/simple-date.asd
@@ -150,6 +157,7 @@ trivial-file-size, ghcr.io/ocicl/trivial-file-size@sha256:dfe138877e024d36e51fa1
 trivial-macroexpand-all, ghcr.io/ocicl/trivial-macroexpand-all@sha256:b23da4c2e508efe2396ec8f721cb22b8a4c076b2f0aea014a09f69dfd716d7f8, trivial-macroexpand-all-20250518-b6e4efa/trivial-macroexpand-all.asd
 trivial-mimes, ghcr.io/ocicl/trivial-mimes@sha256:a92350000c29520f98e349019917e9e6d283e5ff218361bae791fc5af9d17dcf, trivial-mimes-20260218-8b1ea12/trivial-mimes.asd
 trivial-types, ghcr.io/ocicl/trivial-types@sha256:6c7e66c7a2c7b190cf31a78597a1de81dc4d8190d0698416a1504b0d2cf3a2d9, trivial-types-20240503-ee869f2/trivial-types.asd
+trivial-utf-8, ghcr.io/ocicl/trivial-utf-8@sha256:014e7fa0edd7f351c8b38c3247e0cdda438235bb8a086bb0f2bac08f78ef400d, trivial-utf-8-20240503-ba9b4ff/trivial-utf-8.asd
 trivial-with-current-source-form, ghcr.io/ocicl/trivial-with-current-source-form@sha256:955baad39fb52d9d02af21ea36442c9675419c2486392279f669ada9788f3e3b, trivial-with-current-source-form-20240503-dc3fff9/trivial-with-current-source-form.asd
 type-i, ghcr.io/ocicl/type-i@sha256:de5c3e7f7b72409c5ec49885eea8c6fe2e02def2846cf97f70c1c21f21a1567c, type-i-20240503-4407a68/type-i.asd
 type-i.test, ghcr.io/ocicl/type-i@sha256:de5c3e7f7b72409c5ec49885eea8c6fe2e02def2846cf97f70c1c21f21a1567c, type-i-20240503-4407a68/type-i.test.asd

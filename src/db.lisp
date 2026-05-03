@@ -414,7 +414,69 @@ CREATE TABLE cave_commit_statuses (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_commit_statuses_repo ON cave_commit_statuses (repo_id, commit_sha);
-CREATE UNIQUE INDEX idx_commit_statuses_unique ON cave_commit_statuses (repo_id, commit_sha, context);"))
+CREATE UNIQUE INDEX idx_commit_statuses_unique ON cave_commit_statuses (repo_id, commit_sha, context);")
+
+    (29 . "-- Automation definitions
+CREATE TABLE cave_automation_definitions (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  trigger VARCHAR(32) NOT NULL,
+  command TEXT NOT NULL,
+  runner_labels TEXT DEFAULT '',
+  timeout_seconds INTEGER NOT NULL DEFAULT 60,
+  concurrency_key VARCHAR(256),
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  source VARCHAR(8) NOT NULL DEFAULT 'ui' CHECK (source IN ('ui', 'repo')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, name)
+);
+CREATE INDEX idx_automation_defs_repo ON cave_automation_definitions (repo_id);
+CREATE INDEX idx_automation_defs_trigger ON cave_automation_definitions (repo_id, trigger);")
+
+    (30 . "-- Automation runs
+CREATE TABLE cave_automation_runs (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  definition_id BIGINT REFERENCES cave_automation_definitions(id) ON DELETE SET NULL,
+  definition_name VARCHAR(128) NOT NULL,
+  trigger_event VARCHAR(32) NOT NULL,
+  commit_sha VARCHAR(64),
+  ref VARCHAR(256),
+  status VARCHAR(16) NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued','assigned','running','success','failure','cancelled','timed_out')),
+  runner_id BIGINT,
+  triggered_by_id BIGINT REFERENCES cave_users(id),
+  log TEXT DEFAULT '',
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_automation_runs_repo ON cave_automation_runs (repo_id);
+CREATE INDEX idx_automation_runs_status ON cave_automation_runs (status);")
+
+    (31 . "-- Runners and registration tokens
+CREATE TABLE cave_runners (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(128) NOT NULL,
+  scope VARCHAR(8) NOT NULL DEFAULT 'instance' CHECK (scope IN ('instance', 'org', 'repo')),
+  scope_id BIGINT,
+  labels TEXT DEFAULT '',
+  auth_token VARCHAR(256) NOT NULL UNIQUE,
+  ephemeral BOOLEAN NOT NULL DEFAULT FALSE,
+  status VARCHAR(16) NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline', 'disabled')),
+  last_seen_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE cave_runner_registration_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  token VARCHAR(256) NOT NULL UNIQUE,
+  scope VARCHAR(8) NOT NULL DEFAULT 'instance',
+  scope_id BIGINT,
+  created_by_id BIGINT REFERENCES cave_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ
+);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

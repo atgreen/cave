@@ -409,6 +409,224 @@
          'updated-at (:now)
     :where (:= 'id repo-id))))
 
+;;; ========================== AUTOMATIONS ==========================
+
+(defun create-automation-definition (&key repo-id name trigger command
+                                          runner-labels timeout-seconds
+                                          concurrency-key (source "ui"))
+  "Create an automation definition."
+  (postmodern:query
+   (:insert-into 'cave-automation-definitions
+    :set 'repo-id repo-id 'name name 'trigger trigger 'command command
+         'runner-labels (or runner-labels "")
+         'timeout-seconds (or timeout-seconds 60)
+         'concurrency-key (or concurrency-key :null)
+         'source source
+    :returning '*)
+   :plist))
+
+(defun list-automation-definitions (repo-id &key trigger)
+  "List automation definitions for a repo, optionally filtered by trigger."
+  (if trigger
+      (postmodern:query
+       (:order-by
+        (:select '* :from 'cave-automation-definitions
+         :where (:and (:= 'repo-id repo-id) (:= 'trigger trigger) (:= 'enabled t)))
+        'name)
+       :plists)
+      (postmodern:query
+       (:order-by
+        (:select '* :from 'cave-automation-definitions
+         :where (:= 'repo-id repo-id))
+        'name)
+       :plists)))
+
+(defun delete-automation-definition (def-id repo-id)
+  "Delete an automation definition."
+  (postmodern:execute
+   (:delete-from 'cave-automation-definitions
+    :where (:and (:= 'id def-id) (:= 'repo-id repo-id)))))
+
+;;; ========================== AUTOMATION RUNS ==========================
+
+(defun create-automation-run (&key repo-id definition-id definition-name
+                                    trigger-event commit-sha ref triggered-by-id)
+  "Create an automation run (queued)."
+  (postmodern:query
+   (:insert-into 'cave-automation-runs
+    :set 'repo-id repo-id
+         'definition-id (or definition-id :null)
+         'definition-name definition-name
+         'trigger-event trigger-event
+         'commit-sha (or commit-sha :null)
+         'ref (or ref :null)
+         'triggered-by-id (or triggered-by-id :null)
+    :returning '*)
+   :plist))
+
+(defun list-automation-runs (repo-id &key (limit 30))
+  "List recent automation runs for a repo."
+  (postmodern:query
+   (:limit
+    (:order-by
+     (:select '* :from 'cave-automation-runs
+      :where (:= 'repo-id repo-id))
+     (:desc 'created-at))
+    limit)
+   :plists))
+
+(defun find-automation-run (run-id)
+  "Find an automation run by ID."
+  (postmodern:query
+   (:select '* :from 'cave-automation-runs :where (:= 'id run-id))
+   :plist))
+
+(defun update-run-status (run-id status &key runner-id)
+  "Update an automation run's status."
+  (let ((updates (list 'status status 'updated-at (:now))))
+    (when (member status '("running") :test #'equal)
+      (setf updates (append updates (list 'started-at (:now)))))
+    (when (member status '("success" "failure" "cancelled" "timed_out") :test #'equal)
+      (setf updates (append updates (list 'finished-at (:now)))))
+    (when runner-id
+      (setf updates (append updates (list 'runner-id runner-id)))))
+  ;; Simplified: just update the fields we need
+  (cond
+    ((equal status "running")
+     (postmodern:execute
+      (:update 'cave-automation-runs
+       :set 'status status 'started-at (:now)
+            'runner-id (or runner-id :null)
+       :where (:= 'id run-id))))
+    ((member status '("success" "failure" "cancelled" "timed_out") :test #'equal)
+     (postmodern:execute
+      (:update 'cave-automation-runs
+       :set 'status status 'finished-at (:now)
+       :where (:= 'id run-id))))
+    (t
+     (postmodern:execute
+      (:update 'cave-automation-runs
+       :set 'status status
+       :where (:= 'id run-id))))))
+
+(defun append-run-log (run-id chunk)
+  "Append a log chunk to an automation run."
+  (postmodern:execute
+   (:update 'cave-automation-runs
+    :set 'log (:|| 'log chunk)
+    :where (:= 'id run-id))))
+
+(defun fetch-queued-run (runner-id runner-labels runner-scope runner-scope-id)
+  "Atomically fetch and assign a queued run to a runner.
+   Respects one-task-per-runner policy. Returns run plist or NIL."
+  ;; Check if runner already has an active task
+  (let ((active (postmodern:query
+                 (:select 'id :from 'cave-automation-runs
+                  :where (:and (:= 'runner-id runner-id)
+                               (:in 'status (:set "assigned" "running"))))
+                 :single)))
+    (when active (return-from fetch-queued-run nil)))
+  ;; Fetch oldest queued run matching runner scope/labels
+  ;; For now, simple: grab any queued run (label matching can be refined)
+  (let ((run (postmodern:query
+              (:limit
+               (:order-by
+                (:select '* :from 'cave-automation-runs
+                 :where (:= 'status "queued"))
+                'created-at)
+               1)
+              :plist)))
+    (when run
+      ;; Atomically assign it
+      (let ((updated (postmodern:query
+                      (:update 'cave-automation-runs
+                       :set 'status "assigned" 'runner-id runner-id
+                       :where (:and (:= 'id (getf run :id))
+                                    (:= 'status "queued"))
+                       :returning '*)
+                      :plist)))
+        updated))))
+
+;;; ========================== RUNNERS ==========================
+
+(defun register-runner (&key name labels ephemeral scope scope-id)
+  "Register a new runner. Returns the runner plist with auth token."
+  (let ((token (format nil "cavr_~A"
+                       (ironclad:byte-array-to-hex-string (ironclad:random-data 32)))))
+    (postmodern:query
+     (:insert-into 'cave-runners
+      :set 'name name
+           'labels (or labels "")
+           'ephemeral (if ephemeral t nil)
+           'scope (or scope "instance")
+           'scope-id (or scope-id :null)
+           'auth-token token
+           'status "online"
+           'last-seen-at (:now)
+      :returning '*)
+     :plist)))
+
+(defun authenticate-runner (auth-token)
+  "Validate a runner auth token. Returns runner plist or NIL."
+  (when auth-token
+    (postmodern:query
+     (:select '* :from 'cave-runners
+      :where (:and (:= 'auth-token auth-token)
+                   (:not (:= 'status "disabled"))))
+     :plist)))
+
+(defun update-runner-heartbeat (runner-id &key labels)
+  "Update runner last-seen and optionally labels."
+  (if labels
+      (postmodern:execute
+       (:update 'cave-runners
+        :set 'last-seen-at (:now) 'status "online" 'labels labels
+        :where (:= 'id runner-id)))
+      (postmodern:execute
+       (:update 'cave-runners
+        :set 'last-seen-at (:now) 'status "online"
+        :where (:= 'id runner-id)))))
+
+(defun list-runners ()
+  "List all runners."
+  (postmodern:query
+   (:order-by (:select '* :from 'cave-runners) 'name)
+   :plists))
+
+(defun disable-runner (runner-id)
+  "Disable a runner."
+  (postmodern:execute
+   (:update 'cave-runners :set 'status "disabled" :where (:= 'id runner-id))))
+
+(defun delete-runner (runner-id)
+  "Delete a runner."
+  (postmodern:execute
+   (:delete-from 'cave-runners :where (:= 'id runner-id))))
+
+(defun create-registration-token (&key scope scope-id created-by-id)
+  "Create a runner registration token."
+  (let ((token (format nil "cavrt_~A"
+                       (ironclad:byte-array-to-hex-string (ironclad:random-data 16)))))
+    (postmodern:query
+     (:insert-into 'cave-runner-registration-tokens
+      :set 'token token
+           'scope (or scope "instance")
+           'scope-id (or scope-id :null)
+           'created-by-id (or created-by-id :null)
+           'expires-at (:+ (:now) (:raw "'24 hours'"))
+      :returning '*)
+     :plist)))
+
+(defun validate-registration-token (token)
+  "Validate a registration token. Returns the token record or NIL."
+  (when token
+    (postmodern:query
+     (:select '* :from 'cave-runner-registration-tokens
+      :where (:and (:= 'token token)
+                   (:or (:is-null 'expires-at)
+                        (:> 'expires-at (:now)))))
+     :plist)))
+
 ;;; ========================== WEBHOOKS ==========================
 
 (defun create-webhook (&key repo-id url secret events)

@@ -28,6 +28,8 @@
                 :com.inuoe.jzon
                 ;; HTML generation
                 :spinneret
+                ;; gRPC (runner service)
+                :ag-grpc
                 ;; Email
                 :cl-smtp
                 ;; Markdown rendering

@@ -44,7 +44,8 @@ Kubernetes/Nomad/cloud PaaS.
 2. Pre-receive validation with sandboxed checks and fast feedback
 3. Graduated review model with configurable merge policies
 4. First-class stacked changesets
-5. Comfortable on a 2-core / 2GB VPS
+5. Managed self-hosted runners for checks, deploy hooks, and repo automations
+6. Comfortable on a 2-core / 2GB VPS
 
 ## Non-Goals
 
@@ -54,14 +55,14 @@ We say no.
 - **Branch protection beyond merge policies.** No path-based rules, code owners,
   or required-review-from-specific-teams at launch.
 - **Merge queues.** Only per-repo deploy queue (one at a time).
-- **Hosted runners or remote executors.** Checks run on the Cave host only.
 - **Container registry.** Images are local to the Cave host's podman storage.
 - **Environment promotion.** One environment per repo. No staging/prod model.
 - **Chat integrations.** No Slack/Matrix/IRC bots at launch.
 - **Audit/compliance features.** No audit log, no RBAC beyond the defined roles.
 - **Arbitrary CI/CD pipelines.** Cave runs pre-receive checks, deploys
-  containers, and executes limited pre/post-deploy hooks. It does not
-  support arbitrary workflow graphs, DAGs, or conditional steps.
+  containers, and executes limited repo-defined automations. It does not
+  support arbitrary workflow graphs, DAGs, matrix jobs, or conditional
+  step languages.
 - **Self-registration.** At launch, only instance admins create user
   accounts. Self-signup is P2.
 - **Federation.** No federation-driven abstractions in MVP design.
@@ -83,6 +84,96 @@ metadata (issues, changesets, deploy status, build logs) are invisible to
 non-members. Public repos: code, issues, changesets, and deploy status are
 readable by anonymous users. Build logs for public repos are visible but
 secrets are never printed (env var values are masked as `***` in logs).
+
+### Automation Definition
+An automation definition is a repo-scoped unit of work that Cave may schedule
+for a specific trigger. Launch automations are intentionally simple and are not
+a general workflow language.
+
+Fields:
+- Name
+- Trigger (`pre_receive`, `post_receive`, `changeset_opened`,
+  `changeset_updated`, `changeset_merged`, `deploy_pre`, `deploy_post`,
+  `manual`)
+- Command
+- Runner selector labels
+- Timeout
+- Concurrency key
+- Enabled flag
+
+**Definition source:** Repo admins may define automations in the UI. In
+addition, if enabled by repo policy, a repo may define automations in
+`.cave/automations.toml` at the evaluated commit. Server-side definitions take
+precedence over repo-file definitions with the same name.
+
+Example:
+
+```toml
+[[automation]]
+name = "lint"
+trigger = "pre_receive"
+command = "make lint"
+runner_labels = ["linux", "fast"]
+timeout_seconds = 60
+concurrency_key = "pre-receive-${ref}"
+enabled = true
+
+[[automation]]
+name = "notify-merge"
+trigger = "changeset_merged"
+command = "./scripts/notify-merge.sh"
+runner_labels = ["linux"]
+timeout_seconds = 30
+enabled = true
+```
+
+**Launch constraint:** One automation definition produces one job. There is no
+multi-job DAG, matrix expansion, reusable workflow, or embedded step DSL.
+
+### Automation Run
+An automation run is a durable record of one scheduled execution of an
+automation definition for a specific repo event and commit context.
+
+Fields:
+- Repo, automation definition, trigger event
+- Target ref and commit SHA
+- Status (`queued`, `assigned`, `running`, `success`, `failure`, `cancelled`,
+  `timed_out`)
+- Triggering user (if any)
+- Captured event payload
+- Created / started / finished timestamps
+- Log location and artifact metadata
+
+Pre-receive checks use the same run model, but the git push waits for terminal
+completion before the ref update is accepted.
+
+### Runner
+A runner is a self-hosted execution agent managed by Cave. Runners exist to
+execute Cave-scheduled automation; they are not a general integration point.
+
+Runners may be delivered either as a native host process or as a container
+image. Launch supports a runner image that includes Podman and uses
+Podman-in-Podman to execute build and test containers inside the runner.
+
+Fields:
+- Name
+- Scope (instance, org, or repo)
+- Labels
+- Registration token scope
+- Runner auth token
+- Last-seen timestamp
+- Status (`online`, `offline`, `disabled`)
+- `ephemeral` flag
+
+**Matching model:** Cave assigns queued runs to eligible runners by scope and
+label match. Runners pull work; the server does not open connections into the
+runner host.
+
+**Nested containers:** A single runner may execute multiple nested containers
+over its lifetime. Podman-in-Podman is not limited to one nested container per
+runner. However, launch scheduling defaults to one active task per runner for
+isolation and simpler cleanup. Future versions may allow configurable runner
+concurrency greater than one.
 
 ### Changeset
 The primary review unit. **A changeset is branch-backed.** One branch = at
@@ -405,9 +496,12 @@ launch due to the non-standard port.
   - **Execution model:** For each updated ref that creates or updates a
     changeset (identified by push-option target or stack naming convention),
     Cave creates a temporary worktree at the synthetic merge of the pushed
-    head onto the current target branch HEAD. Checks run in that worktree.
-    Non-changeset pushes (ordinary branches, tag pushes, branch deletes)
-    do not trigger checks.
+    head onto the current target branch HEAD. Checks run on an eligible Cave
+    runner in that worktree. Non-changeset pushes (ordinary branches, tag
+    pushes, branch deletes) do not trigger checks.
+  - **Runner availability:** If no eligible runner is online for a required
+    pre-receive check, the push is rejected with a clear "no runner available"
+    error. Cave never silently skips a required check.
   - **Config:** Server-side per-repo config (set by repo admin via UI) takes
     precedence. If no server-side checks are configured AND the repo admin
     has enabled `allow_repo_checks`, then `.cave/checks.toml` in the pushed
@@ -424,6 +518,72 @@ launch due to the non-standard port.
   - **Multi-ref push:** Entire push rejected if any ref fails.
   - **Output:** Buffered (max 64KB), returned to developer. Truncated with
     notice if exceeded. Timeout: "check timed out after Ns."
+
+**Repo automations**
+
+- As a repo admin, I want to define simple automations for repo events without
+  adopting a full workflow engine.
+  - Acceptance: Cave supports a repo-scoped `.cave/automations.toml` file and
+    equivalent UI-defined records.
+  - Acceptance: Launch triggers are `pre_receive`, `post_receive`,
+    `changeset_opened`, `changeset_updated`, `changeset_merged`, `deploy_pre`,
+    `deploy_post`, and `manual`.
+  - Acceptance: Each automation definition specifies `name`, `trigger`,
+    `command`, `runner_labels`, `timeout_seconds`, `concurrency_key`, and
+    `enabled`.
+  - Acceptance: UI-defined automations override repo-file automations of the
+    same name.
+  - Acceptance: Invalid `.cave/automations.toml` rejects only automation
+    scheduling for that push/event and surfaces a visible validation error; it
+    does not corrupt unrelated repo operations.
+
+**Runner management**
+
+- As an instance admin, I want to register and manage self-hosted runners.
+  - Acceptance: Cave can mint registration tokens scoped to instance, org, or
+    repo.
+  - Acceptance: A runner registers itself with a token, name, labels, and
+    optional `ephemeral` flag, then receives a runner auth token.
+  - Acceptance: A runner may be deployed as a container image containing
+    Podman, and may launch nested build containers while executing tasks.
+  - Acceptance: Admins can list runners, see last-seen time, disable runners,
+    delete runners, and rotate registration tokens.
+
+- As a runner process, I want to pull work from Cave and stream logs and final
+  status back over `ag-gRPC`.
+  - Acceptance: Runner/server communication uses `ag-gRPC`, installed via
+    `ocicl`.
+  - Acceptance: The protocol supports register, heartbeat/declare, fetch task,
+    append log chunk, and update task result.
+  - Acceptance: Task auth is scoped to the assigned task; a runner cannot use a
+    task token to inspect or mutate unrelated tasks.
+
+### Runner Protocol (Launch)
+
+- **Transport:** `ag-gRPC` over TLS when configured; plain internal network
+  deployments may disable TLS explicitly in admin config.
+- **RPCs:**
+  - `RegisterRunner`
+  - `DeclareRunner`
+  - `FetchTask`
+  - `AppendTaskLog`
+  - `UpdateTaskStatus`
+- **Server-assigned task payload:**
+  - Repo identity
+  - Trigger and event payload
+  - Commit SHA / ref
+  - Command
+  - Environment variables / secrets
+  - Timeout / resource limits
+  - Worktree materialization instructions
+- **Execution model:** Runners are pull-based. Cave persists queued work in the
+  database and only marks work assigned once a runner has accepted it.
+- **Launch concurrency:** A runner may host many nested containers over its
+  lifetime, but Cave schedules at most one active task per runner at launch.
+  This is a scheduler policy, not a Podman-in-Podman limitation.
+- **Ephemeral runners:** An ephemeral runner is expected to execute at most one
+  task, report completion, and then be garbage-collected from Cave's runner
+  inventory.
 
 **Code review**
 
