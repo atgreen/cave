@@ -7,6 +7,20 @@
 ;;; All HTML generation lives here. Each page is a function that returns
 ;;; an HTML string. No template files, no compilation step, no stale state.
 
+(defun gravatar-url (email &key (size 20))
+  "Return a Gravatar URL for EMAIL. Falls back to identicon."
+  (let* ((clean (string-trim '(#\Space) (string-downcase (or email ""))))
+         (hash (ironclad:byte-array-to-hex-string
+                (ironclad:digest-sequence :md5
+                 (flexi-streams:string-to-octets clean :external-format :utf-8)))))
+    (format nil "https://gravatar.com/avatar/~A?d=identicon&s=~A" hash size)))
+
+(defun render-avatar (email &key (size 20) (class "avatar"))
+  "Render a Gravatar img element."
+  (spinneret:with-html
+    (:img :src (gravatar-url email :size size)
+     :class class :width (princ-to-string size) :height (princ-to-string size))))
+
 (defmacro page ((&key title) &body body)
   "Wrap BODY in a full HTML page with nav and container."
   `(spinneret:with-html-string
@@ -32,6 +46,7 @@
                  (:a.btn.btn-sm :href "/-/settings" "Settings")
                  (when (getf *current-user* :is-admin)
                    (:a.btn.btn-sm :href "/-/admin" "Admin"))
+                 (render-avatar (getf *current-user* :email) :size 20)
                  (:span.nav-user (getf *current-user* :username))
                  (:form :method "post" :action "/logout" :style "display:inline"
                   (:button.btn.btn-sm :type "submit" "Log out")))
@@ -512,7 +527,8 @@ document.addEventListener('DOMContentLoaded', function() {
        (:h1 (format nil "#~A ~A" issue-num (getf issue :title)))
        (:span.badge (getf issue :status)))
       (:div.issue-meta
-       (format nil "Opened by ~A" (getf author :username)))
+       (render-avatar (getf author :email) :size 16)
+       (format nil " Opened by ~A" (getf author :username)))
       (when (getf issue :body)
         (:div.issue-body (getf issue :body)))
 
@@ -523,6 +539,7 @@ document.addEventListener('DOMContentLoaded', function() {
            (dolist (c comments)
              (:div.comment
               (:div.comment-header
+               (render-avatar (getf c :email) :size 16)
                (:strong (getf c :username))
                (:span.comment-date (princ-to-string (getf c :created-at))))
               (:div.comment-body (getf c :body))))
@@ -882,6 +899,7 @@ function caveShowCommentForm(td) {
            (dolist (r reviews)
              (:div :class (format nil "review~@[ review-stale~]" (getf r :is-stale))
               (:div.review-header
+               (render-avatar (getf r :reviewer-email) :size 16)
                (:strong (getf r :reviewer-username))
                (:span :class (format nil "badge review-state-~A" (getf r :state))
                 (getf r :state))

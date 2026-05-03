@@ -462,6 +462,13 @@ section { margin-bottom: var(--sp-8); }
   color: var(--text-muted);
 }
 
+/* --- Avatars --- */
+.avatar {
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: var(--sp-1);
+}
+
 /* --- Utility --- */
 .empty { color: var(--text-muted); font-style: italic; font-size: .9rem; }
 

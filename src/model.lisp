@@ -569,7 +569,7 @@
   "List all comments on an issue, oldest first, with author usernames."
   (postmodern:query
    (:order-by
-    (:select 'cave-issue-comments.* 'cave-users.username
+    (:select 'cave-issue-comments.* 'cave-users.username 'cave-users.email
      :from 'cave-issue-comments
      :inner-join 'cave-users :on (:= 'cave-issue-comments.author-id 'cave-users.id)
      :where (:= 'cave-issue-comments.issue-id issue-id))
@@ -769,7 +769,7 @@
   "List all reviews for a changeset, newest first."
   (postmodern:query
    (:order-by
-    (:select 'cave-reviews.* (:as 'cave-users.username 'reviewer-username)
+    (:select 'cave-reviews.* (:as 'cave-users.username 'reviewer-username) (:as 'cave-users.email 'reviewer-email)
      :from 'cave-reviews
      :inner-join 'cave-users :on (:= 'cave-reviews.reviewer-id 'cave-users.id)
      :where (:= 'cave-reviews.changeset-id changeset-id))
