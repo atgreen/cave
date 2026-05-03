@@ -200,7 +200,9 @@
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :issues))
       :href (format nil "/~A/~A/issues" owner-name repo-name) "Issues")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulls))
-      :href (format nil "/~A/~A/pulls" owner-name repo-name) "Pull requests"))))
+      :href (format nil "/~A/~A/pulls" owner-name repo-name) "Pull requests")
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
+      :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings"))))
 
 (defun render-file-tree (file-tree owner-name repo-name default-branch &optional current-path)
   "Render a file tree table. Shared by view-repo and view-tree."
@@ -922,6 +924,82 @@ function caveShowCommentForm(td) {
            (:button.btn :type "submit" :name "state" :value "request_changes"
             :style "border-color:var(--danger)" "Request changes")
            (:button.btn :type "submit" :name "state" :value "comment" "Comment"))))))))
+
+;;; ========================== REPO SETTINGS ==========================
+
+(defun view-repo-settings (&key owner-name repo members message)
+  "Render repo settings page."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :settings)
+      (:h1 "Repository settings")
+      (when message
+        (:div.alert message))
+
+      ;; Merge policy
+      (:section
+       (:h2 "Merge policy")
+       (:form :method "post" :action (format nil "/~A/~A/settings" owner-name repo-name)
+        (:input :type "hidden" :name "section" :value "merge")
+        (:div.field
+         (:label :for "required_approvals" "Required approvals")
+         (:input :type "number" :id "required_approvals" :name "required_approvals"
+                 :value (princ-to-string (getf repo :required-approvals))
+                 :min "0" :max "10" :style "width:5em"))
+        (:div.field
+         (:label
+          (:input :type "checkbox" :name "allow_self_approval" :value "1"
+           :checked (getf repo :allow-self-approval))
+          " Allow self-approval"))
+        (:div.field
+         (:label
+          (:input :type "checkbox" :name "allow_stale_approvals" :value "1"
+           :checked (getf repo :allow-stale-approvals))
+          " Allow stale approvals (don't invalidate on new commits)"))
+        (:div.field
+         (:label
+          (:input :type "checkbox" :name "concerns_count" :value "1"
+           :checked (getf repo :concerns-count-as-approval))
+          " Approve-with-concerns counts as approval"))
+        (:div.field
+         (:label
+          (:input :type "checkbox" :name "block_on_request_changes" :value "1"
+           :checked (getf repo :block-on-request-changes))
+          " Block merge on request-changes reviews"))
+        (:div.field
+         (:label
+          (:input :type "checkbox" :name "auto_delete_branch" :value "1"
+           :checked (getf repo :auto-delete-branch))
+          " Auto-delete source branch after merge"))
+        (:button.btn.btn-primary :type "submit" "Save merge policy")))
+
+      ;; Members
+      (:section
+       (:h2 "Members")
+       (if members
+           (:ul.data-list
+            (dolist (m members)
+              (:li
+               (:strong (getf m :username))
+               (:span.badge (getf m :role))
+               (:form :method "post" :style "display:inline;margin-left:auto"
+                :action (format nil "/~A/~A/settings/members/~A/remove"
+                                owner-name repo-name (getf m :user-id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No members. The repo owner has full access."))
+       (:h3 "Add member")
+       (:form :method "post" :action (format nil "/~A/~A/settings/members" owner-name repo-name)
+        (:div :style "display:flex;gap:var(--sp-2);align-items:end"
+         (:div.field :style "margin-bottom:0"
+          (:label :for "member_username" "Username")
+          (:input :type "text" :id "member_username" :name "username" :required t))
+         (:div.field :style "margin-bottom:0"
+          (:label :for "member_role" "Role")
+          (:select :id "member_role" :name "role"
+           (:option :value "writer" "Writer")
+           (:option :value "reviewer" "Reviewer")
+           (:option :value "admin" "Admin")))
+         (:button.btn.btn-primary :type "submit" "Add member")))))))
 
 ;;; ========================== ADMIN & SETTINGS ==========================
 

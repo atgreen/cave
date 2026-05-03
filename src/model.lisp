@@ -354,6 +354,38 @@
    (:insert-into 'cave-repo-members
     :set 'repo-id repo-id 'user-id user-id 'role role)))
 
+(defun list-repo-members (repo-id)
+  "List all members of a repo with usernames."
+  (postmodern:query
+   (:order-by
+    (:select 'cave-repo-members.* 'cave-users.username
+     :from 'cave-repo-members
+     :inner-join 'cave-users :on (:= 'cave-repo-members.user-id 'cave-users.id)
+     :where (:= 'cave-repo-members.repo-id repo-id))
+    'cave-users.username)
+   :plists))
+
+(defun remove-repo-member (repo-id user-id)
+  "Remove a member from a repo."
+  (postmodern:execute
+   (:delete-from 'cave-repo-members
+    :where (:and (:= 'repo-id repo-id) (:= 'user-id user-id)))))
+
+(defun update-repo-settings (repo-id &key required-approvals allow-self-approval
+                                          allow-stale-approvals concerns-count-as-approval
+                                          block-on-request-changes auto-delete-branch)
+  "Update merge policy settings for a repo."
+  (postmodern:execute
+   (:update 'cave-repos
+    :set 'required-approvals required-approvals
+         'allow-self-approval allow-self-approval
+         'allow-stale-approvals allow-stale-approvals
+         'concerns-count-as-approval concerns-count-as-approval
+         'block-on-request-changes block-on-request-changes
+         'auto-delete-branch auto-delete-branch
+         'updated-at (:now)
+    :where (:= 'id repo-id))))
+
 (defun next-repo-number (repo-id)
   "Atomically get and increment the next number for a repo (shared by issues and pull requests)."
   (let ((result (postmodern:query

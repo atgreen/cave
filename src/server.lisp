@@ -526,6 +526,70 @@
         (hunchentoot:redirect (format nil "/~A/~A" org-name name))))))
 
 ;; ----------------------------------------------------------------------------
+;; Routes: Repo settings
+
+(easy-routes:defroute repo-settings-page
+    ("/:owner/:repo-name/settings" :method :get) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-settings-page (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-settings-page "Forbidden"))
+      (html-response
+       (view-repo-settings :owner-name owner :repo repo
+                           :members (list-repo-members (getf repo :id)))))))
+
+(easy-routes:defroute repo-settings-submit
+    ("/:owner/:repo-name/settings" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-settings-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-settings-submit "Forbidden"))
+      (let ((section (hunchentoot:post-parameter "section")))
+        (when (equal section "merge")
+          (update-repo-settings (getf repo :id)
+            :required-approvals (or (parse-integer
+                                     (or (hunchentoot:post-parameter "required_approvals") "1")
+                                     :junk-allowed t) 1)
+            :allow-self-approval (when (hunchentoot:post-parameter "allow_self_approval") t)
+            :allow-stale-approvals (when (hunchentoot:post-parameter "allow_stale_approvals") t)
+            :concerns-count-as-approval (when (hunchentoot:post-parameter "concerns_count") t)
+            :block-on-request-changes (when (hunchentoot:post-parameter "block_on_request_changes") t)
+            :auto-delete-branch (when (hunchentoot:post-parameter "auto_delete_branch") t))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-add-member-submit
+    ("/:owner/:repo-name/settings/members" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-add-member-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-add-member-submit "Forbidden"))
+      (let* ((username (hunchentoot:post-parameter "username"))
+             (role (or (hunchentoot:post-parameter "role") "writer"))
+             (user (find-user-by-username username)))
+        (when user
+          (handler-case
+              (add-repo-member (getf repo :id) (getf user :id) :role role)
+            (error () nil))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-remove-member-submit
+    ("/:owner/:repo-name/settings/members/:user-id/remove" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-remove-member-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-remove-member-submit "Forbidden"))
+      (let ((uid (parse-integer user-id :junk-allowed t)))
+        (when uid (remove-repo-member (getf repo :id) uid)))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
 ;; Routes: Issues
 
 (easy-routes:defroute issues-page ("/:owner/:repo-name/issues" :method :get) ()
@@ -801,6 +865,11 @@
           (setf (hunchentoot:return-code*) 409)
           (return-from merge-pull-request-submit "Merge failed — conflicts?")))
       (merge-pull-request (getf pr :id))
+      ;; Auto-delete source branch
+      (when (getf repo :auto-delete-branch)
+        (let ((source (getf pr :source-branch))
+              (disk-path (repo-disk-path owner repo-name)))
+          (git-delete-branch disk-path source)))
       (log-event "pr.merged"
                  :user-id *current-user-id*
                  :repo-id (getf repo :id)

@@ -153,6 +153,13 @@
       (when (probe-file tmpdir)
         (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
 
+(defun git-delete-branch (repo-path branch)
+  "Delete a branch in a bare repo."
+  (multiple-value-bind (_out _err exit-code)
+      (git-run repo-path "branch" "-D" branch)
+    (declare (ignore _out _err))
+    (zerop exit-code)))
+
 (defun git-diff (repo-path base-ref head-ref)
   "Get diff between two refs."
   (multiple-value-bind (output _err exit-code)
