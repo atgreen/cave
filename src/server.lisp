@@ -150,10 +150,10 @@
          (next-url (sanitize-next-url (if colon-pos (subseq cookie (1+ colon-pos)) "/"))))
     ;; Clear the state cookie
     (hunchentoot:set-cookie "cave_oidc_state" :value "" :path "/" :max-age 0)
-    ;; Validate state
+    ;; Validate state — if invalid, redirect to login (e.g. after password reset)
     (unless (and code state saved-state (string= state saved-state))
-      (setf (hunchentoot:return-code*) 400)
-      (return-from oidc-callback "Invalid OIDC state"))
+      (hunchentoot:redirect "/-/auth/login")
+      (return-from oidc-callback nil))
     ;; Exchange code for tokens
     (let ((tokens (exchange-oidc-code code)))
       (unless tokens
