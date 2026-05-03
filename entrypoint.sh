@@ -63,6 +63,15 @@ git config --global user.email "cave@localhost"
 git config --global user.name "Cave"
 su -c "git config --global --add safe.directory '*'" cave
 
+# Persist SSH host keys across restarts
+if [ ! -f /var/lib/cave/ssh_host_ed25519_key ]; then
+  ssh-keygen -A
+  cp /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub /var/lib/cave/ 2>/dev/null || true
+else
+  cp /var/lib/cave/ssh_host_*_key /var/lib/cave/ssh_host_*_key.pub /etc/ssh/ 2>/dev/null || true
+  chmod 600 /etc/ssh/ssh_host_*_key
+fi
+
 # Start sshd
 /usr/sbin/sshd
 
