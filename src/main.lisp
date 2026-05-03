@@ -190,9 +190,15 @@
 
         ;; Start gRPC runner service
         (let ((grpc-port (config-value :grpc-port 9443)))
-          (handler-case (start-grpc-server grpc-port)
+          (handler-case
+              (progn
+                (start-grpc-server grpc-port)
+                (llog:info "gRPC runner service started" :port grpc-port))
             (error (e)
-              (llog:warn "gRPC server failed to start" :error (princ-to-string e)))))
+              (llog:warn "gRPC server failed to start — runners disabled"
+                         :error (princ-to-string e)
+                         :detail (with-output-to-string (s)
+                                   (trivial-backtrace:print-backtrace-to-stream s))))))
         (llog:info "Cave listening" :version +version+ :port port)
 
         ;; Wait forever
