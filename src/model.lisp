@@ -644,7 +644,7 @@
   "List all reviews for a changeset, newest first."
   (postmodern:query
    (:order-by
-    (:select 'cave-reviews.* 'cave-users.username :as 'reviewer-username
+    (:select 'cave-reviews.* (:as 'cave-users.username 'reviewer-username)
      :from 'cave-reviews
      :inner-join 'cave-users :on (:= 'cave-reviews.reviewer-id 'cave-users.id)
      :where (:= 'cave-reviews.changeset-id changeset-id))
