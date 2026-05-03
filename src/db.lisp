@@ -375,6 +375,18 @@ CREATE TABLE cave_repo_mirrors (
 CREATE INDEX idx_mirrors_repo ON cave_repo_mirrors (repo_id);
 CREATE INDEX idx_mirrors_direction ON cave_repo_mirrors (direction, enabled);")
 
+    (26 . "-- User themes
+ALTER TABLE cave_users ADD COLUMN theme VARCHAR(64) NOT NULL DEFAULT 'terminal-warmth';
+CREATE TABLE cave_user_themes (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  name VARCHAR(64) NOT NULL,
+  definition TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, name)
+);")
+
     (27 . "-- Webhooks
 CREATE TABLE cave_webhooks (
   id BIGSERIAL PRIMARY KEY,
@@ -402,19 +414,7 @@ CREATE TABLE cave_commit_statuses (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_commit_statuses_repo ON cave_commit_statuses (repo_id, commit_sha);
-CREATE UNIQUE INDEX idx_commit_statuses_unique ON cave_commit_statuses (repo_id, commit_sha, context);")
-
-    (26 . "-- User themes
-ALTER TABLE cave_users ADD COLUMN theme VARCHAR(64) NOT NULL DEFAULT 'terminal-warmth';
-CREATE TABLE cave_user_themes (
-  id BIGSERIAL PRIMARY KEY,
-  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
-  name VARCHAR(64) NOT NULL,
-  definition TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(user_id, name)
-);"))
+CREATE UNIQUE INDEX idx_commit_statuses_unique ON cave_commit_statuses (repo_id, commit_sha, context);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
