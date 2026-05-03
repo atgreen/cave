@@ -603,6 +603,25 @@
   (postmodern:execute
    (:delete-from 'cave-runners :where (:= 'id runner-id))))
 
+(defun cleanup-stale-ephemeral-runners ()
+  "Delete ephemeral runners that haven't heartbeated in 2 minutes."
+  (postmodern:execute
+   (:delete-from 'cave-runners
+    :where (:and (:= 'ephemeral t)
+                 (:or (:is-null 'last-seen-at)
+                      (:<= 'last-seen-at
+                           (:- (:now) (:raw "'2 minutes'"))))))))
+
+(defun cleanup-offline-runners ()
+  "Mark runners as offline if no heartbeat in 60 seconds. Delete stale ephemeral ones."
+  (postmodern:execute
+   (:update 'cave-runners
+    :set 'status "offline"
+    :where (:and (:= 'status "online")
+                 (:<= 'last-seen-at
+                      (:- (:now) (:raw "'60 seconds'"))))))
+  (cleanup-stale-ephemeral-runners))
+
 (defun create-registration-token (&key scope scope-id created-by-id)
   "Create a runner registration token."
   (let ((token (format nil "cavrt_~A"

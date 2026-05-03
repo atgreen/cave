@@ -99,11 +99,18 @@
   (make-instance 'cave::append-task-log-response :ok t))
 
 (defun handle-update-task-status (request ctx)
-  "Update task status (success, failure, etc.)."
-  (declare (ignore ctx))
-  (postmodern:with-connection *db-spec*
-    (update-run-status (slot-value request 'cave::run-id)
-                       (slot-value request 'cave::status)))
+  "Update task status. Deletes ephemeral runners after terminal status."
+  (let* ((runner (get-runner-from-ctx ctx))
+         (run-id (slot-value request 'cave::run-id))
+         (status (slot-value request 'cave::status))
+         (terminal (member status '("success" "failure" "cancelled" "timed_out")
+                           :test #'equal)))
+    (postmodern:with-connection *db-spec*
+      (update-run-status run-id status)
+      ;; Delete ephemeral runner after task completes
+      (when (and terminal runner (getf runner :ephemeral))
+        (delete-runner (getf runner :id))
+        (llog:info "Ephemeral runner cleaned up" :id (getf runner :id)))))
   (make-instance 'cave::update-task-status-response :ok t))
 
 ;;; --- Server Lifecycle ---
@@ -142,6 +149,17 @@
     #'handle-update-task-status
     :request-type 'cave::update-task-status-request
     :response-type 'cave::update-task-status-response)
+
+  ;; Runner cleanup thread (mark offline, delete stale ephemeral)
+  (bt:make-thread
+   (lambda ()
+     (loop
+       (sleep 30)
+       (handler-case
+           (postmodern:with-connection *db-spec*
+             (cleanup-offline-runners))
+         (error () nil))))
+   :name "cave-runner-cleanup")
 
   ;; Start in a background thread
   (bt:make-thread
