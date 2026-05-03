@@ -639,6 +639,9 @@ code.diff-code.hljs {
   line-height: inherit;
   white-space: pre;
 }
+.diff-table tr { line-height: 1.2; }
+.diff-table td { padding-top: 0 !important; padding-bottom: 0 !important; line-height: 1.2 !important; }
+.diff-table .hljs { line-height: 1.2 !important; }
 .diff-gutter {
   width: 1em;
   text-align: center;
