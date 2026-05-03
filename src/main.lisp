@@ -376,7 +376,7 @@
                                          (make-instance 'cave::declare-runner-request
                                                         :runner-labels runner-labels)
                                          :response-type 'cave::declare-runner-response
-                                         :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))
+                                         :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
                     (error () nil))
 
                   ;; Fetch task
@@ -385,7 +385,7 @@
                                                           "/cave.runner.RunnerService/FetchTask"
                                                           (make-instance 'cave::fetch-task-request)
                                                           :response-type 'cave::fetch-task-response
-                                                          :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
+                                                          :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))))
                         (when (slot-value task-resp 'cave::has-task)
                           (let ((run-id (slot-value task-resp 'cave::run-id))
                                 (repo-owner (slot-value task-resp 'cave::repo-owner))
@@ -399,7 +399,7 @@
                                                (make-instance 'cave::update-task-status-request
                                                               :run-id run-id :status "running")
                                                :response-type 'cave::update-task-status-response
-                                               :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))
+                                               :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
 
                             ;; Execute the command
                             (multiple-value-bind (output error-output exit-code)
@@ -414,7 +414,7 @@
                                                    (make-instance 'cave::append-task-log-request
                                                                   :run-id run-id :chunk log)
                                                    :response-type 'cave::append-task-log-response
-                                                   :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
+                                                   :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
 
                               ;; Report final status
                               (let ((status (if (zerop exit-code) "success" "failure")))
@@ -424,7 +424,7 @@
                                                    (make-instance 'cave::update-task-status-request
                                                                   :run-id run-id :status status)
                                                    :response-type 'cave::update-task-status-response
-                                                   :metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
+                                                   :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))))
 
                             ;; Exit if ephemeral
                             (when ephemeral
