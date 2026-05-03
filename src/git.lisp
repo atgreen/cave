@@ -408,8 +408,10 @@
 
 (defun render-markdown (markdown-string)
   "Render Markdown to sanitized HTML string."
-  (let ((raw-html (with-output-to-string (s)
-                    (3bmd:parse-string-and-print-to-stream markdown-string s))))
+  (let* ((3bmd-tables:*tables* t)
+         (3bmd-code-blocks:*code-blocks* t)
+         (raw-html (with-output-to-string (s)
+                     (3bmd:parse-string-and-print-to-stream markdown-string s))))
     (sanitize-html:sanitize raw-html)))
 
 (defun file-language (filename)
