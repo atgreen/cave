@@ -8,11 +8,11 @@
 3bmd-youtube, ghcr.io/ocicl/3bmd@sha256:8271fdd8c5916501e07004a9ccce66091db16dfd704e1c916ec9b0495277e1a1, 3bmd-20250614-f850c88/3bmd-youtube.asd
 3bmd-youtube-tests, ghcr.io/ocicl/3bmd@sha256:8271fdd8c5916501e07004a9ccce66091db16dfd704e1c916ec9b0495277e1a1, 3bmd-20250614-f850c88/3bmd-youtube-tests.asd
 access, ghcr.io/ocicl/access@sha256:96f4ea8a447a99bf4e94de86b2134e1167d45c7a1ca961e986931f06930f1bbd, access-20250418-346e97b/access.asd
-ag-grpc, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-grpc.asd
-ag-grpc-all, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-grpc-all.asd
-ag-http2, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-http2.asd
-ag-proto, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-proto.asd
-ag-proto-cli, ghcr.io/ocicl/ag-grpc@sha256:302c7a8a1bd6a47c6565d54f05b2141ab2afd875686b3f69b92b3c827fd089ac, ag-gRPC-20260420-442f770/ag-proto-cli.asd
+ag-grpc, ghcr.io/ocicl/ag-grpc@sha256:8219b8814ab06eaa13fa9beeaba4bd1f0e78441c1e29a18f091ab49e5a80d6a8, ag-gRPC-20260503-564794d/ag-grpc.asd
+ag-grpc-all, ghcr.io/ocicl/ag-grpc@sha256:8219b8814ab06eaa13fa9beeaba4bd1f0e78441c1e29a18f091ab49e5a80d6a8, ag-gRPC-20260503-564794d/ag-grpc-all.asd
+ag-http2, ghcr.io/ocicl/ag-grpc@sha256:8219b8814ab06eaa13fa9beeaba4bd1f0e78441c1e29a18f091ab49e5a80d6a8, ag-gRPC-20260503-564794d/ag-http2.asd
+ag-proto, ghcr.io/ocicl/ag-grpc@sha256:8219b8814ab06eaa13fa9beeaba4bd1f0e78441c1e29a18f091ab49e5a80d6a8, ag-gRPC-20260503-564794d/ag-proto.asd
+ag-proto-cli, ghcr.io/ocicl/ag-grpc@sha256:8219b8814ab06eaa13fa9beeaba4bd1f0e78441c1e29a18f091ab49e5a80d6a8, ag-gRPC-20260503-564794d/ag-proto-cli.asd
 anaphora, ghcr.io/ocicl/anaphora@sha256:55f1c61b7826c5451a60b4b4522e35e770504bbfa2036d8becbf21f6d654925a, anaphora-20240503-bcf0f74/anaphora.asd
 arnesi, ghcr.io/ocicl/arnesi@sha256:2608e157cb9628c624dd0f8ca41b74a87558a5f6ec56b70c330e3621b6e8063e, arnesi-20241212-93dc906/arnesi.asd
 array-utils, ghcr.io/ocicl/array-utils@sha256:a74a7050591fc003ec9c35f1de8f41a5c8ac1a6157ced767ed6e5a73c2596cbf, array-utils-20260218-16e108a/array-utils.asd
@@ -100,7 +100,7 @@ iterate, ghcr.io/ocicl/iterate@sha256:6950c55e3782d58cabbbb5753111a70d8cafab8348
 let-plus, ghcr.io/ocicl/let-plus@sha256:12fa3629348fa175a3313ed1f10511d44229a8b554bfa88d00a63ae67fb45f3b, let-plus-20240503-455e657/let-plus.asd
 lisp-namespace, ghcr.io/ocicl/lisp-namespace@sha256:ae08006e0b267958c50160658c729c799c6e1c18d94eef83f2ce5cf6ab8bbd20, lisp-namespace-20240503-699fccb/lisp-namespace.asd
 lisp-namespace.test, ghcr.io/ocicl/lisp-namespace@sha256:ae08006e0b267958c50160658c729c799c6e1c18d94eef83f2ce5cf6ab8bbd20, lisp-namespace-20240503-699fccb/lisp-namespace.test.asd
-llog, ghcr.io/ocicl/llog@sha256:4e9dfa38b60b08d052f499167420d0535b4ada0cabbc1b7be9c3d199bfd2fa9d, cl-llog-20251015-035e013/llog.asd
+llog, ghcr.io/ocicl/llog@sha256:484c3f9c99316852e99bbaea37e43bcdcb09d2bff96bc483e7c8a1a57f78a77b, cl-llog-20260502-70c5028/llog.asd
 local-time, ghcr.io/ocicl/local-time@sha256:15dc0e56d0ff55bd2a3c597e67be1c26bd0677c230a15ad5098c5207a9df5554, local-time-20250808-c28f38e/local-time.asd
 log4cl, ghcr.io/ocicl/log4cl@sha256:bd33f6e5ad346892e852492e7101bc18d263f9ef2ba6192178568d1b20337112, log4cl-20240503-fe3da51/log4cl.asd
 log4cl-examples, ghcr.io/ocicl/log4cl@sha256:bd33f6e5ad346892e852492e7101bc18d263f9ef2ba6192178568d1b20337112, log4cl-20240503-fe3da51/log4cl-examples.asd
