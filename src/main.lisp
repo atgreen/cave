@@ -123,6 +123,33 @@
                 e config-path)
         (uiop:quit 1)))
 
+    ;; Ensure cave org and cave-themes repo exist
+    (unless (find-org-by-name "cave")
+      (handler-case
+          (progn
+            (postmodern:query
+             (:insert-into 'cave-orgs
+              :set 'name "cave"
+                   'display-name "Cave"
+                   'description "System organization"
+              :returning '*)
+             :plist)
+            (llog:info "Created cave org"))
+        (error () nil)))
+    (let ((cave-org (find-org-by-name "cave")))
+      (when (and cave-org (not (find-repo "cave" "cave-themes")))
+        (handler-case
+            (let ((repo (postmodern:query
+                         (:insert-into 'cave-repos
+                          :set 'org-id (getf cave-org :id)
+                               'name "cave-themes"
+                               'description "Built-in and community themes for Cave"
+                          :returning '*)
+                         :plist)))
+              (init-bare-repo "cave" "cave-themes")
+              (llog:info "Created cave/cave-themes repo" :id (getf repo :id)))
+          (error () nil))))
+
     (let ((port (or port-override (config-value :http-port 8080))))
       (bt:with-lock-held (*server-lock*)
         ;; Slynk
@@ -237,12 +264,12 @@
 (defun make-sync-themes-command ()
   (clingon:make-command
    :name "sync-themes"
-   :description "Sync user themes from a .cave-themes repo"
+   :description "Sync user themes from a cave-themes repo"
    :options (list
              (make-config-option)
              (clingon:make-option :string
               :long-name "repo" :key :repo :required t
-              :description "Repo path as owner/.cave-themes"))
+              :description "Repo path as owner/cave-themes"))
    :handler #'handle-sync-themes))
 
 (defun parse-theme-toml (content)
@@ -281,7 +308,7 @@
     (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
            (owner (first parts))
            (user (find-user-by-username owner))
-           (disk-path (repo-disk-path owner ".cave-themes")))
+           (disk-path (repo-disk-path owner "cave-themes")))
       (when (and user (probe-file disk-path))
         ;; List all .toml files in the repo root
         (let ((tree (git-tree disk-path :ref "HEAD")))
@@ -300,7 +327,7 @@
                           (progn
                             (format t "  ✗ Empty theme: ~A~%" theme-name)
                             ;; Open issue on the themes repo
-                            (let ((repo (find-repo owner ".cave-themes")))
+                            (let ((repo (find-repo owner "cave-themes")))
                               (when repo
                                 (create-issue :repo-id (getf repo :id)
                                               :author-id (getf user :id)
@@ -308,7 +335,7 @@
                                               :body (format nil "The theme file `~A` produced no valid CSS variables.~%~%Expected format:~%```toml~%bg = \"#282a36\"~%accent = \"#ff79c6\"~%```" filename)))))))
                   (error (e)
                     (format t "  ✗ Error parsing ~A: ~A~%" theme-name e)
-                    (let ((repo (find-repo owner ".cave-themes")))
+                    (let ((repo (find-repo owner "cave-themes")))
                       (when repo
                         (create-issue :repo-id (getf repo :id)
                                       :author-id (getf user :id)

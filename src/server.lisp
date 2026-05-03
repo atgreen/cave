@@ -1168,8 +1168,8 @@
       (with-open-file (out hook-path :direction :output :if-exists :supersede)
         (format out "#!/bin/bash~%cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
                 owner repo-name)
-        (when (string= repo-name ".cave-themes")
-          (format out "cave sync-themes --config /etc/cave.conf --repo ~A/.cave-themes &~%"
+        (when (string= repo-name "cave-themes")
+          (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
                   owner)))
       (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                          :ignore-error-status t))
