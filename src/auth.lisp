@@ -23,7 +23,7 @@
 (defun oidc-authorization-url (state &key force-login)
   "Build the OIDC authorization redirect URL (browser-facing).
    If FORCE-LOGIN is T, forces re-authentication (for sudo mode)."
-  (format nil "~A/protocol/openid-connect/auth?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email~@[&max_age=0&prompt=login~]"
+  (format nil "~A/protocol/openid-connect/auth?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email~@[&max_age=0~]"
           (config-value :oidc-issuer)
           (config-value :oidc-client-id)
           (hunchentoot:url-encode (oidc-redirect-uri))
