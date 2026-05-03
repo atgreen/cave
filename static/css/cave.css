@@ -612,13 +612,14 @@ code {
 }
 .diff-file-header a { color: var(--link); }
 .diff-body { font-family: var(--font-mono); font-size: .8rem; }
-.diff-body { min-width: max-content; }
 .diff-line {
-  display: grid;
-  grid-template-columns: 3.5em 3.5em 1.5em 1.2em auto;
+  display: flex;
   line-height: 1.4;
 }
-.diff-line > span, .diff-line > code { padding: 0 2px; }
+.diff-line > span { flex-shrink: 0; }
+.diff-line-num { width: 3.5em; }
+.diff-add-btn { width: 1.5em; }
+.diff-gutter { width: 1.2em; }
 .diff-line-add { background: var(--green-bg); color: var(--text); }
 .diff-line-del { background: var(--red-bg); color: var(--text); }
 .diff-line-hunk { display: block; background: var(--blue-bg); color: var(--blue); padding: var(--sp-1) var(--sp-3); }
