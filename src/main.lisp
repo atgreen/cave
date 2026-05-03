@@ -272,30 +272,74 @@
               :description "Repo path as owner/cave-themes"))
    :handler #'handle-sync-themes))
 
+(defparameter *theme-color-keys*
+  '("bg" "bg-warm" "surface" "surface-hover" "border" "border-subtle"
+    "text" "text-secondary" "text-muted"
+    "accent" "accent-dim" "accent-bg"
+    "link" "link-hover"
+    "green" "green-bright" "green-bg"
+    "red" "red-bg" "yellow" "yellow-bg" "blue" "blue-bg")
+  "Theme keys that must be valid CSS colors.")
+
+(defparameter *theme-font-keys*
+  '("font-mono" "font-body")
+  "Theme keys that are font families.")
+
+(defun valid-css-color-p (value)
+  "Check if VALUE looks like a valid CSS color (#hex, rgb(), rgba(), named)."
+  (or (and (>= (length value) 4)
+           (char= (char value 0) #\#)
+           (every (lambda (c) (digit-char-p c 16)) (subseq value 1)))
+      (search "rgb" value)
+      (search "hsl" value)
+      (member value '("transparent" "inherit" "currentColor") :test #'equalp)))
+
+(defun valid-url-p (value)
+  "Check if VALUE looks like a valid URL."
+  (or (search "https://" value)
+      (search "http://" value)))
+
+(defun lint-theme-entry (key value)
+  "Lint a theme key/value pair. Returns an error string or NIL if valid."
+  (cond
+    ((member key *theme-color-keys* :test #'equal)
+     (unless (valid-css-color-p value)
+       (format nil "`~A` = `~A` — expected a CSS color (#hex, rgb(), rgba())" key value)))
+    ((equal key "font-url")
+     (unless (valid-url-p value)
+       (format nil "`font-url` = `~A` — expected a URL starting with https://" key value)))
+    ((member key *theme-font-keys* :test #'equal)
+     (when (uiop:emptyp value)
+       (format nil "`~A` is empty — expected a font family string" key)))
+    (t nil)))
+
 (defun parse-theme-toml (content)
-  "Parse a simple TOML theme file into a CSS block.
-   Keys become CSS variables. Special key 'font-url' becomes an @import.
-   Expected format: key = \"value\" pairs, # comments, [sections] ignored."
+  "Parse a simple TOML theme file into a CSS block with validation.
+   Returns (VALUES css-string errors-list)."
   (let ((vars nil)
         (imports nil)
-        (theme-name nil))
+        (errors nil))
     (dolist (line (uiop:split-string content :separator '(#\Newline)))
       (let ((trimmed (string-trim '(#\Space #\Tab) line)))
         (cond
           ((uiop:emptyp trimmed) nil)
           ((char= (char trimmed 0) #\#) nil)
-          ((char= (char trimmed 0) #\[)
-           (setf theme-name (string-trim '(#\[ #\] #\Space) trimmed)))
+          ((char= (char trimmed 0) #\[) nil)
           ((find #\= trimmed)
            (let* ((eq-pos (position #\= trimmed))
                   (key (string-trim '(#\Space) (subseq trimmed 0 eq-pos)))
-                  (val (string-trim '(#\Space #\" #\') (subseq trimmed (1+ eq-pos)))))
-             (if (equal key "font-url")
-                 (push (format nil "@import url('~A');" val) imports)
-                 (push (format nil "  --~A: ~A;" key val) vars)))))))
-    (when vars
-      (format nil "~{~A~%~}html[data-theme=\"custom\"] {~%~{~A~%~}}"
-              (nreverse imports) (nreverse vars)))))
+                  (val (string-trim '(#\Space #\" #\') (subseq trimmed (1+ eq-pos))))
+                  (err (lint-theme-entry key val)))
+             (if err
+                 (push err errors)
+                 (if (equal key "font-url")
+                     (push (format nil "@import url('~A');" val) imports)
+                     (push (format nil "  --~A: ~A;" key val) vars))))))))
+    (values
+     (when vars
+       (format nil "~{~A~%~}html[data-theme=\"custom\"] {~%~{~A~%~}}"
+               (nreverse imports) (nreverse vars)))
+     (nreverse errors))))
 
 (defun handle-sync-themes (cmd)
   (let ((config-path (clingon:getopt cmd :config))
@@ -319,14 +363,24 @@
                      (theme-name (pathname-name (pathname filename)))
                      (content (git-blob disk-path "HEAD" filename)))
                 (handler-case
-                    (let ((css (parse-theme-toml content)))
+                    (multiple-value-bind (css lint-errors)
+                        (parse-theme-toml content)
+                      ;; File issue if there are lint errors
+                      (when lint-errors
+                        (format t "  ⚠ ~A has ~A warning~:P~%" theme-name (length lint-errors))
+                        (let ((repo (find-repo owner "cave-themes")))
+                          (when repo
+                            (create-issue :repo-id (getf repo :id)
+                                          :author-id (getf user :id)
+                                          :title (format nil "Theme lint: ~A" filename)
+                                          :body (format nil "Found ~A issue~:P in `~A`:~%~%~{- ~A~%~}~%Fix these and push again."
+                                                        (length lint-errors) filename lint-errors)))))
                       (if css
                           (progn
                             (upsert-user-theme (getf user :id) theme-name css)
                             (format t "  ✓ Synced theme: ~A~%" theme-name))
                           (progn
                             (format t "  ✗ Empty theme: ~A~%" theme-name)
-                            ;; Open issue on the themes repo
                             (let ((repo (find-repo owner "cave-themes")))
                               (when repo
                                 (create-issue :repo-id (getf repo :id)
