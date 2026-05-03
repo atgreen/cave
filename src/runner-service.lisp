@@ -143,9 +143,6 @@
     :request-type 'cave::update-task-status-request
     :response-type 'cave::update-task-status-response)
 
-  ;; Enable health checking
-  (ag-grpc:server-enable-health-checking *grpc-server*)
-
   ;; Start in a background thread
   (bt:make-thread
    (lambda ()
