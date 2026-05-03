@@ -65,6 +65,16 @@ requirements.
   - More sophisticated: blue-green with old container kept running until
     new one is healthy.
 
+### Built-in container deployment (PaaS)
+- All container build-and-deploy functionality is deferred indefinitely.
+- Cave focuses on code review and forge capabilities.
+- Deploy pipeline should be handled by external tools (Drone, Woodpecker,
+  GitHub Actions, shell scripts, etc.)
+- DB schema retains deploy-related columns (cave_deploys, cave_deploy_secrets,
+  deploy_enabled, etc.) but they are unused.
+- Related deferred items below (container registry, environment promotion,
+  health-checked deploys, deploy failure recovery) are all part of this scope.
+
 ## Deferred Specification Work
 
 ### Comprehensive API contract
