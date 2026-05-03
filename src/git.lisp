@@ -129,6 +129,14 @@
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
+(defun git-diff-merge-base (repo-path target-ref source-ref)
+  "Get diff of changes introduced by source-ref relative to its merge-base with target-ref.
+   Uses three-dot notation: target...source."
+  (multiple-value-bind (output _err exit-code)
+      (git-run repo-path "diff" (format nil "~A...~A" target-ref source-ref))
+    (declare (ignore _err))
+    (when (zerop exit-code) output)))
+
 (defun git-diff-stat (repo-path base-ref head-ref)
   "Get diff stat between two refs."
   (multiple-value-bind (output _err exit-code)

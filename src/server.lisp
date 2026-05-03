@@ -679,7 +679,7 @@
              (disk-path (repo-disk-path owner repo-name))
              (source (getf pr :source-branch))
              (target (getf pr :target-branch))
-             (diff-raw (git-diff disk-path target source))
+             (diff-raw (git-diff-merge-base disk-path target source))
              ;; Inline diff comments
              (raw-comments (list-diff-comments (getf pr :id)))
              (comments-json (com.inuoe.jzon:stringify

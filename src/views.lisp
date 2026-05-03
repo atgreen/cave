@@ -776,9 +776,12 @@ function caveToggleCommentForm(btn) {
             (:raw (format nil "
 var caveComments = ~A;
 var caveCommentAction = ~A;
-document.addEventListener('DOMContentLoaded', function() {
-  // Wait for diff2html to render
-  setTimeout(function() {
+// Wait for diff2html to finish rendering
+function caveInitComments() {
+  if (!document.querySelector('.d2h-code-linenumber:not(.d2h-info)')) {
+    setTimeout(caveInitComments, 200); return;
+  }
+  (function() {
     // Inject existing comments
     caveComments.forEach(function(c) {
       var file = c.file_path, line = c.line_number, side = c.side;
@@ -802,8 +805,9 @@ document.addEventListener('DOMContentLoaded', function() {
       td.style.position = 'relative';
       td.appendChild(btn);
     });
-  }, 500);
-});
+  })();
+}
+setTimeout(caveInitComments, 500);
 function caveEsc(s) { var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function caveGetFileWrapper(filename) {
   var wrappers = document.querySelectorAll('.d2h-file-wrapper');
@@ -843,7 +847,7 @@ function caveShowCommentForm(td) {
     '<textarea name=\"body\" rows=\"3\" required placeholder=\"Write a comment...\"></textarea>' +
     '<div style=\"display:flex;gap:8px;margin-top:4px\">' +
     '<button type=\"submit\" class=\"btn btn-primary btn-sm\">Comment</button>' +
-    '<button type=\"button\" class=\"btn btn-sm\" onclick=\"this.closest(\\\\x27tr\\\\x27).remove()\">Cancel</button>' +
+    '<button type=\"button\" class=\"btn btn-sm\" onclick=\"this.closest(&#39;tr&#39;).remove()\">Cancel</button>' +
     '</div></form></td>';
   tr.parentNode.insertBefore(formRow, tr.nextSibling);
   formRow.querySelector('textarea').focus();
