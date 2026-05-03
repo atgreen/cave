@@ -213,8 +213,10 @@
      (list (list (format nil "/~A" owner-name) owner-name)
            repo-name))
     (:nav.repo-tabs
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :overview))
+      :href (format nil "/~A/~A" owner-name repo-name) "Overview")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :code))
-      :href (format nil "/~A/~A" owner-name repo-name) "Code")
+      :href (format nil "/~A/~A/code" owner-name repo-name) "Code")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :issues))
       :href (format nil "/~A/~A/issues" owner-name repo-name) "Issues")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulls))
@@ -254,17 +256,16 @@
                                   owner-name repo-name default-branch entry-path))
              name)))))))))
 
-(defun view-repo (&key owner-name repo role empty branches tags recent-commits
-                       issues pulls default-branch commit-count file-tree
+(defun view-repo (&key owner-name repo empty default-branch
                        readme-html readme-filename)
-  "Render a repo page."
+  "Render the repo overview page (README + clone URL)."
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "~A/~A — Cave" org-name repo-name))
       (when (getf repo :is-private) (:span.badge "private"))
       (when (getf repo :description) (:p (getf repo :description)))
 
-      (render-repo-tabs org-name repo-name :code)
+      (render-repo-tabs org-name repo-name :overview)
 
       (if empty
           (:section
@@ -273,31 +274,6 @@
             (format nil "git remote add origin ~A~%git push -u origin main"
                     (ssh-clone-url org-name repo-name))))
           (progn
-            ;; Branch/tag bar + last commit
-            (:div.repo-info-bar
-             (:div.repo-info-left
-              (:span.badge default-branch)
-              (:span.repo-info-stat
-               (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
-              (when tags
-                (:span.repo-info-stat
-                 (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))
-             (when commit-count
-               (:span.repo-info-stat
-                (format nil "~A ~:[commits~;commit~]" commit-count (= commit-count 1)))))
-            ;; Last commit bar
-            (when recent-commits
-              (let ((last (first recent-commits)))
-                (:div.repo-last-commit
-                 (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name
-                                    (getf last :hash))
-                  (:code.repo-last-hash (getf last :short-hash)))
-                 (:span.repo-last-msg (getf last :subject))
-                 (:span.repo-last-author (getf last :author)))))
-            ;; File tree
-            (when file-tree
-              (render-file-tree file-tree org-name repo-name default-branch))
-
             ;; README
             (when readme-html
               (:section
@@ -307,20 +283,53 @@
             ;; Clone URL
             (:section
              (:h2 "Clone")
-             (:code.clone-url (ssh-clone-url org-name repo-name)))
+             (:code.clone-url (ssh-clone-url org-name repo-name))))))))
 
-            ;; Recent commits
-            (when recent-commits
-              (:section
-               (:h2 "Recent commits")
-               (:ul.issue-list
-                (dolist (c recent-commits)
-                  (:li
-                   (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name (getf c :hash))
-                    (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
-                   (:span (getf c :subject))
-                   (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
-                    (getf c :author))))))))))))
+(defun view-code (&key owner-name repo branches tags default-branch
+                       commit-count recent-commits file-tree)
+  "Render the repo code/file browser page."
+  (let ((org-name owner-name)
+        (repo-name (getf repo :name)))
+    (page (:title (format nil "Code — ~A/~A" org-name repo-name))
+      (render-repo-tabs org-name repo-name :code)
+
+      ;; Branch/tag bar + last commit
+      (:div.repo-info-bar
+       (:div.repo-info-left
+        (:span.badge default-branch)
+        (:span.repo-info-stat
+         (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
+        (when tags
+          (:span.repo-info-stat
+           (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))
+       (when commit-count
+         (:span.repo-info-stat
+          (format nil "~A ~:[commits~;commit~]" commit-count (= commit-count 1)))))
+      ;; Last commit bar
+      (when recent-commits
+        (let ((last (first recent-commits)))
+          (:div.repo-last-commit
+           (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name
+                              (getf last :hash))
+            (:code.repo-last-hash (getf last :short-hash)))
+           (:span.repo-last-msg (getf last :subject))
+           (:span.repo-last-author (getf last :author)))))
+      ;; File tree
+      (when file-tree
+        (render-file-tree file-tree org-name repo-name default-branch))
+
+      ;; Recent commits
+      (when recent-commits
+        (:section
+         (:h2 "Recent commits")
+         (:ul.issue-list
+          (dolist (c recent-commits)
+            (:li
+             (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name (getf c :hash))
+              (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
+             (:span (getf c :subject))
+             (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
+              (getf c :author))))))))))
 
 ;;; ========================== TREE & BLOB PAGES ==========================
 

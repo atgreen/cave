@@ -383,18 +383,13 @@
 ;; ----------------------------------------------------------------------------
 ;; Routes: Repos
 
+;; Overview (default landing — README + clone URL)
 (easy-routes:defroute repo-page ("/:owner/:repo-name" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from repo-page repo))
-    (let* ((role (and *current-user-id*
-                      (repo-member-role (getf repo :id) *current-user-id*)))
-           (disk-path (repo-disk-path owner repo-name))
+    (let* ((disk-path (repo-disk-path owner repo-name))
            (empty (git-repo-empty-p disk-path))
            (default-branch (unless empty (or (git-default-branch disk-path) "main")))
-           (branches (unless empty (git-branches disk-path)))
-           (tags (unless empty (git-tags disk-path)))
-           (commit-count (unless empty (git-commit-count disk-path :branch default-branch)))
-           (file-tree (unless empty (git-tree disk-path :ref default-branch)))
            (readme-entry (unless empty (git-readme-path disk-path :ref default-branch)))
            (readme-content (when readme-entry
                              (git-blob disk-path default-branch
@@ -403,23 +398,37 @@
                                    (search ".md" (string-downcase
                                                    (getf readme-entry :name))))
                           (render-markdown readme-content)))
-           ;; Plain text README (no markdown)
            (readme-html (or readme-html
                             (when readme-content
                               (format nil "<pre>~A</pre>"
-                                      (spinneret::escape-string readme-content)))))
-           (recent-commits (unless empty (git-log disk-path :limit 5)))
-           (open-issues (list-issues (getf repo :id) :status "open" :limit 5))
-           (open-pulls (list-pull-requests (getf repo :id) :status "open" :limit 5)))
+                                      (spinneret::escape-string readme-content))))))
       (html-response
-       (view-repo :owner-name owner :repo repo :role role
-                  :empty empty :branches branches :tags tags
-                  :default-branch default-branch :commit-count commit-count
-                  :file-tree file-tree
+       (view-repo :owner-name owner :repo repo :empty empty
+                  :default-branch default-branch
                   :readme-html readme-html
-                  :readme-filename (when readme-entry (getf readme-entry :name))
-                  :recent-commits recent-commits
-                  :issues open-issues :pulls open-pulls)))))
+                  :readme-filename (when readme-entry (getf readme-entry :name)))))))
+
+;; Code (file browser)
+(easy-routes:defroute code-page ("/:owner/:repo-name/code" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from code-page repo))
+    (let* ((disk-path (repo-disk-path owner repo-name))
+           (empty (git-repo-empty-p disk-path))
+           (default-branch (unless empty (or (git-default-branch disk-path) "main")))
+           (branches (unless empty (git-branches disk-path)))
+           (tags (unless empty (git-tags disk-path)))
+           (commit-count (unless empty (git-commit-count disk-path :branch default-branch)))
+           (file-tree (unless empty (git-tree disk-path :ref default-branch)))
+           (recent-commits (unless empty (git-log disk-path :limit 10))))
+      (if empty
+          (hunchentoot:redirect (format nil "/~A/~A" owner repo-name))
+          (html-response
+           (view-code :owner-name owner :repo repo
+                      :branches branches :tags tags
+                      :default-branch default-branch
+                      :commit-count commit-count
+                      :recent-commits recent-commits
+                      :file-tree file-tree))))))
 
 ;; Tree (directory) browsing
 (easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
