@@ -1447,6 +1447,18 @@ function caveShowCommentForm(td) {
          (:button.btn.btn-primary :type "submit" "Apply"))))
 
       (:section
+       (:h2 "Security")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Manage your password and two-factor authentication.")
+       (:a.btn :href (let ((issuer (config-value :oidc-issuer "")))
+                       (if (search "/realms/" issuer)
+                           (format nil "~A/account/#/security/signingin"
+                                   (subseq issuer 0 (+ (search "/realms/" issuer)
+                                                       (length "/realms/cave"))))
+                           "#"))
+        "Manage password & 2FA"))
+
+      (:section
        (:h2 "CLI")
        (if cav-path
            (progn
