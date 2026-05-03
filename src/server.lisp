@@ -539,7 +539,8 @@
       (html-response
        (view-repo-settings :owner-name owner :repo repo
                            :members (list-repo-members (getf repo :id))
-                           :checks (list-check-configs (getf repo :id)))))))
+                           :checks (list-check-configs (getf repo :id))
+                           :mirrors (list-mirrors (getf repo :id)))))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -628,6 +629,39 @@
       ;; Delete from DB (cascades to issues, PRs, etc.)
       (delete-repo (getf repo :id))
       (hunchentoot:redirect (format nil "/~A" owner)))))
+
+(easy-routes:defroute repo-add-mirror-submit
+    ("/:owner/:repo-name/settings/mirrors" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-add-mirror-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-add-mirror-submit "Forbidden"))
+      (let ((direction (hunchentoot:post-parameter "direction"))
+            (remote-url (hunchentoot:post-parameter "remote_url"))
+            (auth-token (hunchentoot:post-parameter "auth_token"))
+            (interval (parse-integer (or (hunchentoot:post-parameter "interval") "60")
+                                     :junk-allowed t)))
+        (when (and direction remote-url (not (uiop:emptyp remote-url)))
+          (create-mirror :repo-id (getf repo :id)
+                         :direction direction
+                         :remote-url remote-url
+                         :auth-token (unless (uiop:emptyp auth-token) auth-token)
+                         :interval-minutes (or interval 60))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-delete-mirror-submit
+    ("/:owner/:repo-name/settings/mirrors/:mirror-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-delete-mirror-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-delete-mirror-submit "Forbidden"))
+      (let ((mid (parse-integer mirror-id :junk-allowed t)))
+        (when mid (delete-mirror mid (getf repo :id))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
 (easy-routes:defroute repo-add-check-submit
     ("/:owner/:repo-name/settings/checks" :method :post) ()
@@ -1098,10 +1132,17 @@
     (ensure-directories-exist path)
     (uiop:run-program (list "git" "init" "--bare" "-b" "main" (namestring path))
                        :output :string :error-output :string)
-    ;; Install pre-receive hook
+    ;; Install pre-receive hook (checks)
     (let ((hook-path (merge-pathnames "hooks/pre-receive" path)))
       (with-open-file (out hook-path :direction :output :if-exists :supersede)
         (format out "#!/bin/bash~%exec cave run-checks --config /etc/cave.conf --repo ~A/~A~%"
+                owner repo-name))
+      (uiop:run-program (list "chmod" "+x" (namestring hook-path))
+                         :ignore-error-status t))
+    ;; Install post-receive hook (push mirrors)
+    (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
+      (with-open-file (out hook-path :direction :output :if-exists :supersede)
+        (format out "#!/bin/bash~%cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
                 owner repo-name))
       (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                          :ignore-error-status t))

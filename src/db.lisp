@@ -357,7 +357,23 @@ CREATE INDEX idx_diff_comments_changeset ON cave_diff_comments (changeset_id);
 CREATE INDEX idx_diff_comments_file ON cave_diff_comments (changeset_id, file_path);")
 
     (24 . "-- Repo archival
-ALTER TABLE cave_repos ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE;"))
+ALTER TABLE cave_repos ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE;")
+
+    (25 . "-- Repo mirrors
+CREATE TABLE cave_repo_mirrors (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  direction VARCHAR(4) NOT NULL CHECK (direction IN ('push', 'pull')),
+  remote_url TEXT NOT NULL,
+  auth_token TEXT,
+  interval_minutes INTEGER NOT NULL DEFAULT 60,
+  last_sync_at TIMESTAMPTZ,
+  last_error TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_mirrors_repo ON cave_repo_mirrors (repo_id);
+CREATE INDEX idx_mirrors_direction ON cave_repo_mirrors (direction, enabled);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

@@ -927,7 +927,7 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members checks message)
+(defun view-repo-settings (&key owner-name repo members checks mirrors message)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
@@ -1033,6 +1033,48 @@ function caveShowCommentForm(td) {
          (:input :type "number" :id "check_timeout" :name "timeout" :value "60"
                  :min "5" :max "600" :style "width:5em"))
         (:button.btn.btn-primary :type "submit" "Add check")))
+
+      ;; Mirrors
+      (:section
+       (:h2 "Mirrors")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Push mirrors copy this repo to an external host after each push. Pull mirrors fetch from an external repo periodically.")
+       (if mirrors
+           (:ul.data-list
+            (dolist (m mirrors)
+              (:li
+               (:span.badge (getf m :direction))
+               (:code :style "margin-left:var(--sp-2);flex:1" (getf m :remote-url))
+               (when (getf m :last-error)
+                 (:span.badge :style "border-color:var(--red);color:var(--red)" "error"))
+               (when (getf m :last-sync-at)
+                 (:span :style "color:var(--text-muted);font-size:.75rem;margin-left:var(--sp-2)"
+                  (format nil "last sync: ~A" (princ-to-string (getf m :last-sync-at)))))
+               (:form :method "post" :style "display:inline;margin-left:auto"
+                :action (format nil "/~A/~A/settings/mirrors/~A/delete"
+                                owner-name repo-name (getf m :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No mirrors configured."))
+       (:h3 "Add mirror")
+       (:form :method "post" :action (format nil "/~A/~A/settings/mirrors" owner-name repo-name)
+        (:div.field
+         (:label :for "mirror_direction" "Direction")
+         (:select :id "mirror_direction" :name "direction"
+          (:option :value "push" "Push (Cave → external)")
+          (:option :value "pull" "Pull (external → Cave)")))
+        (:div.field
+         (:label :for "mirror_url" "Remote URL")
+         (:input :type "text" :id "mirror_url" :name "remote_url" :required t
+                 :placeholder "https://github.com/user/repo.git"))
+        (:div.field
+         (:label :for "mirror_token" "Auth token (optional)")
+         (:input :type "password" :id "mirror_token" :name "auth_token"
+                 :placeholder "GitHub PAT or access token"))
+        (:div.field
+         (:label :for "mirror_interval" "Pull interval (minutes)")
+         (:input :type "number" :id "mirror_interval" :name "interval" :value "60"
+                 :min "5" :max "1440" :style "width:5em"))
+        (:button.btn.btn-primary :type "submit" "Add mirror")))
 
       ;; Danger zone
       (:section

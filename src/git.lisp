@@ -153,6 +153,39 @@
       (when (probe-file tmpdir)
         (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
 
+(defun git-push-mirror (repo-path remote-url &optional auth-token)
+  "Push all refs to a remote URL. Returns (VALUES success-p error-string)."
+  (let ((url (if auth-token
+                 ;; Insert token into URL: https://TOKEN@host/path
+                 (let ((pos (search "://" remote-url)))
+                   (if pos
+                       (format nil "~A://~A@~A"
+                               (subseq remote-url 0 pos)
+                               auth-token
+                               (subseq remote-url (+ pos 3)))
+                       remote-url))
+                 remote-url)))
+    (multiple-value-bind (output err exit-code)
+        (git-run repo-path "push" "--mirror" url)
+      (declare (ignore output))
+      (values (zerop exit-code) err))))
+
+(defun git-pull-mirror (repo-path remote-url &optional auth-token)
+  "Fetch all refs from a remote URL into a bare repo. Returns (VALUES success-p error-string)."
+  (let ((url (if auth-token
+                 (let ((pos (search "://" remote-url)))
+                   (if pos
+                       (format nil "~A://~A@~A"
+                               (subseq remote-url 0 pos)
+                               auth-token
+                               (subseq remote-url (+ pos 3)))
+                       remote-url))
+                 remote-url)))
+    (multiple-value-bind (output err exit-code)
+        (git-run repo-path "fetch" "--prune" url "+refs/*:refs/*")
+      (declare (ignore output))
+      (values (zerop exit-code) err))))
+
 (defun git-delete-branch (repo-path branch)
   "Delete a branch in a bare repo."
   (multiple-value-bind (_out _err exit-code)

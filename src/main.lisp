@@ -232,6 +232,66 @@
                   (length failed) (nreverse failed))
           (uiop:quit 1))))))
 
+;;; --- SYNC-MIRRORS subcommand ---
+
+(defun make-sync-mirrors-command ()
+  (clingon:make-command
+   :name "sync-mirrors"
+   :description "Sync repo mirrors (push mirrors for a repo, or all due pull mirrors)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "repo" :key :repo
+              :description "Repo path as owner/name (for push mirrors). Omit for pull mirror sync."))
+   :handler #'handle-sync-mirrors))
+
+(defun handle-sync-mirrors (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (repo-path (clingon:getopt cmd :repo)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (if repo-path
+        ;; Push mirrors for a specific repo
+        (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
+               (owner (first parts))
+               (name (second parts))
+               (repo (find-repo owner name)))
+          (when repo
+            (let ((mirrors (list-mirrors (getf repo :id)))
+                  (disk-path (repo-disk-path owner name)))
+              (dolist (m mirrors)
+                (when (and (equal (getf m :direction) "push") (getf m :enabled))
+                  (format t "~&Pushing to ~A...~%" (getf m :remote-url))
+                  (multiple-value-bind (ok err)
+                      (git-push-mirror disk-path (getf m :remote-url) (getf m :auth-token))
+                    (if ok
+                        (progn
+                          (format t "  ✓ Push mirror synced~%")
+                          (update-mirror-sync (getf m :id)))
+                        (progn
+                          (format t "  ✗ Push mirror failed: ~A~%" err)
+                          (update-mirror-sync (getf m :id) :error err)))))))))
+        ;; Pull mirrors — sync all due
+        (let ((due (list-due-pull-mirrors)))
+          (dolist (m due)
+            (let* ((owner (getf m :owner-name))
+                   (name (getf m :name))
+                   (disk-path (repo-disk-path owner name)))
+              (format t "~&Pulling ~A/~A from ~A...~%" owner name (getf m :remote-url))
+              (multiple-value-bind (ok err)
+                  (git-pull-mirror disk-path (getf m :remote-url) (getf m :auth-token))
+                (if ok
+                    (progn
+                      (format t "  ✓ Pull mirror synced~%")
+                      (update-mirror-sync (getf m :id)))
+                    (progn
+                      (format t "  ✗ Pull mirror failed: ~A~%" err)
+                      (update-mirror-sync (getf m :id) :error err))))))))
+    (disconnect-db)))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -247,7 +307,8 @@
                        (make-migrate-command)
                        (make-git-shell-command)
                        (make-update-keys-command)
-                       (make-run-checks-command))
+                       (make-run-checks-command)
+                       (make-sync-mirrors-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 

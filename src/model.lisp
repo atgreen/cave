@@ -398,6 +398,57 @@
          'updated-at (:now)
     :where (:= 'id repo-id))))
 
+;;; ========================== MIRRORS ==========================
+
+(defun create-mirror (&key repo-id direction remote-url auth-token interval-minutes)
+  "Create a mirror config."
+  (postmodern:query
+   (:insert-into 'cave-repo-mirrors
+    :set 'repo-id repo-id
+         'direction direction
+         'remote-url remote-url
+         'auth-token (or auth-token :null)
+         'interval-minutes (or interval-minutes 60)
+    :returning '*)
+   :plist))
+
+(defun list-mirrors (repo-id)
+  "List all mirrors for a repo."
+  (postmodern:query
+   (:order-by
+    (:select '* :from 'cave-repo-mirrors
+     :where (:= 'repo-id repo-id))
+    'direction 'created-at)
+   :plists))
+
+(defun delete-mirror (mirror-id repo-id)
+  "Delete a mirror config."
+  (postmodern:execute
+   (:delete-from 'cave-repo-mirrors
+    :where (:and (:= 'id mirror-id) (:= 'repo-id repo-id)))))
+
+(defun list-due-pull-mirrors ()
+  "List pull mirrors that are due for sync."
+  (postmodern:query
+   (:select 'cave-repo-mirrors.* 'cave-repos.name
+            (:as (:raw "COALESCE((SELECT username FROM cave_users WHERE id = cave_repos.owner_id), (SELECT name FROM cave_orgs WHERE id = cave_repos.org_id))") 'owner-name)
+    :from 'cave-repo-mirrors
+    :inner-join 'cave-repos :on (:= 'cave-repo-mirrors.repo-id 'cave-repos.id)
+    :where (:and (:= 'cave-repo-mirrors.direction "pull")
+                 (:= 'cave-repo-mirrors.enabled t)
+                 (:or (:is-null 'cave-repo-mirrors.last-sync-at)
+                      (:<= 'cave-repo-mirrors.last-sync-at
+                           (:- (:now) (:raw "make_interval(mins => cave_repo_mirrors.interval_minutes)"))))))
+   :plists))
+
+(defun update-mirror-sync (mirror-id &key error)
+  "Update last sync time and optionally record an error."
+  (postmodern:execute
+   (:update 'cave-repo-mirrors
+    :set 'last-sync-at (:now)
+         'last-error (or error :null)
+    :where (:= 'id mirror-id))))
+
 ;;; ========================== CHECK CONFIGS ==========================
 
 (defun list-check-configs (repo-id)
