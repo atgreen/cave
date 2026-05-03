@@ -627,13 +627,16 @@ code {
 .diff-line-hunk { display: block; background: var(--blue-bg); color: var(--blue); padding: var(--sp-1) var(--sp-3); }
 .diff-line-context { background: transparent; }
 code.diff-code,
-code.diff-code.hljs {
+code.diff-code.hljs,
+pre code.diff-code.hljs {
   background: none !important;
   padding: 0 2px !important;
   margin: 0 !important;
   font-size: inherit;
   color: inherit;
-  white-space: pre;
+  white-space: pre !important;
+  display: inline !important;
+  overflow: visible !important;
   flex-shrink: 0;
 }
 .diff-line-num {
