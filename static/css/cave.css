@@ -632,7 +632,7 @@ code.diff-code.hljs {
   font-size: inherit;
   color: inherit;
   white-space: pre;
-  min-width: 0;
+  flex-shrink: 0;
 }
 .diff-line-num {
   text-align: right;
