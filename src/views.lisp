@@ -192,8 +192,11 @@
        (:button.btn.btn-primary :type "submit" "Create repository")))))
 
 (defun render-repo-tabs (owner-name repo-name &optional active-tab)
-  "Render the repo navigation tab bar. ACTIVE-TAB is :code, :issues, or :pulls."
+  "Render the repo breadcrumb and navigation tab bar."
   (spinneret:with-html
+    (render-breadcrumbs
+     (list (list (format nil "/~A" owner-name) owner-name)
+           repo-name))
     (:nav.repo-tabs
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :code))
       :href (format nil "/~A/~A" owner-name repo-name) "Code")
@@ -243,9 +246,6 @@
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "~A/~A — Cave" org-name repo-name))
-      (render-breadcrumbs
-       (list (list (format nil "/~A" org-name) org-name)
-             repo-name))
       (when (getf repo :is-private) (:span.badge "private"))
       (when (getf repo :description) (:p (getf repo :description)))
 
