@@ -599,7 +599,8 @@ code {
   margin-bottom: var(--sp-6);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .diff-file-header {
   padding: var(--sp-2) var(--sp-3);
@@ -610,7 +611,6 @@ code {
   color: var(--text-secondary);
 }
 .diff-file-header a { color: var(--link); }
-.diff-file { overflow-x: auto; }
 .diff-body { font-family: var(--font-mono); font-size: .8rem; }
 .diff-body { min-width: max-content; }
 .diff-line {
