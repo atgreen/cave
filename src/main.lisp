@@ -147,6 +147,34 @@
                           :returning '*)
                          :plist)))
               (init-bare-repo "cave" "cave-themes")
+              ;; Seed with example theme files
+              (let ((disk-path (repo-disk-path "cave" "cave-themes"))
+                    (seed-dir (merge-pathnames "keycloak/cave-themes-seed/" (uiop:getcwd)))
+                    (tmpdir (format nil "/tmp/cave-themes-seed-~A"
+                                    (ironclad:byte-array-to-hex-string
+                                     (ironclad:random-data 4)))))
+                (when (probe-file seed-dir)
+                  (handler-case
+                      (progn
+                        (uiop:run-program (list "git" "clone" (namestring disk-path) tmpdir)
+                                          :output :string :error-output :string)
+                        (uiop:run-program (format nil "cp ~A* ~A/" (namestring seed-dir) tmpdir)
+                                          :output :string :error-output :string
+                                          :force-shell t)
+                        (uiop:run-program (list "git" "-C" tmpdir "add" "-A")
+                                          :output :string :error-output :string)
+                        (uiop:run-program (list "git" "-C" tmpdir
+                                                "-c" "user.name=Cave"
+                                                "-c" "user.email=cave@localhost"
+                                                "commit" "-m" "Add example theme and documentation")
+                                          :output :string :error-output :string)
+                        (uiop:run-program (list "git" "-C" tmpdir "push" "origin" "main")
+                                          :output :string :error-output :string)
+                        (llog:info "Seeded cave/cave-themes with example theme"))
+                    (error (e)
+                      (llog:warn "Failed to seed cave-themes" :error (princ-to-string e))))
+                  (uiop:run-program (list "rm" "-rf" tmpdir)
+                                    :ignore-error-status t)))
               (llog:info "Created cave/cave-themes repo" :id (getf repo :id)))
           (error () nil))))
 
