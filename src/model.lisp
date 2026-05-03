@@ -506,8 +506,8 @@
            'source-branch source-branch
            'target-branch target-branch
            'head-commit head-commit
-           'stack-id stack-id
-           'stack-order stack-order
+           'stack-id (or stack-id :null)
+           'stack-order (or stack-order :null)
       :returning '*)
      :plist)))
 
