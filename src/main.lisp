@@ -246,20 +246,29 @@
    :handler #'handle-sync-themes))
 
 (defun parse-theme-toml (content)
-  "Parse a simple TOML theme file into a CSS variable block.
-   Expected format: [variables] followed by key = \"value\" pairs."
-  (let ((vars nil))
+  "Parse a simple TOML theme file into a CSS block.
+   Keys become CSS variables. Special key 'font-url' becomes an @import.
+   Expected format: key = \"value\" pairs, # comments, [sections] ignored."
+  (let ((vars nil)
+        (imports nil)
+        (theme-name nil))
     (dolist (line (uiop:split-string content :separator '(#\Newline)))
       (let ((trimmed (string-trim '(#\Space #\Tab) line)))
-        (when (and (find #\= trimmed)
-                   (not (char= (char trimmed 0) #\[))
-                   (not (char= (char trimmed 0) #\#)))
-          (let* ((eq-pos (position #\= trimmed))
-                 (key (string-trim '(#\Space) (subseq trimmed 0 eq-pos)))
-                 (val (string-trim '(#\Space #\" #\') (subseq trimmed (1+ eq-pos)))))
-            (push (format nil "  --~A: ~A;" key val) vars)))))
+        (cond
+          ((uiop:emptyp trimmed) nil)
+          ((char= (char trimmed 0) #\#) nil)
+          ((char= (char trimmed 0) #\[)
+           (setf theme-name (string-trim '(#\[ #\] #\Space) trimmed)))
+          ((find #\= trimmed)
+           (let* ((eq-pos (position #\= trimmed))
+                  (key (string-trim '(#\Space) (subseq trimmed 0 eq-pos)))
+                  (val (string-trim '(#\Space #\" #\') (subseq trimmed (1+ eq-pos)))))
+             (if (equal key "font-url")
+                 (push (format nil "@import url('~A');" val) imports)
+                 (push (format nil "  --~A: ~A;" key val) vars)))))))
     (when vars
-      (format nil "html[data-theme=\"custom\"] {~%~{~A~%~}}" (nreverse vars)))))
+      (format nil "~{~A~%~}html[data-theme=\"custom\"] {~%~{~A~%~}}"
+              (nreverse imports) (nreverse vars)))))
 
 (defun handle-sync-themes (cmd)
   (let ((config-path (clingon:getopt cmd :config))
