@@ -682,18 +682,20 @@
              (diff-raw (git-diff-merge-base disk-path target source))
              ;; Inline diff comments
              (raw-comments (list-diff-comments (getf pr :id)))
-             (comments-json (com.inuoe.jzon:stringify
-                             (mapcar (lambda (c)
-                                       (let ((ht (make-hash-table :test 'equal)))
-                                         (setf (gethash "file_path" ht) (getf c :file-path))
-                                         (setf (gethash "line_number" ht) (getf c :line-number))
-                                         (setf (gethash "side" ht) (getf c :side))
-                                         (setf (gethash "body" ht) (getf c :body))
-                                         (setf (gethash "username" ht) (getf c :username))
-                                         (setf (gethash "created_at" ht)
-                                               (princ-to-string (getf c :created-at)))
-                                         ht))
-                                     raw-comments))))
+             (comment-hts (mapcar (lambda (c)
+                                    (let ((ht (make-hash-table :test 'equal)))
+                                      (setf (gethash "file_path" ht) (getf c :file-path))
+                                      (setf (gethash "line_number" ht) (getf c :line-number))
+                                      (setf (gethash "side" ht) (getf c :side))
+                                      (setf (gethash "body" ht) (getf c :body))
+                                      (setf (gethash "username" ht) (getf c :username))
+                                      (setf (gethash "created_at" ht)
+                                            (princ-to-string (getf c :created-at)))
+                                      ht))
+                                  raw-comments))
+             (comments-json (if comment-hts
+                                (com.inuoe.jzon:stringify comment-hts)
+                                "[]")))
         (html-response
          (view-pull-request :owner-name owner :repo repo :pr pr
                          :author author :reviews reviews
