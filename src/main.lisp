@@ -232,6 +232,81 @@
                   (length failed) (nreverse failed))
           (uiop:quit 1))))))
 
+;;; --- SYNC-THEMES subcommand ---
+
+(defun make-sync-themes-command ()
+  (clingon:make-command
+   :name "sync-themes"
+   :description "Sync user themes from a .cave-themes repo"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "repo" :key :repo :required t
+              :description "Repo path as owner/.cave-themes"))
+   :handler #'handle-sync-themes))
+
+(defun parse-theme-toml (content)
+  "Parse a simple TOML theme file into a CSS variable block.
+   Expected format: [variables] followed by key = \"value\" pairs."
+  (let ((vars nil))
+    (dolist (line (uiop:split-string content :separator '(#\Newline)))
+      (let ((trimmed (string-trim '(#\Space #\Tab) line)))
+        (when (and (find #\= trimmed)
+                   (not (char= (char trimmed 0) #\[))
+                   (not (char= (char trimmed 0) #\#)))
+          (let* ((eq-pos (position #\= trimmed))
+                 (key (string-trim '(#\Space) (subseq trimmed 0 eq-pos)))
+                 (val (string-trim '(#\Space #\" #\') (subseq trimmed (1+ eq-pos)))))
+            (push (format nil "  --~A: ~A;" key val) vars)))))
+    (when vars
+      (format nil "html[data-theme=\"custom\"] {~%~{~A~%~}}" (nreverse vars)))))
+
+(defun handle-sync-themes (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (repo-path (clingon:getopt cmd :repo)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
+           (owner (first parts))
+           (user (find-user-by-username owner))
+           (disk-path (repo-disk-path owner ".cave-themes")))
+      (when (and user (probe-file disk-path))
+        ;; List all .toml files in the repo root
+        (let ((tree (git-tree disk-path :ref "HEAD")))
+          (dolist (entry tree)
+            (when (and (equal (getf entry :type) "blob")
+                       (search ".toml" (getf entry :name)))
+              (let* ((filename (getf entry :name))
+                     (theme-name (pathname-name (pathname filename)))
+                     (content (git-blob disk-path "HEAD" filename)))
+                (handler-case
+                    (let ((css (parse-theme-toml content)))
+                      (if css
+                          (progn
+                            (upsert-user-theme (getf user :id) theme-name css)
+                            (format t "  ✓ Synced theme: ~A~%" theme-name))
+                          (progn
+                            (format t "  ✗ Empty theme: ~A~%" theme-name)
+                            ;; Open issue on the themes repo
+                            (let ((repo (find-repo owner ".cave-themes")))
+                              (when repo
+                                (create-issue :repo-id (getf repo :id)
+                                              :author-id (getf user :id)
+                                              :title (format nil "Theme parse error: ~A" filename)
+                                              :body (format nil "The theme file `~A` produced no valid CSS variables.~%~%Expected format:~%```toml~%bg = \"#282a36\"~%accent = \"#ff79c6\"~%```" filename)))))))
+                  (error (e)
+                    (format t "  ✗ Error parsing ~A: ~A~%" theme-name e)
+                    (let ((repo (find-repo owner ".cave-themes")))
+                      (when repo
+                        (create-issue :repo-id (getf repo :id)
+                                      :author-id (getf user :id)
+                                      :title (format nil "Theme parse error: ~A" filename)
+                                      :body (format nil "Error parsing `~A`:~%~%```~%~A~%```" filename e))))))))))))
+    (disconnect-db)))
+
 ;;; --- SYNC-MIRRORS subcommand ---
 
 (defun make-sync-mirrors-command ()
@@ -308,7 +383,8 @@
                        (make-git-shell-command)
                        (make-update-keys-command)
                        (make-run-checks-command)
-                       (make-sync-mirrors-command))
+                       (make-sync-mirrors-command)
+                       (make-sync-themes-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 

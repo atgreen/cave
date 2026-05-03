@@ -398,6 +398,43 @@
          'updated-at (:now)
     :where (:= 'id repo-id))))
 
+;;; ========================== USER THEMES ==========================
+
+(defun set-user-theme (user-id theme-name)
+  "Set the active theme for a user."
+  (postmodern:execute
+   (:update 'cave-users :set 'theme theme-name :where (:= 'id user-id))))
+
+(defun list-user-themes (user-id)
+  "List custom themes for a user."
+  (postmodern:query
+   (:order-by
+    (:select '* :from 'cave-user-themes :where (:= 'user-id user-id))
+    'name)
+   :plists))
+
+(defun upsert-user-theme (user-id name definition)
+  "Create or update a custom theme for a user."
+  (let ((existing (postmodern:query
+                   (:select 'id :from 'cave-user-themes
+                    :where (:and (:= 'user-id user-id) (:= 'name name)))
+                   :single)))
+    (if existing
+        (postmodern:execute
+         (:update 'cave-user-themes
+          :set 'definition definition 'updated-at (:now)
+          :where (:= 'id existing)))
+        (postmodern:execute
+         (:insert-into 'cave-user-themes
+          :set 'user-id user-id 'name name 'definition definition)))))
+
+(defun get-user-theme-css (user-id theme-name)
+  "Get a custom theme's CSS definition. Returns string or NIL."
+  (postmodern:query
+   (:select 'definition :from 'cave-user-themes
+    :where (:and (:= 'user-id user-id) (:= 'name theme-name)))
+   :single))
+
 ;;; ========================== MIRRORS ==========================
 
 (defun create-mirror (&key repo-id direction remote-url auth-token interval-minutes)

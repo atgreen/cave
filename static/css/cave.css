@@ -801,3 +801,115 @@ code.diff-code {
   min-height: 60px;
   margin-bottom: var(--sp-2);
 }
+
+/* ============================================================
+   Built-in themes — override :root CSS variables
+   ============================================================ */
+
+/* Solarized Dark */
+html[data-theme="solarized-dark"] {
+  --bg: #002b36;
+  --bg-warm: #073642;
+  --surface: #073642;
+  --surface-hover: #0a4050;
+  --border: #2a5a68;
+  --border-subtle: #1a4a58;
+  --text: #839496;
+  --text-secondary: #93a1a1;
+  --text-muted: #586e75;
+  --accent: #b58900;
+  --accent-dim: #9a7400;
+  --accent-bg: rgba(181, 137, 0, 0.08);
+  --link: #268bd2;
+  --link-hover: #4aa3e8;
+  --green: #859900;
+  --green-bright: #a3b819;
+  --green-bg: rgba(133, 153, 0, 0.12);
+  --red: #dc322f;
+  --red-bg: rgba(220, 50, 47, 0.10);
+  --yellow: #b58900;
+  --yellow-bg: rgba(181, 137, 0, 0.10);
+  --blue: #268bd2;
+  --blue-bg: rgba(38, 139, 210, 0.08);
+}
+
+/* Nord */
+html[data-theme="nord"] {
+  --bg: #2e3440;
+  --bg-warm: #3b4252;
+  --surface: #3b4252;
+  --surface-hover: #434c5e;
+  --border: #4c566a;
+  --border-subtle: #434c5e;
+  --text: #d8dee9;
+  --text-secondary: #e5e9f0;
+  --text-muted: #7b88a1;
+  --accent: #88c0d0;
+  --accent-dim: #6ba8b8;
+  --accent-bg: rgba(136, 192, 208, 0.08);
+  --link: #81a1c1;
+  --link-hover: #8fbcbb;
+  --green: #a3be8c;
+  --green-bright: #b5d19c;
+  --green-bg: rgba(163, 190, 140, 0.12);
+  --red: #bf616a;
+  --red-bg: rgba(191, 97, 106, 0.10);
+  --yellow: #ebcb8b;
+  --yellow-bg: rgba(235, 203, 139, 0.10);
+  --blue: #81a1c1;
+  --blue-bg: rgba(129, 161, 193, 0.08);
+}
+
+/* Light */
+html[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-warm: #f6f8fa;
+  --surface: #f6f8fa;
+  --surface-hover: #eef1f5;
+  --border: #d0d7de;
+  --border-subtle: #e1e4e8;
+  --text: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #8b949e;
+  --accent: #c4893a;
+  --accent-dim: #a87430;
+  --accent-bg: rgba(196, 137, 58, 0.08);
+  --link: #0969da;
+  --link-hover: #0550ae;
+  --green: #1a7f37;
+  --green-bright: #2da44e;
+  --green-bg: rgba(26, 127, 55, 0.08);
+  --red: #cf222e;
+  --red-bg: rgba(207, 34, 46, 0.06);
+  --yellow: #9a6700;
+  --yellow-bg: rgba(154, 103, 0, 0.06);
+  --blue: #0969da;
+  --blue-bg: rgba(9, 105, 218, 0.06);
+}
+
+/* Dracula */
+html[data-theme="dracula"] {
+  --bg: #282a36;
+  --bg-warm: #2d2f3d;
+  --surface: #343746;
+  --surface-hover: #3d4051;
+  --border: #44475a;
+  --border-subtle: #3d4051;
+  --text: #f8f8f2;
+  --text-secondary: #c0bfbc;
+  --text-muted: #6272a4;
+  --accent: #ff79c6;
+  --accent-dim: #d660a8;
+  --accent-bg: rgba(255, 121, 198, 0.08);
+  --link: #8be9fd;
+  --link-hover: #a8effd;
+  --green: #50fa7b;
+  --green-bright: #6dffa0;
+  --green-bg: rgba(80, 250, 123, 0.10);
+  --red: #ff5555;
+  --red-bg: rgba(255, 85, 85, 0.10);
+  --yellow: #f1fa8c;
+  --yellow-bg: rgba(241, 250, 140, 0.08);
+  --blue: #8be9fd;
+  --blue-bg: rgba(139, 233, 253, 0.08);
+}

@@ -26,6 +26,7 @@
   `(spinneret:with-html-string
      (:doctype)
      (:html :lang "en"
+            :data-theme (when *current-user* (getf *current-user* :theme))
        (:head
         (:meta :charset "utf-8")
         (:meta :name "viewport" :content "width=device-width, initial-scale=1")
@@ -34,7 +35,13 @@
         (:link :rel "preconnect" :href "https://fonts.googleapis.com")
         (:link :rel "preconnect" :href "https://fonts.gstatic.com" :crossorigin "")
         (:link :rel "stylesheet" :href "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap")
-        (:link :rel "stylesheet" :href "/static/css/cave.css"))
+        (:link :rel "stylesheet" :href "/static/css/cave.css")
+        ;; Inject custom theme CSS if active
+        (when *current-user*
+          (let ((theme-css (get-user-theme-css *current-user-id*
+                                               (getf *current-user* :theme))))
+            (when theme-css
+              (:style (:raw theme-css))))))
        (:body
         (:nav.nav
          (:div.nav-inner
@@ -1168,6 +1175,24 @@ function caveShowCommentForm(td) {
   (let ((cav-path (cav-download-path)))
     (page (:title "Settings — Cave")
       (:h1 "Settings")
+
+      (:section
+       (:h2 "Theme")
+       (:form :method "post" :action "/-/settings/theme"
+        (:div :style "display:flex;gap:var(--sp-2);align-items:end"
+         (:div.field :style "margin-bottom:0"
+          (:label :for "theme" "Color theme")
+          (:select :id "theme" :name "theme"
+           (dolist (name '("terminal-warmth" "solarized-dark" "nord" "dracula" "light"))
+             (:option :value name
+              :selected (equal name (getf *current-user* :theme))
+              name))
+           ;; Custom themes
+           (dolist (ct (list-user-themes *current-user-id*))
+             (:option :value (getf ct :name)
+              :selected (equal (getf ct :name) (getf *current-user* :theme))
+              (format nil "~A (custom)" (getf ct :name))))))
+         (:button.btn.btn-primary :type "submit" "Apply"))))
 
       (:section
        (:h2 "CLI")

@@ -244,6 +244,13 @@
      (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
                     :api-tokens (list-api-tokens *current-user-id*)))))
 
+(easy-routes:defroute set-theme-submit ("/-/settings/theme" :method :post) ()
+  (when (require-login)
+    (let ((theme (hunchentoot:post-parameter "theme")))
+      (when (and theme (not (uiop:emptyp theme)))
+        (set-user-theme *current-user-id* theme)))
+    (hunchentoot:redirect "/-/settings")))
+
 (easy-routes:defroute add-ssh-key-submit ("/-/settings/ssh-keys" :method :post) ()
   (when (require-login)
     (let ((name (hunchentoot:post-parameter "name"))
@@ -1156,11 +1163,14 @@
                 owner repo-name))
       (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                          :ignore-error-status t))
-    ;; Install post-receive hook (push mirrors)
+    ;; Install post-receive hook (push mirrors + theme sync)
     (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
       (with-open-file (out hook-path :direction :output :if-exists :supersede)
         (format out "#!/bin/bash~%cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
-                owner repo-name))
+                owner repo-name)
+        (when (string= repo-name ".cave-themes")
+          (format out "cave sync-themes --config /etc/cave.conf --repo ~A/.cave-themes &~%"
+                  owner)))
       (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                          :ignore-error-status t))
     ;; Ensure the cave user owns the repo (server may run as root)
