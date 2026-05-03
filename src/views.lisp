@@ -559,7 +559,10 @@ document.addEventListener('DOMContentLoaded', function() {
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "merged"))
          :href "?status=merged" "Merged")
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "closed"))
-         :href "?status=closed" "Closed")))
+         :href "?status=closed" "Closed"))
+       (when *current-user*
+         (:a.btn.btn-primary :href (format nil "/~A/~A/pulls/new" org-name repo-name)
+          "New pull request")))
       (if pulls
           (:ul.issue-list
            (dolist (cs pulls)
@@ -573,6 +576,26 @@ document.addEventListener('DOMContentLoaded', function() {
                      ((getf cs :is-closed) "closed")
                      (t "open"))))))
           (:p.empty "No pull requests found.")))))
+
+(defun view-new-pull-request (&key owner-name repo branches default-branch)
+  "Render the new pull request form."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "New pull request — %s/%s" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :pulls)
+      (:h1 "New pull request")
+      (:form :method "post" :action (format nil "/~A/~A/pulls/new" owner-name repo-name)
+       (:div.field
+        (:label :for "source_branch" "Source branch")
+        (:select :id "source_branch" :name "source_branch" :required t
+         (dolist (b branches)
+           (unless (equal b default-branch)
+             (:option :value b :selected (when (equal b (first branches)) t) b)))))
+       (:div.field
+        (:label :for "target_branch" "Target branch")
+        (:select :id "target_branch" :name "target_branch" :required t
+         (dolist (b branches)
+           (:option :value b :selected (when (equal b default-branch) t) b))))
+       (:button.btn.btn-primary :type "submit" "Create pull request")))))
 
 (defun render-inline-comments (comments)
   "Render inline diff comments in a comment row."

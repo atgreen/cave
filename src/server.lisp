@@ -614,6 +614,42 @@
        (view-pull-requests :owner-name owner :repo repo :pulls pulls
                         :current-status status)))))
 
+(easy-routes:defroute new-pull-request-page
+    ("/:owner/:repo-name/pulls/new" :method :get) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from new-pull-request-page (not-found)))
+      (let* ((disk-path (repo-disk-path owner repo-name))
+             (branches (git-branches disk-path))
+             (default-branch (or (git-default-branch disk-path) "main")))
+        (html-response
+         (view-new-pull-request :owner-name owner :repo repo
+                                :branches branches
+                                :default-branch default-branch))))))
+
+(easy-routes:defroute create-pull-request-submit
+    ("/:owner/:repo-name/pulls/new" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from create-pull-request-submit (not-found)))
+      (let* ((source (hunchentoot:post-parameter "source_branch"))
+             (target (hunchentoot:post-parameter "target_branch"))
+             (disk-path (repo-disk-path owner repo-name))
+             (head-commit (handler-case
+                              (string-trim '(#\Newline #\Space)
+                                           (uiop:run-program
+                                            (list "git" "-C" (namestring disk-path)
+                                                  "rev-parse" source)
+                                            :output :string))
+                            (error () nil)))
+             (pr (create-pull-request :repo-id (getf repo :id)
+                                      :author-id *current-user-id*
+                                      :source-branch source
+                                      :target-branch target
+                                      :head-commit head-commit)))
+        (hunchentoot:redirect
+         (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number)))))))
+
 (easy-routes:defroute pull-request-page
     ("/:owner/:repo-name/pulls/:number" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
