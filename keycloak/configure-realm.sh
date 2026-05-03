@@ -28,9 +28,11 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-# Enable email verification and configure SMTP to use Mailpit
+AUTH="Authorization: Bearer ${TOKEN}"
+
+# Enable email verification, password reset, and configure SMTP
 curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
-  -H "Authorization: Bearer ${TOKEN}" \
+  -H "${AUTH}" \
   -H "Content-Type: application/json" \
   -d '{
     "verifyEmail": true,
@@ -49,3 +51,72 @@ curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
   }'
 
 echo "Realm configured: cave theme, email verification, SMTP → ${MAILPIT_HOST}:1025"
+
+# --- Create custom browser flow with OTP support ---
+# Only create if it doesn't already exist
+
+FLOW_EXISTS=$(curl -sf "${KC_URL}/admin/realms/cave/authentication/flows" \
+  -H "${AUTH}" | python3 -c "
+import sys,json
+flows = json.load(sys.stdin)
+print('yes' if any(f['alias'] == 'cave-browser' for f in flows) else 'no')")
+
+if [ "$FLOW_EXISTS" = "no" ]; then
+  echo "Creating cave-browser authentication flow..."
+
+  # Copy the built-in browser flow
+  curl -sf -X POST "${KC_URL}/admin/realms/cave/authentication/flows/browser/copy" \
+    -H "${AUTH}" \
+    -H "Content-Type: application/json" \
+    -d '{"newName": "cave-browser"}' -o /dev/null
+
+  # Get the new flow's executions
+  EXECUTIONS=$(curl -sf "${KC_URL}/admin/realms/cave/authentication/flows/cave-browser/executions" \
+    -H "${AUTH}")
+
+  # Find the "cave-browser Browser - Conditional OTP" execution and enable it
+  OTP_ID=$(echo "$EXECUTIONS" | python3 -c "
+import sys,json
+execs = json.load(sys.stdin)
+for e in execs:
+    dn = e.get('displayName','')
+    if 'Conditional OTP' in dn:
+        print(e['id'])
+        break
+")
+
+  if [ -n "$OTP_ID" ]; then
+    curl -sf -X PUT "${KC_URL}/admin/realms/cave/authentication/flows/cave-browser/executions" \
+      -H "${AUTH}" \
+      -H "Content-Type: application/json" \
+      -d "{\"id\":\"${OTP_ID}\",\"requirement\":\"CONDITIONAL\"}" -o /dev/null
+    echo "  OTP conditional flow enabled"
+  fi
+
+  # Move password form before OTP (critical — OTP must come after password)
+  PASSWORD_ID=$(echo "$EXECUTIONS" | python3 -c "
+import sys,json
+execs = json.load(sys.stdin)
+for e in execs:
+    if 'Username Password' in e.get('displayName',''):
+        print(e['id'])
+        break
+")
+  if [ -n "$PASSWORD_ID" ]; then
+    curl -sf -X POST "${KC_URL}/admin/realms/cave/authentication/executions/${PASSWORD_ID}/raise-priority" \
+      -H "${AUTH}" -o /dev/null
+    echo "  Password form moved before OTP"
+  fi
+
+  # Bind the cave-browser flow as the realm's browser flow
+  curl -sf -X PUT "${KC_URL}/admin/realms/cave" \
+    -H "${AUTH}" \
+    -H "Content-Type: application/json" \
+    -d '{"browserFlow": "cave-browser"}' -o /dev/null
+
+  echo "  cave-browser flow bound as browser flow"
+else
+  echo "cave-browser flow already exists"
+fi
+
+echo "Done."
