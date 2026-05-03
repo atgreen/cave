@@ -438,7 +438,7 @@ require(['vs/editor/editor.main'], function() {
       (when diff-files
         (render-diff diff-files owner-name repo-name (getf commit :hash))
                 (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
-        (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){hljs.highlightElement(el);});"))))))
+        (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){var lang=el.className.match(/language-(\\S+)/);var result=lang?hljs.highlight(el.textContent,{language:lang[1],ignoreIllegals:true}):null;if(result)el.innerHTML=result.value;});"))))))
 
 ;;; ========================== ISSUE PAGES ==========================
 
@@ -741,7 +741,7 @@ function caveToggleCommentForm(btn) {
                       :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
                                               org-name repo-name cs-num))
                   (:script :src "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" "")
-         (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){hljs.highlightElement(el);});"))))
+         (:script (:raw "document.querySelectorAll('code.diff-code').forEach(function(el){var lang=el.className.match(/language-(\\S+)/);var result=lang?hljs.highlight(el.textContent,{language:lang[1],ignoreIllegals:true}):null;if(result)el.innerHTML=result.value;});"))))
 
       ;; Merge eligibility
       (when (and eligibility

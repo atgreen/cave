@@ -626,16 +626,14 @@ code {
 .diff-line-del { background: var(--red-bg); color: var(--text); }
 .diff-line-hunk { display: block; background: var(--blue-bg); color: var(--blue); padding: var(--sp-1) var(--sp-3); }
 .diff-line-context { background: transparent; }
-code.diff-code,
-code.diff-code.hljs {
-  background: none !important;
-  padding: 0 2px !important;
-  margin: 0 !important;
+code.diff-code {
+  background: none;
+  padding: 0 2px;
+  margin: 0;
   font-size: inherit;
   color: inherit;
   white-space: pre;
   display: inline;
-  overflow: visible;
   flex-shrink: 0;
 }
 /* highlight.js token colors (no theme stylesheet needed) */
