@@ -5,6 +5,6 @@ jobs:
     image: fedora:latest
     steps:
       - name: Install build dependencies
-        run: dnf -y install make sbcl
+        run: dnf -y install make sbcl 
       - name: Build
         run: make
