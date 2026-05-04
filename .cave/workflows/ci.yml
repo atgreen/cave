@@ -4,5 +4,7 @@ jobs:
   build:
     image: ghcr.io/atgreen/fedora-cave-builder:latest
     steps:
+      - name: Install dependencies
+        run: ocicl install
       - name: Build Cave
         run: make build
