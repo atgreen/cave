@@ -34,6 +34,10 @@ message FetchTaskResponse {
   string commit_sha = 6;
   string ref = 7;
   int32 timeout_seconds = 8;
+  int64 job_id = 9;
+  string image = 10;
+  repeated StepSpec steps = 11;
+  string clone_url = 12;
 }
 
 message AppendTaskLogRequest {
@@ -66,4 +70,34 @@ message TaskEvent {
   string commit_sha = 5;
   string ref = 6;
   int32 timeout_seconds = 7;
+  int64 job_id = 8;
+  string image = 9;
+  repeated StepSpec steps = 10;
+  string clone_url = 11;
+}
+
+message StepSpec {
+  int64 step_id = 1;
+  int32 step_order = 2;
+  string name = 3;
+  string command = 4;
+}
+
+message UpdateStepStatusRequest {
+  int64 step_id = 1;
+  string status = 2;
+  int32 exit_code = 3;
+}
+
+message UpdateStepStatusResponse {
+  bool ok = 1;
+}
+
+message AppendStepLogRequest {
+  int64 step_id = 1;
+  string chunk = 2;
+}
+
+message AppendStepLogResponse {
+  bool ok = 1;
 }

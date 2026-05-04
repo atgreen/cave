@@ -480,7 +480,57 @@ CREATE TABLE cave_runner_registration_tokens (
 
     (32 . "-- Add 'user' scope for personal runners
 ALTER TABLE cave_runners DROP CONSTRAINT IF EXISTS cave_runners_scope_check;
-ALTER TABLE cave_runners ADD CONSTRAINT cave_runners_scope_check CHECK (scope IN ('instance', 'org', 'repo', 'user'));"))
+ALTER TABLE cave_runners ADD CONSTRAINT cave_runners_scope_check CHECK (scope IN ('instance', 'org', 'repo', 'user'));")
+
+    (33 . "-- Workflow runs
+CREATE TABLE cave_workflow_runs (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  workflow_name VARCHAR(256) NOT NULL,
+  workflow_file VARCHAR(512) NOT NULL,
+  trigger_event VARCHAR(32) NOT NULL,
+  commit_sha VARCHAR(64),
+  ref VARCHAR(256),
+  status VARCHAR(16) NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued','running','success','failure','cancelled')),
+  triggered_by_id BIGINT REFERENCES cave_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX idx_workflow_runs_repo ON cave_workflow_runs (repo_id);")
+
+    (34 . "-- Workflow jobs
+CREATE TABLE cave_workflow_jobs (
+  id BIGSERIAL PRIMARY KEY,
+  workflow_run_id BIGINT NOT NULL REFERENCES cave_workflow_runs(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  image VARCHAR(512) NOT NULL,
+  needs TEXT DEFAULT '',
+  status VARCHAR(16) NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued','blocked','assigned','running','success','failure','cancelled','skipped')),
+  runner_id BIGINT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_workflow_jobs_run ON cave_workflow_jobs (workflow_run_id);")
+
+    (35 . "-- Workflow steps
+CREATE TABLE cave_workflow_steps (
+  id BIGSERIAL PRIMARY KEY,
+  job_id BIGINT NOT NULL REFERENCES cave_workflow_jobs(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL,
+  name VARCHAR(256),
+  command TEXT NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','running','success','failure','skipped')),
+  log TEXT DEFAULT '',
+  exit_code INTEGER,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX idx_workflow_steps_job ON cave_workflow_steps (job_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

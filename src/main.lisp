@@ -354,26 +354,30 @@
            (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
 
          (execute-task (channel auth-token task)
-           "Execute a task and report results back via gRPC."
+           "Execute a task — dispatch between simple automation and workflow job."
+           (let ((job-id (handler-case (slot-value task 'cave::job-id) (error () 0))))
+             (if (and job-id (plusp job-id))
+                 (execute-workflow-job channel auth-token task)
+                 (execute-simple-task channel auth-token task))))
+
+         (execute-simple-task (channel auth-token task)
+           "Execute a simple automation task (single command)."
            (let ((run-id (slot-value task 'cave::run-id))
                  (repo-owner (slot-value task 'cave::repo-owner))
                  (repo-name (slot-value task 'cave::repo-name))
                  (command (slot-value task 'cave::command)))
              (format t "~&Task #~A: ~A/~A — ~A~%" run-id repo-owner repo-name command)
-             ;; Update status to running
              (ag-grpc:grpc-call channel
                                 "/cave.runner.RunnerService/UpdateTaskStatus"
                                 (make-instance 'cave::update-task-status-request
                                                :run-id run-id :status "running")
                                 :response-type 'cave::update-task-status-response
                                 :metadata (make-auth-metadata auth-token))
-             ;; Execute the command
              (multiple-value-bind (output error-output exit-code)
                  (uiop:run-program (list "bash" "-c" command)
                                    :output '(:string :stripped t)
                                    :error-output '(:string :stripped t)
                                    :ignore-error-status t)
-               ;; Send log
                (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
                  (ag-grpc:grpc-call channel
                                     "/cave.runner.RunnerService/AppendTaskLog"
@@ -381,7 +385,6 @@
                                                    :run-id run-id :chunk log)
                                     :response-type 'cave::append-task-log-response
                                     :metadata (make-auth-metadata auth-token)))
-               ;; Report final status
                (let ((status (if (zerop exit-code) "success" "failure")))
                  (format t "  Result: ~A (exit ~A)~%" status exit-code)
                  (ag-grpc:grpc-call channel
@@ -390,6 +393,121 @@
                                                    :run-id run-id :status status)
                                     :response-type 'cave::update-task-status-response
                                     :metadata (make-auth-metadata auth-token))))))
+
+         (execute-workflow-job (channel auth-token task)
+           "Execute a workflow job: pull image, clone repo, run steps in container."
+           (let* ((job-id (slot-value task 'cave::job-id))
+                  (repo-owner (slot-value task 'cave::repo-owner))
+                  (repo-name (slot-value task 'cave::repo-name))
+                  (image (slot-value task 'cave::image))
+                  (commit-sha (slot-value task 'cave::commit-sha))
+                  (clone-url (slot-value task 'cave::clone-url))
+                  (steps (slot-value task 'cave::steps))
+                  (workdir (format nil "/tmp/cave-job-~A" job-id))
+                  (overall-success t))
+             (format t "~&Workflow job #~A: ~A/~A [~A] (~A steps)~%"
+                     job-id repo-owner repo-name image (length steps))
+             ;; Report job running
+             (ag-grpc:grpc-call channel
+                                "/cave.runner.RunnerService/UpdateTaskStatus"
+                                (make-instance 'cave::update-task-status-request
+                                               :run-id 0
+                                               :status (format nil "job:~A:running" job-id))
+                                :response-type 'cave::update-task-status-response
+                                :metadata (make-auth-metadata auth-token))
+             (unwind-protect
+              (progn
+                ;; Pull image
+                (format t "  Pulling ~A...~%" image)
+                (multiple-value-bind (_out _err exit)
+                    (uiop:run-program (list "podman" "pull" image)
+                                      :output '(:string :stripped t)
+                                      :error-output '(:string :stripped t)
+                                      :ignore-error-status t)
+                  (declare (ignore _out _err))
+                  (unless (zerop exit)
+                    (format *error-output* "  Failed to pull image ~A~%" image)
+                    (setf overall-success nil)))
+                ;; Clone repo
+                (when overall-success
+                  (format t "  Cloning ~A/~A...~%" repo-owner repo-name)
+                  (multiple-value-bind (_out _err exit)
+                      (uiop:run-program (list "git" "clone" "--depth" "1" clone-url workdir)
+                                        :output '(:string :stripped t)
+                                        :error-output '(:string :stripped t)
+                                        :ignore-error-status t)
+                    (declare (ignore _out _err))
+                    (unless (zerop exit)
+                      (format *error-output* "  Failed to clone repo~%")
+                      (setf overall-success nil)))
+                  ;; Checkout specific commit if provided
+                  (when (and overall-success (not (uiop:emptyp commit-sha)))
+                    (uiop:run-program (list "git" "-C" workdir "checkout" commit-sha)
+                                      :output :string :error-output :string
+                                      :ignore-error-status t)))
+                ;; Run each step
+                (when overall-success
+                  (dolist (step steps)
+                    (let ((step-id (slot-value step 'cave::step-id))
+                          (step-name (slot-value step 'cave::name))
+                          (step-cmd (slot-value step 'cave::command)))
+                      (format t "  Step ~A: ~A~%"
+                              (if (uiop:emptyp step-name) "(unnamed)" step-name)
+                              (subseq step-cmd 0 (min 60 (length step-cmd))))
+                      ;; Report step running
+                      (ag-grpc:grpc-call channel
+                                         "/cave.runner.RunnerService/UpdateStepStatus"
+                                         (make-instance 'cave::update-step-status-request
+                                                        :step-id step-id :status "running"
+                                                        :exit-code 0)
+                                         :response-type 'cave::update-step-status-response
+                                         :metadata (make-auth-metadata auth-token))
+                      ;; Execute in container
+                      (multiple-value-bind (output error-output exit-code)
+                          (uiop:run-program
+                           (list "podman" "run" "--rm"
+                                 "-v" (format nil "~A:/workspace" workdir)
+                                 "-w" "/workspace"
+                                 image "bash" "-c" step-cmd)
+                           :output '(:string :stripped t)
+                           :error-output '(:string :stripped t)
+                           :ignore-error-status t)
+                        ;; Send step log
+                        (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
+                          (when (plusp (length log))
+                            (ag-grpc:grpc-call channel
+                                               "/cave.runner.RunnerService/AppendStepLog"
+                                               (make-instance 'cave::append-step-log-request
+                                                              :step-id step-id :chunk log)
+                                               :response-type 'cave::append-step-log-response
+                                               :metadata (make-auth-metadata auth-token))))
+                        ;; Report step result
+                        (let ((step-status (if (zerop exit-code) "success" "failure")))
+                          (format t "    ~A (exit ~A)~%" step-status exit-code)
+                          (ag-grpc:grpc-call channel
+                                             "/cave.runner.RunnerService/UpdateStepStatus"
+                                             (make-instance 'cave::update-step-status-request
+                                                            :step-id step-id :status step-status
+                                                            :exit-code exit-code)
+                                             :response-type 'cave::update-step-status-response
+                                             :metadata (make-auth-metadata auth-token))
+                          (unless (zerop exit-code)
+                            (setf overall-success nil)
+                            ;; Skip remaining steps
+                            (return))))))))
+              ;; Cleanup
+              (uiop:run-program (list "rm" "-rf" workdir)
+                                :ignore-error-status t))
+             ;; Report overall job status
+             (let ((status (if overall-success "success" "failure")))
+               (format t "  Job result: ~A~%" status)
+               (ag-grpc:grpc-call channel
+                                  "/cave.runner.RunnerService/UpdateTaskStatus"
+                                  (make-instance 'cave::update-task-status-request
+                                                 :run-id 0
+                                                 :status (format nil "job:~A:~A" job-id status))
+                                  :response-type 'cave::update-task-status-response
+                                  :metadata (make-auth-metadata auth-token)))))
 
          (run-watch-loop (channel auth-token)
            "Open a WatchTasks server stream and process tasks as they arrive."

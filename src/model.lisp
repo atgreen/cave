@@ -483,14 +483,6 @@
 
 (defun update-run-status (run-id status &key runner-id)
   "Update an automation run's status."
-  (let ((updates (list 'status status 'updated-at (:now))))
-    (when (member status '("running") :test #'equal)
-      (setf updates (append updates (list 'started-at (:now)))))
-    (when (member status '("success" "failure" "cancelled" "timed_out") :test #'equal)
-      (setf updates (append updates (list 'finished-at (:now)))))
-    (when runner-id
-      (setf updates (append updates (list 'runner-id runner-id)))))
-  ;; Simplified: just update the fields we need
   (cond
     ((equal status "running")
      (postmodern:execute
@@ -528,27 +520,42 @@
     (when active (return-from fetch-queued-run nil)))
   ;; Fetch oldest queued run matching runner scope
   ;; instance runners: any run; org runners: repos in their org; repo runners: their repo only
-  (let* ((where-clause
-           (cond
-             ((equal runner-scope "repo")
-              `(:and (:= status "queued") (:= repo-id ,runner-scope-id)))
-             ((equal runner-scope "org")
-              `(:and (:= status "queued")
-                     (:in repo-id (:select id :from cave-repos
-                                   :where (:= org-id ,runner-scope-id)))))
-             ((equal runner-scope "user")
-              `(:and (:= status "queued")
-                     (:in repo-id (:select id :from cave-repos
-                                   :where (:= owner-id ,runner-scope-id)))))
-             (t
-              '(:= status "queued"))))
-         (run (postmodern:query
-               (postmodern:sql-compile
-                `(:limit (:order-by (:select * :from cave-automation-runs
-                                     :where ,where-clause)
-                                    created-at)
-                         1))
-               :plist)))
+  (let ((run (cond
+               ((equal runner-scope "repo")
+                (postmodern:query
+                 (:limit (:order-by
+                           (:select '* :from 'cave-automation-runs
+                            :where (:and (:= 'status "queued")
+                                         (:= 'repo-id runner-scope-id)))
+                           'created-at) 1)
+                 :plist))
+               ((equal runner-scope "org")
+                (postmodern:query
+                 (:limit (:order-by
+                           (:select '* :from 'cave-automation-runs
+                            :where (:and (:= 'status "queued")
+                                         (:in 'repo-id
+                                              (:select 'id :from 'cave-repos
+                                               :where (:= 'org-id runner-scope-id)))))
+                           'created-at) 1)
+                 :plist))
+               ((equal runner-scope "user")
+                (postmodern:query
+                 (:limit (:order-by
+                           (:select '* :from 'cave-automation-runs
+                            :where (:and (:= 'status "queued")
+                                         (:in 'repo-id
+                                              (:select 'id :from 'cave-repos
+                                               :where (:= 'owner-id runner-scope-id)))))
+                           'created-at) 1)
+                 :plist))
+               (t
+                (postmodern:query
+                 (:limit (:order-by
+                           (:select '* :from 'cave-automation-runs
+                            :where (:= 'status "queued"))
+                           'created-at) 1)
+                 :plist)))))
     (when run
       ;; Atomically assign it
       (let ((updated (postmodern:query
@@ -665,6 +672,193 @@
                    (:or (:is-null 'expires-at)
                         (:> 'expires-at (:now)))))
      :plist)))
+
+;;; ========================== WORKFLOWS ==========================
+
+(defun create-workflow-run (&key repo-id workflow-name workflow-file trigger-event
+                                 commit-sha ref triggered-by-id)
+  "Create a workflow run."
+  (postmodern:query
+   (:insert-into 'cave-workflow-runs
+    :set 'repo-id repo-id
+         'workflow-name workflow-name
+         'workflow-file workflow-file
+         'trigger-event trigger-event
+         'commit-sha (or commit-sha :null)
+         'ref (or ref :null)
+         'triggered-by-id (or triggered-by-id :null)
+    :returning '*)
+   :plist))
+
+(defun list-workflow-runs (repo-id &key (limit 30))
+  "List recent workflow runs for a repo."
+  (postmodern:query
+   (:limit (:order-by (:select '* :from 'cave-workflow-runs
+                        :where (:= 'repo-id repo-id))
+                       (:desc 'created-at))
+           limit)
+   :plists))
+
+(defun find-workflow-run (run-id)
+  "Find a workflow run by ID."
+  (postmodern:query
+   (:select '* :from 'cave-workflow-runs :where (:= 'id run-id))
+   :plist))
+
+(defun update-workflow-run-status (run-id status)
+  "Update workflow run status."
+  (cond
+    ((equal status "running")
+     (postmodern:execute
+      (:update 'cave-workflow-runs
+       :set 'status status 'started-at (:now)
+       :where (:= 'id run-id))))
+    ((member status '("success" "failure" "cancelled") :test #'equal)
+     (postmodern:execute
+      (:update 'cave-workflow-runs
+       :set 'status status 'finished-at (:now)
+       :where (:= 'id run-id))))
+    (t
+     (postmodern:execute
+      (:update 'cave-workflow-runs
+       :set 'status status
+       :where (:= 'id run-id))))))
+
+(defun create-workflow-job (&key workflow-run-id name image needs)
+  "Create a workflow job. NEEDS is a list of job name strings."
+  (let ((needs-str (if needs (format nil "~{~A~^,~}" needs) "")))
+    (postmodern:query
+     (:insert-into 'cave-workflow-jobs
+      :set 'workflow-run-id workflow-run-id
+           'name name
+           'image image
+           'needs needs-str
+           'status (if needs "blocked" "queued")
+      :returning '*)
+     :plist)))
+
+(defun list-workflow-jobs (workflow-run-id)
+  "List all jobs for a workflow run."
+  (postmodern:query
+   (:order-by (:select '* :from 'cave-workflow-jobs
+                :where (:= 'workflow-run-id workflow-run-id))
+              'created-at)
+   :plists))
+
+(defun update-job-status (job-id status &key runner-id)
+  "Update a workflow job's status."
+  (cond
+    ((equal status "running")
+     (postmodern:execute
+      (:update 'cave-workflow-jobs
+       :set 'status status 'started-at (:now)
+            'runner-id (or runner-id :null)
+       :where (:= 'id job-id))))
+    ((member status '("success" "failure" "cancelled" "skipped") :test #'equal)
+     (postmodern:execute
+      (:update 'cave-workflow-jobs
+       :set 'status status 'finished-at (:now)
+       :where (:= 'id job-id))))
+    (t
+     (postmodern:execute
+      (:update 'cave-workflow-jobs
+       :set 'status status
+       :where (:= 'id job-id))))))
+
+(defun fetch-queued-workflow-job (runner-id runner-scope runner-scope-id)
+  "Fetch a queued workflow job whose dependencies are met.
+   Respects runner scope and one-task-per-runner policy."
+  ;; Check if runner already has an active task (automation or workflow)
+  (let ((active-auto (postmodern:query
+                      (:select 'id :from 'cave-automation-runs
+                       :where (:and (:= 'runner-id runner-id)
+                                    (:in 'status (:set "assigned" "running"))))
+                      :single))
+        (active-job (postmodern:query
+                     (:select 'id :from 'cave-workflow-jobs
+                      :where (:and (:= 'runner-id runner-id)
+                                   (:in 'status (:set "assigned" "running"))))
+                     :single)))
+    (when (or active-auto active-job)
+      (return-from fetch-queued-workflow-job nil)))
+  ;; Find a queued job with all dependencies met (using raw SQL for the subquery)
+  (let ((job (postmodern:query
+              (format nil "SELECT wj.* FROM cave_workflow_jobs wj ~
+                WHERE wj.status = 'queued' ~
+                  AND NOT EXISTS ( ~
+                    SELECT 1 FROM cave_workflow_jobs dep ~
+                    WHERE dep.workflow_run_id = wj.workflow_run_id ~
+                      AND dep.name = ANY(string_to_array(wj.needs, ',')) ~
+                      AND dep.status != 'success') ~
+                  ~A ~
+                ORDER BY wj.created_at LIMIT 1"
+                      (cond
+                        ((equal runner-scope "repo")
+                         (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id = ~A)"
+                                 runner-scope-id))
+                        ((equal runner-scope "org")
+                         (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id IN (SELECT id FROM cave_repos WHERE org_id = ~A))"
+                                 runner-scope-id))
+                        ((equal runner-scope "user")
+                         (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id IN (SELECT id FROM cave_repos WHERE owner_id = ~A))"
+                                 runner-scope-id))
+                        (t "")))
+              :plist)))
+    (when job
+      ;; Atomically assign
+      (postmodern:query
+       (:update 'cave-workflow-jobs
+        :set 'status "assigned" 'runner-id runner-id
+        :where (:and (:= 'id (getf job :id))
+                     (:= 'status "queued"))
+        :returning '*)
+       :plist))))
+
+(defun create-workflow-step (&key job-id step-order name command)
+  "Create a workflow step."
+  (postmodern:query
+   (:insert-into 'cave-workflow-steps
+    :set 'job-id job-id
+         'step-order step-order
+         'name (or name :null)
+         'command command
+    :returning '*)
+   :plist))
+
+(defun list-workflow-steps (job-id)
+  "List all steps for a job, ordered."
+  (postmodern:query
+   (:order-by (:select '* :from 'cave-workflow-steps
+                :where (:= 'job-id job-id))
+              'step-order)
+   :plists))
+
+(defun update-step-status (step-id status &key exit-code)
+  "Update a workflow step's status."
+  (cond
+    ((equal status "running")
+     (postmodern:execute
+      (:update 'cave-workflow-steps
+       :set 'status status 'started-at (:now)
+       :where (:= 'id step-id))))
+    ((member status '("success" "failure" "skipped") :test #'equal)
+     (postmodern:execute
+      (:update 'cave-workflow-steps
+       :set 'status status 'finished-at (:now)
+            'exit-code (or exit-code :null)
+       :where (:= 'id step-id))))
+    (t
+     (postmodern:execute
+      (:update 'cave-workflow-steps
+       :set 'status status
+       :where (:= 'id step-id))))))
+
+(defun append-step-log (step-id chunk)
+  "Append log text to a workflow step."
+  (postmodern:execute
+   (:update 'cave-workflow-steps
+    :set 'log (:|| 'log chunk)
+    :where (:= 'id step-id))))
 
 ;;; ========================== WEBHOOKS ==========================
 

@@ -123,6 +123,49 @@
   repo)
 
 ;; ----------------------------------------------------------------------------
+;; Routes: Internal hooks (called by git hooks inside the container)
+
+(easy-routes:defroute internal-post-receive
+    ("/-/internal/hook/post-receive/:owner/:repo-name" :method :post) ()
+  ;; Only accept from localhost
+  (unless (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+    (setf (hunchentoot:return-code*) 403)
+    (return-from internal-post-receive "Forbidden"))
+  (let ((repo (find-repo owner repo-name)))
+    (unless repo
+      (setf (hunchentoot:return-code*) 404)
+      (return-from internal-post-receive "Not found"))
+    ;; Parse refs from POST body (one per line: oldsha newsha refname)
+    (let ((body (hunchentoot:raw-post-data :force-text t))
+          (refs nil))
+      (dolist (line (uiop:split-string body :separator '(#\Newline)))
+        (let ((parts (uiop:split-string line :separator '(#\Space))))
+          (when (>= (length parts) 3)
+            (push (list :old (first parts) :new (second parts) :ref (third parts))
+                  refs))))
+      ;; Schedule automations
+      (dolist (r refs)
+        (schedule-automations (getf repo :id) "post_receive"
+                              :commit-sha (getf r :new)
+                              :ref (getf r :ref))
+        ;; Schedule workflow runs from .cave/workflows/
+        (handler-case
+            (parse-and-schedule-workflows (getf repo :id) "post_receive"
+                                          :commit-sha (getf r :new)
+                                          :ref (getf r :ref))
+          (error (e)
+            (llog:error "Workflow scheduling failed" :error (princ-to-string e)))))
+      ;; Fire webhooks
+      (dolist (r refs)
+        (fire-webhooks (getf repo :id) "push"
+                       `(("ref" . ,(getf r :ref))
+                         ("after" . ,(getf r :new))
+                         ("before" . ,(getf r :old))
+                         ("repository" . (("owner" . ,owner)
+                                          ("name" . ,repo-name)))))))
+    "ok"))
+
+;; ----------------------------------------------------------------------------
 ;; Routes: Metrics
 
 (easy-routes:defroute metrics-endpoint ("/-/metrics" :method :get) ()
@@ -854,7 +897,24 @@
     (unless repo (return-from runs-page repo))
     (html-response
      (view-runs :owner-name owner :repo repo
-                :runs (list-automation-runs (getf repo :id))))))
+                :runs (list-automation-runs (getf repo :id))
+                :workflow-runs (list-workflow-runs (getf repo :id))))))
+
+(easy-routes:defroute workflow-run-detail-page
+    ("/:owner/:repo-name/runs/w/:run-id" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from workflow-run-detail-page repo))
+    (let* ((rid (parse-integer run-id :junk-allowed t))
+           (run (when rid (find-workflow-run rid))))
+      (unless (and run (= (getf run :repo-id) (getf repo :id)))
+        (return-from workflow-run-detail-page (not-found)))
+      (let ((jobs (list-workflow-jobs rid)))
+        (html-response
+         (view-workflow-run :owner-name owner :repo repo :run run
+                            :jobs (mapcar (lambda (j)
+                                            (list :job j
+                                                  :steps (list-workflow-steps (getf j :id))))
+                                          jobs)))))))
 
 ;; Automation definition management
 (easy-routes:defroute repo-add-automation-submit
@@ -1525,12 +1585,12 @@
                 owner repo-name))
       (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                          :ignore-error-status t))
-    ;; Install post-receive hook (mirrors, themes, automations)
+    ;; Install post-receive hook (calls back into running Cave server)
     (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
       (with-open-file (out hook-path :direction :output :if-exists :supersede)
-        (format out "#!/bin/bash~%cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
-                owner repo-name)
-        (format out "cave post-receive --config /etc/cave.conf --repo ~A/~A &~%"
+        (format out "#!/bin/bash~%# Pipe ref updates to the running Cave server~%tee >(curl -sf -X POST --data-binary @- http://localhost:~A/-/internal/hook/post-receive/~A/~A) >/dev/null~%"
+                (config-value :http-port 8080) owner repo-name)
+        (format out "cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
                 owner repo-name)
         (when (string= repo-name "cave-themes")
           (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"

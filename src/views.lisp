@@ -1065,34 +1065,124 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== AUTOMATION RUNS ==========================
 
-(defun view-runs (&key owner-name repo runs)
-  "Render the automation runs list."
+(defun render-status-badge (status)
+  "Render a status badge with appropriate color."
+  (spinneret:with-html
+    (:span.badge
+     :style (cond ((equal status "success")
+                    "border-color:var(--green);color:var(--green)")
+                   ((member status '("failure" "timed_out" "cancelled") :test #'equal)
+                    "border-color:var(--red);color:var(--red)")
+                   ((member status '("running" "assigned") :test #'equal)
+                    "border-color:var(--accent);color:var(--accent)")
+                   ((member status '("skipped" "pending") :test #'equal)
+                    "border-color:var(--text-muted);color:var(--text-muted)")
+                   (t ""))
+     status)))
+
+(defun render-short-sha (sha)
+  "Render a short commit SHA."
+  (when (and sha (not (eq sha :null)) (plusp (length sha)))
+    (spinneret:with-html
+      (:code :style "font-size:.75rem;color:var(--text-muted)"
+       (subseq sha 0 (min 7 (length sha)))))))
+
+(defun view-runs (&key owner-name repo runs workflow-runs)
+  "Render the runs list — both automations and workflows."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Runs — ~A/~A" owner-name repo-name))
       (render-repo-tabs owner-name repo-name :runs :repo repo)
-      (:h2 "Automation runs")
-      (if runs
-          (:ul.data-list
-           (dolist (r runs)
-             (:li :style "flex-wrap:wrap"
-              (:strong (getf r :definition-name))
-              (:span.badge (getf r :trigger-event))
-              (:span.badge
-               :style (cond ((equal (getf r :status) "success")
-                              "border-color:var(--green);color:var(--green)")
-                             ((member (getf r :status) '("failure" "timed_out" "cancelled")
-                                      :test #'equal)
-                              "border-color:var(--red);color:var(--red)")
-                             ((equal (getf r :status) "running")
-                              "border-color:var(--accent);color:var(--accent)")
-                             (t ""))
-               (getf r :status))
-              (when (and (getf r :commit-sha) (not (eq (getf r :commit-sha) :null)))
-                (:code :style "font-size:.75rem;color:var(--text-muted)"
-                 (subseq (getf r :commit-sha) 0 (min 7 (length (getf r :commit-sha))))))
-              (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
-               (princ-to-string (getf r :created-at))))))
-          (:p.empty "No automation runs yet.")))))
+
+      ;; Workflow runs
+      (when workflow-runs
+        (:section
+         (:h2 "Workflow runs")
+         (:ul.data-list
+          (dolist (wr workflow-runs)
+            (:li :style "flex-wrap:wrap"
+             (:a :href (format nil "/~A/~A/runs/w/~A" owner-name repo-name (getf wr :id))
+                 :style "font-weight:600;color:var(--primary)"
+              (getf wr :workflow-name))
+             (:span.badge (getf wr :trigger-event))
+             (render-status-badge (getf wr :status))
+             (render-short-sha (getf wr :commit-sha))
+             (:span :style "font-size:.75rem;color:var(--text-muted)"
+              (getf wr :workflow-file))
+             (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
+              (princ-to-string (getf wr :created-at))))))))
+
+      ;; Automation runs
+      (:section
+       (:h2 "Automation runs")
+       (if runs
+           (:ul.data-list
+            (dolist (r runs)
+              (:li :style "flex-wrap:wrap"
+               (:strong (getf r :definition-name))
+               (:span.badge (getf r :trigger-event))
+               (render-status-badge (getf r :status))
+               (render-short-sha (getf r :commit-sha))
+               (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
+                (princ-to-string (getf r :created-at))))))
+           (:p.empty "No automation runs yet."))))))
+
+(defun view-workflow-run (&key owner-name repo run jobs)
+  "Render a workflow run detail page with jobs and steps."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "~A — ~A/~A" (getf run :workflow-name) owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :runs :repo repo)
+      (:div :style "margin-bottom:var(--sp-4)"
+       (:h2 :style "margin-bottom:var(--sp-1)" (getf run :workflow-name))
+       (:div :style "display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap"
+        (render-status-badge (getf run :status))
+        (:span.badge (getf run :trigger-event))
+        (render-short-sha (getf run :commit-sha))
+        (:span :style "color:var(--text-muted);font-size:.85rem"
+         (getf run :workflow-file))
+        (when (and (getf run :ref) (not (eq (getf run :ref) :null)))
+          (:span :style "color:var(--text-muted);font-size:.85rem"
+           (getf run :ref)))
+        (:span :style "color:var(--text-muted);font-size:.85rem"
+         (princ-to-string (getf run :created-at)))))
+
+      ;; Jobs
+      (dolist (job-data jobs)
+        (let* ((job (getf job-data :job))
+               (steps (getf job-data :steps)))
+          (:section :style "border:1px solid var(--border);border-radius:var(--radius);padding:var(--sp-3);margin-bottom:var(--sp-3)"
+           (:div :style "display:flex;gap:var(--sp-2);align-items:center;margin-bottom:var(--sp-2)"
+            (:h3 :style "margin:0" (getf job :name))
+            (render-status-badge (getf job :status))
+            (:code :style "font-size:.75rem;color:var(--text-muted)" (getf job :image))
+            (let ((needs (getf job :needs)))
+              (when (and needs (not (eq needs :null)) (not (uiop:emptyp needs)))
+                (:span :style "font-size:.75rem;color:var(--text-muted)"
+                 (format nil "needs: ~A" needs)))))
+           ;; Steps
+           (if steps
+               (:div :style "display:flex;flex-direction:column;gap:2px"
+                (dolist (step steps)
+                  (let ((step-name (let ((n (getf step :name)))
+                                     (if (or (null n) (eq n :null))
+                                         (format nil "Step ~A" (getf step :step-order))
+                                         n)))
+                        (step-log (getf step :log)))
+                    (:details :style "border:1px solid var(--border);border-radius:var(--radius)"
+                     (:summary :style "padding:var(--sp-1) var(--sp-2);cursor:pointer;display:flex;gap:var(--sp-2);align-items:center;font-size:.85rem"
+                      (render-status-badge (getf step :status))
+                      (:span step-name)
+                      (let ((cmd (getf step :command)))
+                        (:code :style "color:var(--text-muted);font-size:.75rem"
+                         (subseq cmd 0 (min 80 (length cmd)))))
+                      (let ((ec (getf step :exit-code)))
+                        (when (and ec (not (eq ec :null)))
+                          (:span :style "margin-left:auto;font-size:.75rem;color:var(--text-muted)"
+                           (format nil "exit ~A" ec)))))
+                     (when (and step-log (not (eq step-log :null)) (plusp (length step-log)))
+                       (:pre :style "margin:0;padding:var(--sp-2);background:var(--bg);font-size:.8rem;overflow-x:auto;border-top:1px solid var(--border)"
+                        step-log))))))
+               (:p.empty "No steps."))))))))
+
 
 (defun render-runner-management (runners registration-token token-action delete-action-prefix)
   "Render runner list, registration token display, and token generation form."
