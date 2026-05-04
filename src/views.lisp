@@ -223,7 +223,7 @@
                 (:span.desc (getf repo :description))))))
           (:p.empty "No repositories yet.")))))
 
-(defun view-org-settings (&key org members)
+(defun view-org-settings (&key org members runners registration-token)
   "Render org settings page with member management."
   (let ((org-name (getf org :name)))
     (page (:title (format nil "Settings — ~A" (getf org :display-name)))
@@ -254,7 +254,16 @@
           (:select :id "member_role" :name "role"
            (:option :value "member" "Member")
            (:option :value "admin" "Admin")))
-         (:button.btn.btn-primary :type "submit" "Add member")))))))
+         (:button.btn.btn-primary :type "submit" "Add member"))))
+
+      ;; Runners
+      (:section
+       (:h2 "Runners")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Runners scoped to this organization's repositories.")
+       (render-runner-management runners registration-token
+                                 (format nil "/o/~A/-/settings/runners/token" org-name)
+                                 (format nil "/o/~A/-/settings/runners" org-name))))))
 
 ;;; ========================== REPO PAGES ==========================
 
@@ -1085,9 +1094,47 @@ function caveShowCommentForm(td) {
                (princ-to-string (getf r :created-at))))))
           (:p.empty "No automation runs yet.")))))
 
+(defun render-runner-management (runners registration-token token-action delete-action-prefix)
+  "Render runner list, registration token display, and token generation form."
+  (spinneret:with-html
+    (if runners
+        (:table.data-table
+         (:thead (:tr (:th "Name") (:th "Labels") (:th "Status") (:th "Last seen") (:th "")))
+         (:tbody
+          (dolist (r runners)
+            (:tr
+             (:td (getf r :name))
+             (:td (let ((l (getf r :labels)))
+                    (if (and l (not (uiop:emptyp l)) (not (eq l :null))) l "")))
+             (:td (:span.badge
+                   :style (cond ((equal (getf r :status) "online")
+                                  "border-color:var(--green);color:var(--green)")
+                                 ((equal (getf r :status) "disabled")
+                                  "border-color:var(--red);color:var(--red)")
+                                 (t ""))
+                   (getf r :status)))
+             (:td :style "color:var(--text-muted);font-size:.75rem"
+              (let ((ls (getf r :last-seen-at)))
+                (if (and ls (not (eq ls :null))) (princ-to-string ls) "never")))
+             (:td
+              (:form :method "post" :style "display:inline"
+               :action (format nil "~A/~A/delete" delete-action-prefix (getf r :id))
+               (:button.btn.btn-sm :type "submit" "Delete")))))))
+        (:p.empty "No runners registered."))
+    (when registration-token
+      (:div.alert :style "border:1px solid var(--accent);padding:.75rem;margin:1rem 0"
+       (:strong "Registration token created.") " Use this to register a runner:" (:br)
+       (:code :style "word-break:break-all" (getf registration-token :token))
+       (:p :style "margin-top:.5rem;color:var(--text-muted);font-size:.85rem"
+        "Run: " (:code (format nil "cave runner --url grpc://localhost:~A --token ~A"
+                               (config-value :grpc-port 9443)
+                               (getf registration-token :token))))))
+    (:form :method "post" :action token-action
+     (:button.btn.btn-primary :type "submit" "Generate registration token"))))
+
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations message)
+(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations runners registration-token message)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
@@ -1324,6 +1371,15 @@ function caveShowCommentForm(td) {
                  :min "5" :max "1440" :style "width:5em"))
         (:button.btn.btn-primary :type "submit" "Add mirror")))
 
+      ;; Runners
+      (:section
+       (:h2 "Runners")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Runners scoped to this repository.")
+       (render-runner-management runners registration-token
+                                 (format nil "/~A/~A/settings/runners/token" owner-name repo-name)
+                                 (format nil "/~A/~A/settings/runners" owner-name repo-name)))
+
       ;; Danger zone
       (:section
        (:h2 :style "color:var(--red)" "Danger zone")
@@ -1422,7 +1478,8 @@ function caveShowCommentForm(td) {
       (:button.btn.btn-primary :type "submit" "Generate registration token"))))))
 
 (defun view-settings (&key ssh-keys api-tokens new-token ssh-error
-                           generated-private-key generated-key-name)
+                           generated-private-key generated-key-name
+                           runners registration-token)
   "Render user settings page."
   (let ((cav-path (cav-download-path)))
     (page (:title "Settings — Cave")
@@ -1522,6 +1579,15 @@ export CAVE_TOKEN=<your-api-token>
          (:textarea :id "public_key" :name "public_key" :rows "4" :required t
                     :placeholder "ssh-ed25519 AAAA..."))
         (:button.btn :type "submit" "Add key")))
+
+      ;; Runners
+      (:section
+       (:h2 "Runners")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Runners scoped to your personal repositories.")
+       (render-runner-management runners registration-token
+                                 "/-/settings/runners/token"
+                                 "/-/settings/runners"))
 
       (:section
        (:h2 "API tokens")

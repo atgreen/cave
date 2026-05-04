@@ -526,16 +526,29 @@
                                (:in 'status (:set "assigned" "running"))))
                  :single)))
     (when active (return-from fetch-queued-run nil)))
-  ;; Fetch oldest queued run matching runner scope/labels
-  ;; For now, simple: grab any queued run (label matching can be refined)
-  (let ((run (postmodern:query
-              (:limit
-               (:order-by
-                (:select '* :from 'cave-automation-runs
-                 :where (:= 'status "queued"))
-                'created-at)
-               1)
-              :plist)))
+  ;; Fetch oldest queued run matching runner scope
+  ;; instance runners: any run; org runners: repos in their org; repo runners: their repo only
+  (let* ((where-clause
+           (cond
+             ((equal runner-scope "repo")
+              `(:and (:= status "queued") (:= repo-id ,runner-scope-id)))
+             ((equal runner-scope "org")
+              `(:and (:= status "queued")
+                     (:in repo-id (:select id :from cave-repos
+                                   :where (:= org-id ,runner-scope-id)))))
+             ((equal runner-scope "user")
+              `(:and (:= status "queued")
+                     (:in repo-id (:select id :from cave-repos
+                                   :where (:= owner-id ,runner-scope-id)))))
+             (t
+              '(:= status "queued"))))
+         (run (postmodern:query
+               (postmodern:sql-compile
+                `(:limit (:order-by (:select * :from cave-automation-runs
+                                     :where ,where-clause)
+                                    created-at)
+                         1))
+               :plist)))
     (when run
       ;; Atomically assign it
       (let ((updated (postmodern:query
@@ -587,11 +600,18 @@
         :set 'last-seen-at (:now) 'status "online"
         :where (:= 'id runner-id)))))
 
-(defun list-runners ()
-  "List all runners."
-  (postmodern:query
-   (:order-by (:select '* :from 'cave-runners) 'name)
-   :plists))
+(defun list-runners (&key scope scope-id)
+  "List runners, optionally filtered by scope and scope-id."
+  (if scope
+      (postmodern:query
+       (:order-by (:select '* :from 'cave-runners
+                   :where (:and (:= 'scope scope)
+                                (:= 'scope-id scope-id)))
+                  'name)
+       :plists)
+      (postmodern:query
+       (:order-by (:select '* :from 'cave-runners) 'name)
+       :plists)))
 
 (defun disable-runner (runner-id)
   "Disable a runner."

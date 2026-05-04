@@ -76,18 +76,25 @@
                                        (unless (eq sid :null) sid))))))
         (if run
             (let* ((repo (find-repo-by-id (getf run :repo-id)))
-                   (owner-name (when repo (repo-owner-name repo))))
+                   (owner-name (when repo (repo-owner-name repo)))
+                   (def-id (getf run :definition-id))
+                   (def (when (and def-id (not (eq def-id :null)))
+                          (postmodern:query
+                           (:select '* :from 'cave-automation-definitions
+                            :where (:= 'id def-id))
+                           :plist)))
+                   (command (if def (getf def :command) (getf run :definition-name))))
               (make-instance 'cave::fetch-task-response
                              :has-task t
                              :run-id (getf run :id)
                              :repo-owner (or owner-name "")
                              :repo-name (if repo (getf repo :name) "")
-                             :command (or (getf run :definition-name) "")
+                             :command (or command "")
                              :commit-sha (let ((sha (getf run :commit-sha)))
                                            (if (eq sha :null) "" sha))
                              :ref (let ((r (getf run :ref)))
                                     (if (eq r :null) "" r))
-                             :timeout-seconds 60))
+                             :timeout-seconds (if def (getf def :timeout-seconds) 60)))
             (make-instance 'cave::fetch-task-response :has-task nil))))))
 
 (defun handle-append-task-log (request ctx)
@@ -112,6 +119,55 @@
         (delete-runner (getf runner :id))
         (llog:info "Ephemeral runner cleaned up" :id (getf runner :id)))))
   (make-instance 'cave::update-task-status-response :ok t))
+
+(defun handle-watch-tasks (request ctx stream)
+  "Server-streaming: push tasks to runner as they become available.
+   Loops until the connection drops, checking for queued tasks and heartbeating."
+  (let ((runner (get-runner-from-ctx ctx)))
+    (unless runner
+      (error "unauthenticated"))
+    (let ((runner-id (getf runner :id))
+          (runner-labels (slot-value request 'cave::runner-labels)))
+      ;; Update labels from the watch request
+      (postmodern:with-connection *db-spec*
+        (update-runner-heartbeat runner-id :labels runner-labels))
+      ;; Loop: check for tasks, send when found, heartbeat periodically
+      (loop
+        (postmodern:with-connection *db-spec*
+          ;; Heartbeat
+          (update-runner-heartbeat runner-id)
+          ;; Check for a queued task
+          (let* ((runner-rec (postmodern:query
+                              (:select '* :from 'cave-runners :where (:= 'id runner-id))
+                              :plist))
+                 (run (when runner-rec
+                        (fetch-queued-run runner-id
+                                         (getf runner-rec :labels)
+                                         (getf runner-rec :scope)
+                                         (let ((sid (getf runner-rec :scope-id)))
+                                           (unless (eq sid :null) sid))))))
+            (when run
+              (let* ((repo (find-repo-by-id (getf run :repo-id)))
+                     (owner-name (when repo (repo-owner-name repo)))
+                     (def-id (getf run :definition-id))
+                     (def (when (and def-id (not (eq def-id :null)))
+                            (postmodern:query
+                             (:select '* :from 'cave-automation-definitions
+                              :where (:= 'id def-id))
+                             :plist)))
+                     (command (if def (getf def :command) (getf run :definition-name))))
+                (ag-grpc:stream-send stream
+                  (make-instance 'cave::task-event
+                                 :run-id (getf run :id)
+                                 :repo-owner (or owner-name "")
+                                 :repo-name (if repo (getf repo :name) "")
+                                 :command (or command "")
+                                 :commit-sha (let ((sha (getf run :commit-sha)))
+                                               (if (eq sha :null) "" sha))
+                                 :ref (let ((r (getf run :ref)))
+                                        (if (eq r :null) "" r))
+                                 :timeout-seconds (if def (getf def :timeout-seconds) 60)))))))
+        (sleep 3)))))
 
 ;;; --- Server Lifecycle ---
 
@@ -149,6 +205,13 @@
     #'handle-update-task-status
     :request-type 'cave::update-task-status-request
     :response-type 'cave::update-task-status-response)
+
+  (ag-grpc:server-register-handler *grpc-server*
+    "/cave.runner.RunnerService/WatchTasks"
+    #'handle-watch-tasks
+    :request-type 'cave::watch-tasks-request
+    :response-type 'cave::task-event
+    :server-streaming t)
 
   ;; Runner cleanup thread (mark offline, delete stale ephemeral)
   (bt:make-thread

@@ -302,7 +302,8 @@
   (when (require-login)
     (html-response
      (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
-                    :api-tokens (list-api-tokens *current-user-id*)))))
+                    :api-tokens (list-api-tokens *current-user-id*)
+                    :runners (list-runners :scope "user" :scope-id *current-user-id*)))))
 
 (easy-routes:defroute set-theme-submit ("/-/settings/theme" :method :post) ()
   (when (require-login)
@@ -372,6 +373,30 @@
       (when tid (delete-api-token tid *current-user-id*)))
     (hunchentoot:redirect "/-/settings")))
 
+(easy-routes:defroute user-create-runner-token ("/-/settings/runners/token" :method :post) ()
+  (when (require-login)
+    (let ((token (create-registration-token :scope "user" :scope-id *current-user-id*
+                                            :created-by-id *current-user-id*)))
+      (html-response
+       (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                      :api-tokens (list-api-tokens *current-user-id*)
+                      :runners (list-runners :scope "user" :scope-id *current-user-id*)
+                      :registration-token token)))))
+
+(easy-routes:defroute user-delete-runner ("/-/settings/runners/:runner-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((rid (parse-integer runner-id :junk-allowed t)))
+      (when rid
+        ;; Only delete if the runner belongs to this user
+        (let ((runner (postmodern:query
+                       (:select '* :from 'cave-runners
+                        :where (:and (:= 'id rid)
+                                     (:= 'scope "user")
+                                     (:= 'scope-id *current-user-id*)))
+                       :plist)))
+          (when runner (delete-runner rid)))))
+    (hunchentoot:redirect "/-/settings")))
+
 (easy-routes:defroute download-cav ("/-/downloads/cav" :method :get) ()
   (let ((path (cav-download-path)))
     (unless path
@@ -436,7 +461,33 @@
         (setf (hunchentoot:return-code*) 403)
         (return-from org-settings-page "Forbidden"))
       (html-response
-       (view-org-settings :org org :members (list-org-members (getf org :id)))))))
+       (view-org-settings :org org :members (list-org-members (getf org :id))
+                          :runners (list-runners :scope "org" :scope-id (getf org :id)))))))
+
+(easy-routes:defroute org-create-runner-token ("/o/:org-name/-/settings/runners/token" :method :post) ()
+  (when (require-login)
+    (let ((org (find-org-by-name org-name)))
+      (unless org (return-from org-create-runner-token (not-found)))
+      (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from org-create-runner-token "Forbidden"))
+      (let ((token (create-registration-token :scope "org" :scope-id (getf org :id)
+                                              :created-by-id *current-user-id*)))
+        (html-response
+         (view-org-settings :org org :members (list-org-members (getf org :id))
+                            :runners (list-runners :scope "org" :scope-id (getf org :id))
+                            :registration-token token))))))
+
+(easy-routes:defroute org-delete-runner ("/o/:org-name/-/settings/runners/:runner-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((org (find-org-by-name org-name)))
+      (unless org (return-from org-delete-runner (not-found)))
+      (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from org-delete-runner "Forbidden"))
+      (let ((rid (parse-integer runner-id :junk-allowed t)))
+        (when rid (delete-runner rid)))
+      (hunchentoot:redirect (format nil "/o/~A/-/settings" org-name)))))
 
 (easy-routes:defroute org-add-member-submit ("/o/:org-name/-/settings/members" :method :post) ()
   (when (require-login)
@@ -706,7 +757,8 @@
                            :checks (list-check-configs (getf repo :id))
                            :mirrors (list-mirrors (getf repo :id))
                            :webhooks (list-webhooks (getf repo :id))
-                           :automations (list-automation-definitions (getf repo :id)))))))
+                           :automations (list-automation-definitions (getf repo :id))
+                           :runners (list-runners :scope "repo" :scope-id (getf repo :id)))))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -839,6 +891,39 @@
         (return-from repo-delete-automation-submit "Forbidden"))
       (let ((aid (parse-integer auto-id :junk-allowed t)))
         (when aid (delete-automation-definition aid (getf repo :id))))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+;; Repo-scoped runner management
+(easy-routes:defroute repo-create-runner-token
+    ("/:owner/:repo-name/settings/runners/token" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-create-runner-token (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-create-runner-token "Forbidden"))
+      (let ((token (create-registration-token :scope "repo" :scope-id (getf repo :id)
+                                              :created-by-id *current-user-id*)))
+        (html-response
+         (view-repo-settings :owner-name owner :repo repo
+                             :members (list-repo-members (getf repo :id))
+                             :checks (list-check-configs (getf repo :id))
+                             :mirrors (list-mirrors (getf repo :id))
+                             :webhooks (list-webhooks (getf repo :id))
+                             :automations (list-automation-definitions (getf repo :id))
+                             :runners (list-runners :scope "repo" :scope-id (getf repo :id))
+                             :registration-token token))))))
+
+(easy-routes:defroute repo-delete-runner
+    ("/:owner/:repo-name/settings/runners/:runner-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-delete-runner (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-delete-runner "Forbidden"))
+      (let ((rid (parse-integer runner-id :junk-allowed t)))
+        (when rid (delete-runner rid)))
       (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
 (easy-routes:defroute repo-add-webhook-submit

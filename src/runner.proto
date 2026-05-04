@@ -53,3 +53,17 @@ message UpdateTaskStatusRequest {
 message UpdateTaskStatusResponse {
   bool ok = 1;
 }
+
+message WatchTasksRequest {
+  string runner_labels = 1;
+}
+
+message TaskEvent {
+  int64 run_id = 1;
+  string repo_owner = 2;
+  string repo_name = 3;
+  string command = 4;
+  string commit_sha = 5;
+  string ref = 6;
+  int32 timeout_seconds = 7;
+}

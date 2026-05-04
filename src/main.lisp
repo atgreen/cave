@@ -349,95 +349,103 @@
     (format t "~&Cave Runner~%  Server: ~A:~A~%  Name: ~A~%  Labels: ~A~%  Ephemeral: ~A~%"
             host port name runner-labels ephemeral)
 
-    ;; Connect to gRPC server
-    (let ((channel (ag-grpc:make-channel host port)))
-      (handler-case
-          (progn
-            ;; Register
-            (format t "~&Registering...~%")
-            (let* ((req (make-instance 'cave::register-runner-request
-                                       :name name
-                                       :runner-labels runner-labels
-                                       :ephemeral ephemeral
-                                       :registration-token token))
-                   (resp (ag-grpc:grpc-call channel
-                                            "/cave.runner.RunnerService/RegisterRunner"
-                                            req :response-type 'cave::register-runner-response)))
-              (let ((auth-token (slot-value resp 'cave::auth-token))
-                    (runner-id (slot-value resp 'cave::runner-id)))
-                (format t "  Registered as runner #~A~%" runner-id)
+    (labels
+        ((make-auth-metadata (auth-token)
+           (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
 
-                ;; Main loop: heartbeat + poll for tasks
-                (loop
-                  ;; Heartbeat
-                  (handler-case
-                      (ag-grpc:grpc-call channel
-                                         "/cave.runner.RunnerService/DeclareRunner"
-                                         (make-instance 'cave::declare-runner-request
-                                                        :runner-labels runner-labels)
-                                         :response-type 'cave::declare-runner-response
-                                         :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
-                    (error () nil))
+         (execute-task (channel auth-token task)
+           "Execute a task and report results back via gRPC."
+           (let ((run-id (slot-value task 'cave::run-id))
+                 (repo-owner (slot-value task 'cave::repo-owner))
+                 (repo-name (slot-value task 'cave::repo-name))
+                 (command (slot-value task 'cave::command)))
+             (format t "~&Task #~A: ~A/~A — ~A~%" run-id repo-owner repo-name command)
+             ;; Update status to running
+             (ag-grpc:grpc-call channel
+                                "/cave.runner.RunnerService/UpdateTaskStatus"
+                                (make-instance 'cave::update-task-status-request
+                                               :run-id run-id :status "running")
+                                :response-type 'cave::update-task-status-response
+                                :metadata (make-auth-metadata auth-token))
+             ;; Execute the command
+             (multiple-value-bind (output error-output exit-code)
+                 (uiop:run-program (list "bash" "-c" command)
+                                   :output '(:string :stripped t)
+                                   :error-output '(:string :stripped t)
+                                   :ignore-error-status t)
+               ;; Send log
+               (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
+                 (ag-grpc:grpc-call channel
+                                    "/cave.runner.RunnerService/AppendTaskLog"
+                                    (make-instance 'cave::append-task-log-request
+                                                   :run-id run-id :chunk log)
+                                    :response-type 'cave::append-task-log-response
+                                    :metadata (make-auth-metadata auth-token)))
+               ;; Report final status
+               (let ((status (if (zerop exit-code) "success" "failure")))
+                 (format t "  Result: ~A (exit ~A)~%" status exit-code)
+                 (ag-grpc:grpc-call channel
+                                    "/cave.runner.RunnerService/UpdateTaskStatus"
+                                    (make-instance 'cave::update-task-status-request
+                                                   :run-id run-id :status status)
+                                    :response-type 'cave::update-task-status-response
+                                    :metadata (make-auth-metadata auth-token))))))
 
-                  ;; Fetch task
-                  (handler-case
-                      (let ((task-resp (ag-grpc:grpc-call channel
-                                                          "/cave.runner.RunnerService/FetchTask"
-                                                          (make-instance 'cave::fetch-task-request)
-                                                          :response-type 'cave::fetch-task-response
-                                                          :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))))
-                        (when (slot-value task-resp 'cave::has-task)
-                          (let ((run-id (slot-value task-resp 'cave::run-id))
-                                (repo-owner (slot-value task-resp 'cave::repo-owner))
-                                (repo-name (slot-value task-resp 'cave::repo-name))
-                                (command (slot-value task-resp 'cave::command)))
-                            (format t "~&Task #~A: ~A/~A — ~A~%" run-id repo-owner repo-name command)
+         (run-watch-loop (channel auth-token)
+           "Open a WatchTasks server stream and process tasks as they arrive."
+           (format t "~&Watching for tasks...~%")
+           (let ((stream (ag-grpc:call-server-stream
+                          channel
+                          "/cave.runner.RunnerService/WatchTasks"
+                          (make-instance 'cave::watch-tasks-request
+                                         :runner-labels runner-labels)
+                          :response-type 'cave::task-event
+                          :metadata (make-auth-metadata auth-token))))
+             (loop
+               (let ((task (ag-grpc:stream-receive-message stream)))
+                 (unless task (return)) ; stream ended
+                 (handler-case
+                     (progn
+                       (execute-task channel auth-token task)
+                       (when ephemeral
+                         (format t "~&Ephemeral runner — exiting.~%")
+                         (uiop:quit 0)))
+                   (error (e)
+                     (format *error-output* "~&Task execution error: ~A~%" e))))))))
 
-                            ;; Update status to running
-                            (ag-grpc:grpc-call channel
-                                               "/cave.runner.RunnerService/UpdateTaskStatus"
-                                               (make-instance 'cave::update-task-status-request
-                                                              :run-id run-id :status "running")
-                                               :response-type 'cave::update-task-status-response
-                                               :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
-
-                            ;; Execute the command
-                            (multiple-value-bind (output error-output exit-code)
-                                (uiop:run-program (list "bash" "-c" command)
-                                                  :output '(:string :stripped t)
-                                                  :error-output '(:string :stripped t)
-                                                  :ignore-error-status t)
-                              ;; Send log
-                              (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
-                                (ag-grpc:grpc-call channel
-                                                   "/cave.runner.RunnerService/AppendTaskLog"
-                                                   (make-instance 'cave::append-task-log-request
-                                                                  :run-id run-id :chunk log)
-                                                   :response-type 'cave::append-task-log-response
-                                                   :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token))))))
-
-                              ;; Report final status
-                              (let ((status (if (zerop exit-code) "success" "failure")))
-                                (format t "  Result: ~A (exit ~A)~%" status exit-code)
-                                (ag-grpc:grpc-call channel
-                                                   "/cave.runner.RunnerService/UpdateTaskStatus"
-                                                   (make-instance 'cave::update-task-status-request
-                                                                  :run-id run-id :status status)
-                                                   :response-type 'cave::update-task-status-response
-                                                   :metadata (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))))
-
-                            ;; Exit if ephemeral
-                            (when ephemeral
-                              (format t "~&Ephemeral runner — exiting.~%")
-                              (return)))))
-                    (error (e)
-                      (format *error-output* "  Poll error: ~A~%" e)))
-
-                  ;; Wait before next poll
-                  (sleep 5)))))
-        (error (e)
-          (format *error-output* "~&Runner error: ~A~%" e)
-          (uiop:quit 1))))))
+      ;; Register with the server
+      (let ((channel (ag-grpc:make-channel host port)))
+        (handler-case
+            (progn
+              (format t "~&Registering...~%")
+              (let* ((req (make-instance 'cave::register-runner-request
+                                         :name name
+                                         :runner-labels runner-labels
+                                         :ephemeral ephemeral
+                                         :registration-token token))
+                     (resp (ag-grpc:grpc-call channel
+                                              "/cave.runner.RunnerService/RegisterRunner"
+                                              req :response-type 'cave::register-runner-response)))
+                (let ((auth-token (slot-value resp 'cave::auth-token))
+                      (runner-id (slot-value resp 'cave::runner-id)))
+                  (format t "  Registered as runner #~A~%" runner-id)
+                  ;; Main loop: watch for tasks with auto-reconnect
+                  (loop
+                    (handler-case
+                        (let ((ch (ag-grpc:make-channel host port
+                                    :timeout nil
+                                    :keepalive (ag-grpc:make-keepalive-config
+                                                :ping-interval 15
+                                                :ping-timeout 5
+                                                :permit-without-calls t))))
+                          (run-watch-loop ch auth-token))
+                      (error (e)
+                        (format *error-output* "~&Stream disconnected: ~A~%" e)
+                        (format *error-output* "  Reconnecting in 5s...~%")
+                        (sleep 5)))))))
+          (error (e)
+            (format *error-output* "~&Runner error: ~A~%" e)
+            (uiop:quit 1)))))))
 
 ;;; --- POST-RECEIVE subcommand ---
 

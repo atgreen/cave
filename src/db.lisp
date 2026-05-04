@@ -476,7 +476,11 @@ CREATE TABLE cave_runner_registration_tokens (
   created_by_id BIGINT REFERENCES cave_users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   expires_at TIMESTAMPTZ
-);"))
+);")
+
+    (32 . "-- Add 'user' scope for personal runners
+ALTER TABLE cave_runners DROP CONSTRAINT IF EXISTS cave_runners_scope_check;
+ALTER TABLE cave_runners ADD CONSTRAINT cave_runners_scope_check CHECK (scope IN ('instance', 'org', 'repo', 'user'));"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
