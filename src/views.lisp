@@ -1187,9 +1187,10 @@ function caveShowCommentForm(td) {
     ;; SSE live log streaming (only if run is still active)
     (when (member (getf run :status) '("queued" "running") :test #'equal)
       (:script :id "sse-config" :type "application/json"
-       (com.inuoe.jzon:stringify
-        (list (cons "url" (format nil "/~A/~A/runs/w/~A/logs"
-                                  owner-name repo-name (getf run :id))))))
+       (let ((ht (make-hash-table :test #'equal)))
+         (setf (gethash "url" ht)
+               (format nil "/~A/~A/runs/w/~A/logs" owner-name repo-name (getf run :id)))
+         (com.inuoe.jzon:stringify ht)))
       (:script
        (spinneret:with-html-string
          (:raw "
