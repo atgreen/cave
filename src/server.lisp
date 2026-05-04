@@ -26,6 +26,18 @@
            (let ((*current-user* nil)
                  (*current-user-id* nil))
              (authenticate-request)
+             ;; Intercept git smart HTTP before easy-routes dispatch
+             (let ((uri (hunchentoot:script-name request)))
+               (when (and (search ".git/" uri)
+                          (or (search "/info/refs" uri)
+                              (search "/git-upload-pack" uri)))
+                 (let* ((git-suffix-pos (search ".git/" uri))
+                        (repo-path (subseq uri 1 git-suffix-pos))
+                        (slash (position #\/ repo-path)))
+                   (when slash
+                     (return-from hunchentoot:acceptor-dispatch-request
+                       (handle-git-http (subseq repo-path 0 slash)
+                                        (subseq repo-path (1+ slash))))))))
              (call-next-method)))
       (let* ((elapsed (/ (- (get-internal-real-time) start)
                          (float internal-time-units-per-second 1.0d0)))
@@ -916,6 +928,78 @@
                                                   :steps (list-workflow-steps (getf j :id))))
                                           jobs)))))))
 
+(easy-routes:defroute workflow-run-logs-sse
+    ("/:owner/:repo-name/runs/w/:run-id/logs" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from workflow-run-logs-sse repo))
+    (let* ((rid (parse-integer run-id :junk-allowed t))
+           (run (when rid (find-workflow-run rid))))
+      (unless (and run (= (getf run :repo-id) (getf repo :id)))
+        (return-from workflow-run-logs-sse (not-found)))
+      ;; SSE response: stream step logs and status updates
+      (setf (hunchentoot:content-type*) "text/event-stream")
+      (setf (hunchentoot:header-out "Cache-Control") "no-cache")
+      (setf (hunchentoot:header-out "X-Accel-Buffering") "no")
+      (let ((stream (hunchentoot:send-headers))
+            (sent-lengths (make-hash-table))
+            (prev-statuses (make-hash-table :test #'equal)))
+        (handler-case
+            (loop repeat 600  ; max ~10 minutes (600 * 1s)
+                  do (let* ((jobs (list-workflow-jobs rid))
+                            (refreshed-run (find-workflow-run rid))
+                            (run-status (getf refreshed-run :status))
+                            (any-active nil))
+                       ;; Send run status if changed
+                       (unless (equal run-status (gethash "run" prev-statuses))
+                         (setf (gethash "run" prev-statuses) run-status)
+                         (let ((msg (format nil "event: run-status~%data: ~A~%~%" run-status)))
+                           (write-string msg stream)
+                           (force-output stream)))
+                       ;; Send step updates for each job
+                       (dolist (job jobs)
+                         (let ((steps (list-workflow-steps (getf job :id))))
+                           (dolist (step steps)
+                             (let* ((step-id (getf step :id))
+                                    (log-text (getf step :log))
+                                    (log-len (if (and log-text (not (eq log-text :null)))
+                                                 (length log-text) 0))
+                                    (prev-len (gethash step-id sent-lengths 0))
+                                    (status (getf step :status))
+                                    (status-key (format nil "step-~A" step-id)))
+                               ;; Send new log content (newlines encoded as \n for SSE)
+                               (when (> log-len prev-len)
+                                 (let* ((new-text (subseq log-text prev-len))
+                                        (escaped (with-output-to-string (s)
+                                                   (loop for ch across new-text
+                                                         do (if (char= ch #\Newline)
+                                                                (write-string "\\n" s)
+                                                                (write-char ch s)))))
+                                        (msg (format nil "event: step-log~%data: ~A ~A~%~%"
+                                                     step-id escaped)))
+                                   (write-string msg stream)
+                                   (force-output stream)
+                                   (setf (gethash step-id sent-lengths) log-len)))
+                               ;; Send status change
+                               (unless (equal status (gethash status-key prev-statuses))
+                                 (setf (gethash status-key prev-statuses) status)
+                                 (let* ((exit-code (getf step :exit-code))
+                                        (msg (format nil "event: step-status~%data: ~A ~A~@[ ~A~]~%~%"
+                                                     step-id status
+                                                     (when (and exit-code (not (eq exit-code :null)))
+                                                       exit-code))))
+                                   (write-string msg stream)
+                                   (force-output stream)))
+                               (when (member status '("pending" "running") :test #'equal)
+                                 (setf any-active t))))))
+                       ;; Stop if run is terminal and no active steps
+                       (when (and (member run-status '("success" "failure" "cancelled") :test #'equal)
+                                  (not any-active))
+                         (write-string (format nil "event: done~%data: ~A~%~%" run-status) stream)
+                         (force-output stream)
+                         (return)))
+                     (sleep 1))
+          (error () nil))))))
+
 ;; Automation definition management
 (easy-routes:defroute repo-add-automation-submit
     ("/:owner/:repo-name/settings/automations" :method :post) ()
@@ -1563,6 +1647,76 @@
                           :description (when (and description (not (eq description 'null))) description)
                           :target-url (when (and target-url (not (eq target-url 'null))) target-url))
        :status 201))))
+
+;; ----------------------------------------------------------------------------
+;; Git smart HTTP transport (read-only, for runner clones)
+
+(defun handle-git-http (owner repo-name)
+  "Handle git smart HTTP for a repo. Dispatches based on URL suffix."
+  (let* ((repo (find-repo owner repo-name))
+         (disk-path (when repo (repo-disk-path owner repo-name))))
+    (unless (and repo (probe-file disk-path))
+      (setf (hunchentoot:return-code*) 404)
+      (return-from handle-git-http "Not found"))
+    (unless (repo-visible-p repo)
+      (setf (hunchentoot:return-code*) 404)
+      (return-from handle-git-http "Not found"))
+    (let ((uri (hunchentoot:script-name*)))
+      (cond
+        ;; GET /owner/repo.git/info/refs?service=git-upload-pack
+        ((and (search "/info/refs" uri)
+              (equal (hunchentoot:request-method*) :get))
+         (unless (equal (hunchentoot:get-parameter "service") "git-upload-pack")
+           (setf (hunchentoot:return-code*) 403)
+           (return-from handle-git-http "Forbidden"))
+         (multiple-value-bind (output _err exit-code)
+             (uiop:run-program (list "git" "upload-pack" "--stateless-rpc"
+                                     "--advertise-refs" (namestring disk-path))
+                               :output :string
+                               :error-output :string
+                               :ignore-error-status t)
+           (declare (ignore _err))
+           (unless (zerop exit-code)
+             (setf (hunchentoot:return-code*) 500)
+             (return-from handle-git-http "Internal error"))
+           (setf (hunchentoot:content-type*)
+                 "application/x-git-upload-pack-advertisement")
+           (concatenate 'string
+                     "001e# service=git-upload-pack" (string #\Newline)
+                     "0000" output)))
+        ;; POST /owner/repo.git/git-upload-pack
+        ((and (search "/git-upload-pack" uri)
+              (equal (hunchentoot:request-method*) :post))
+         (let* ((request-body (hunchentoot:raw-post-data :force-binary t))
+                (in-path (format nil "/tmp/cave-git-in-~A"
+                                 (ironclad:byte-array-to-hex-string (ironclad:random-data 8))))
+                (out-path (format nil "/tmp/cave-git-out-~A"
+                                  (ironclad:byte-array-to-hex-string (ironclad:random-data 8)))))
+           (unwind-protect
+            (progn
+              (with-open-file (s in-path :direction :output :element-type '(unsigned-byte 8)
+                                         :if-exists :supersede)
+                (write-sequence request-body s))
+              (let ((exit-code (nth-value 2
+                                (uiop:run-program
+                                 (format nil "git upload-pack --stateless-rpc '~A' < '~A' > '~A'"
+                                         (namestring disk-path) in-path out-path)
+                                 :error-output :string
+                                 :ignore-error-status t))))
+                (unless (zerop exit-code)
+                  (setf (hunchentoot:return-code*) 500)
+                  (return-from handle-git-http "Internal error"))
+                (setf (hunchentoot:content-type*)
+                      "application/x-git-upload-pack-result")
+                (with-open-file (s out-path :element-type '(unsigned-byte 8))
+                  (let ((buf (make-array (file-length s) :element-type '(unsigned-byte 8))))
+                    (read-sequence buf s)
+                    buf))))
+            (ignore-errors (delete-file in-path))
+            (ignore-errors (delete-file out-path)))))
+        (t
+         (setf (hunchentoot:return-code*) 404)
+         "Not found")))))
 
 ;; ----------------------------------------------------------------------------
 ;; Git helpers

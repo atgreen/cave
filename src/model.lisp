@@ -647,7 +647,21 @@
     :where (:and (:= 'status "online")
                  (:<= 'last-seen-at
                       (:- (:now) (:raw "'60 seconds'"))))))
-  (cleanup-stale-ephemeral-runners))
+  (cleanup-stale-ephemeral-runners)
+  ;; Reset workflow jobs assigned to offline runners
+  (postmodern:execute
+   (:update 'cave-workflow-jobs
+    :set 'status "queued" 'runner-id :null
+    :where (:and (:= 'status "assigned")
+                 (:in 'runner-id (:select 'id :from 'cave-runners
+                                  :where (:= 'status "offline"))))))
+  ;; Reset automation runs assigned to offline runners
+  (postmodern:execute
+   (:update 'cave-automation-runs
+    :set 'status "queued" 'runner-id :null
+    :where (:and (:= 'status "assigned")
+                 (:in 'runner-id (:select 'id :from 'cave-runners
+                                  :where (:= 'status "offline")))))))
 
 (defun create-registration-token (&key scope scope-id created-by-id)
   "Create a runner registration token."

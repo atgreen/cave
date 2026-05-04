@@ -1178,10 +1178,43 @@ function caveShowCommentForm(td) {
                         (when (and ec (not (eq ec :null)))
                           (:span :style "margin-left:auto;font-size:.75rem;color:var(--text-muted)"
                            (format nil "exit ~A" ec)))))
-                     (when (and step-log (not (eq step-log :null)) (plusp (length step-log)))
-                       (:pre :style "margin:0;padding:var(--sp-2);background:var(--bg);font-size:.8rem;overflow-x:auto;border-top:1px solid var(--border)"
+                     (:pre :id (format nil "step-log-~A" (getf step :id))
+                      :style "margin:0;padding:var(--sp-2);background:var(--bg);font-size:.8rem;overflow-x:auto;border-top:1px solid var(--border);min-height:1em"
+                      (when (and step-log (not (eq step-log :null)) (plusp (length step-log)))
                         step-log))))))
-               (:p.empty "No steps."))))))))
+               (:p.empty "No steps."))))))
+
+    ;; SSE live log streaming (only if run is still active)
+    (when (member (getf run :status) '("queued" "running") :test #'equal)
+      (:script
+       (format nil "
+(function() {
+  var es = new EventSource('~A');
+  es.addEventListener('step-log', function(e) {
+    var parts = e.data.split(' ');
+    var stepId = parts[0];
+    var text = parts.slice(1).join(' ').replace(/\\\\n/g, '\\n');
+    var pre = document.getElementById('step-log-' + stepId);
+    if (pre) { pre.textContent += text; pre.parentElement.open = true; }
+  });
+  es.addEventListener('step-status', function(e) {
+    var parts = e.data.split(' ');
+    var stepId = parts[0];
+    var status = parts[1];
+    var badge = document.querySelector('#step-log-' + stepId).parentElement.querySelector('.badge');
+    if (badge) { badge.textContent = status; }
+  });
+  es.addEventListener('run-status', function(e) {
+    var badge = document.querySelector('h2').nextElementSibling.querySelector('.badge');
+    if (badge) { badge.textContent = e.data; }
+    if (e.data === 'success' || e.data === 'failure' || e.data === 'cancelled') {
+      setTimeout(function() { location.reload(); }, 500);
+    }
+  });
+  es.addEventListener('done', function(e) { es.close(); location.reload(); });
+  es.onerror = function() { es.close(); };
+})();
+" (format nil "/~A/~A/runs/w/~A/logs" owner-name repo-name (getf run :id)))))))
 
 
 (defun render-runner-management (runners registration-token token-action delete-action-prefix)

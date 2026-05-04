@@ -486,22 +486,44 @@
                                                             :exit-code 0)
                                              :response-type 'cave::update-step-status-response
                                              :metadata (make-auth-metadata auth-token))
-                          ;; Execute step in the running container
-                          (multiple-value-bind (output error-output exit-code)
-                              (uiop:run-program
-                               (list "podman" "exec" container-name
-                                     "bash" "-c" step-cmd)
-                               :output '(:string :stripped t)
-                               :error-output '(:string :stripped t)
-                               :ignore-error-status t)
-                            (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
-                              (when (plusp (length log))
-                                (ag-grpc:grpc-call channel
-                                                   "/cave.runner.RunnerService/AppendStepLog"
-                                                   (make-instance 'cave::append-step-log-request
-                                                                  :step-id step-id :chunk log)
-                                                   :response-type 'cave::append-step-log-response
-                                                   :metadata (make-auth-metadata auth-token))))
+                          ;; Execute step in container, streaming output line-by-line
+                          (let ((exit-code
+                                  (handler-case
+                                      (let* ((process (uiop:launch-program
+                                                       (list "podman" "exec" container-name
+                                                             "bash" "-c" step-cmd)
+                                                       :output :stream
+                                                       :error-output :stream))
+                                             (stdout (uiop:process-info-output process))
+                                             (stderr (uiop:process-info-error-output process)))
+                                        ;; Stream stdout lines to server
+                                        (loop for line = (read-line stdout nil nil)
+                                              while line
+                                              do (handler-case
+                                                     (ag-grpc:grpc-call channel
+                                                      "/cave.runner.RunnerService/AppendStepLog"
+                                                      (make-instance 'cave::append-step-log-request
+                                                                     :step-id step-id
+                                                                     :chunk (format nil "~A~%" line))
+                                                      :response-type 'cave::append-step-log-response
+                                                      :metadata (make-auth-metadata auth-token))
+                                                   (error () nil)))
+                                        ;; Capture any remaining stderr
+                                        (let ((err-out (handler-case
+                                                           (uiop:slurp-stream-string stderr)
+                                                         (error () ""))))
+                                          (when (plusp (length err-out))
+                                            (handler-case
+                                                (ag-grpc:grpc-call channel
+                                                 "/cave.runner.RunnerService/AppendStepLog"
+                                                 (make-instance 'cave::append-step-log-request
+                                                                :step-id step-id
+                                                                :chunk err-out)
+                                                 :response-type 'cave::append-step-log-response
+                                                 :metadata (make-auth-metadata auth-token))
+                                              (error () nil))))
+                                        (uiop:wait-process process))
+                                    (error () 1))))
                             (let ((step-status (if (zerop exit-code) "success" "failure")))
                               (format t "    ~A (exit ~A)~%" step-status exit-code)
                               (ag-grpc:grpc-call channel
