@@ -404,6 +404,7 @@
                   (clone-url (slot-value task 'cave::clone-url))
                   (steps (slot-value task 'cave::steps))
                   (workdir (format nil "/tmp/cave-job-~A" job-id))
+                  (container-name (format nil "cave-job-~A" job-id))
                   (overall-success t))
              (format t "~&Workflow job #~A: ~A/~A [~A] (~A steps)~%"
                      job-id repo-owner repo-name image (length steps))
@@ -445,57 +446,79 @@
                     (uiop:run-program (list "git" "-C" workdir "checkout" commit-sha)
                                       :output :string :error-output :string
                                       :ignore-error-status t)))
-                ;; Run each step
+                ;; Create a long-lived container for all steps
                 (when overall-success
-                  (dolist (step steps)
-                    (let ((step-id (slot-value step 'cave::step-id))
-                          (step-name (slot-value step 'cave::name))
-                          (step-cmd (slot-value step 'cave::command)))
-                      (format t "  Step ~A: ~A~%"
-                              (if (uiop:emptyp step-name) "(unnamed)" step-name)
-                              (subseq step-cmd 0 (min 60 (length step-cmd))))
-                      ;; Report step running
-                      (ag-grpc:grpc-call channel
-                                         "/cave.runner.RunnerService/UpdateStepStatus"
-                                         (make-instance 'cave::update-step-status-request
-                                                        :step-id step-id :status "running"
-                                                        :exit-code 0)
-                                         :response-type 'cave::update-step-status-response
-                                         :metadata (make-auth-metadata auth-token))
-                      ;; Execute in container
-                      (multiple-value-bind (output error-output exit-code)
-                          (uiop:run-program
-                           (list "podman" "run" "--rm"
-                                 "-v" (format nil "~A:/workspace" workdir)
-                                 "-w" "/workspace"
-                                 image "bash" "-c" step-cmd)
-                           :output '(:string :stripped t)
-                           :error-output '(:string :stripped t)
-                           :ignore-error-status t)
-                        ;; Send step log
-                        (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
-                          (when (plusp (length log))
-                            (ag-grpc:grpc-call channel
-                                               "/cave.runner.RunnerService/AppendStepLog"
-                                               (make-instance 'cave::append-step-log-request
-                                                              :step-id step-id :chunk log)
-                                               :response-type 'cave::append-step-log-response
-                                               :metadata (make-auth-metadata auth-token))))
-                        ;; Report step result
-                        (let ((step-status (if (zerop exit-code) "success" "failure")))
-                          (format t "    ~A (exit ~A)~%" step-status exit-code)
+                  (format t "  Creating container ~A...~%" container-name)
+                    ;; Remove any leftover container from a previous run
+                    (uiop:run-program (list "podman" "rm" "-f" container-name)
+                                      :output :string :error-output :string
+                                      :ignore-error-status t)
+                    (multiple-value-bind (_out err exit)
+                        (uiop:run-program
+                         (list "podman" "create" "--name" container-name
+                               "-v" (format nil "~A:/workspace" workdir)
+                               "-w" "/workspace"
+                               image "sleep" "infinity")
+                         :output '(:string :stripped t)
+                         :error-output '(:string :stripped t)
+                         :ignore-error-status t)
+                      (declare (ignore _out))
+                      (unless (zerop exit)
+                        (format *error-output* "  Failed to create container: ~A~%" err)
+                        (setf overall-success nil)))
+                    (when overall-success
+                      (uiop:run-program (list "podman" "start" container-name)
+                                        :output :string :error-output :string
+                                        :ignore-error-status t))
+                    ;; Run each step in the same container
+                    (when overall-success
+                      (dolist (step steps)
+                        (let ((step-id (slot-value step 'cave::step-id))
+                              (step-name (slot-value step 'cave::name))
+                              (step-cmd (slot-value step 'cave::command)))
+                          (format t "  Step ~A: ~A~%"
+                                  (if (uiop:emptyp step-name) "(unnamed)" step-name)
+                                  (subseq step-cmd 0 (min 60 (length step-cmd))))
                           (ag-grpc:grpc-call channel
                                              "/cave.runner.RunnerService/UpdateStepStatus"
                                              (make-instance 'cave::update-step-status-request
-                                                            :step-id step-id :status step-status
-                                                            :exit-code exit-code)
+                                                            :step-id step-id :status "running"
+                                                            :exit-code 0)
                                              :response-type 'cave::update-step-status-response
                                              :metadata (make-auth-metadata auth-token))
-                          (unless (zerop exit-code)
-                            (setf overall-success nil)
-                            ;; Skip remaining steps
-                            (return))))))))
-              ;; Cleanup
+                          ;; Execute step in the running container
+                          (multiple-value-bind (output error-output exit-code)
+                              (uiop:run-program
+                               (list "podman" "exec" container-name
+                                     "bash" "-c" step-cmd)
+                               :output '(:string :stripped t)
+                               :error-output '(:string :stripped t)
+                               :ignore-error-status t)
+                            (let ((log (format nil "~A~@[~%~A~]" (or output "") error-output)))
+                              (when (plusp (length log))
+                                (ag-grpc:grpc-call channel
+                                                   "/cave.runner.RunnerService/AppendStepLog"
+                                                   (make-instance 'cave::append-step-log-request
+                                                                  :step-id step-id :chunk log)
+                                                   :response-type 'cave::append-step-log-response
+                                                   :metadata (make-auth-metadata auth-token))))
+                            (let ((step-status (if (zerop exit-code) "success" "failure")))
+                              (format t "    ~A (exit ~A)~%" step-status exit-code)
+                              (ag-grpc:grpc-call channel
+                                                 "/cave.runner.RunnerService/UpdateStepStatus"
+                                                 (make-instance 'cave::update-step-status-request
+                                                                :step-id step-id :status step-status
+                                                                :exit-code exit-code)
+                                                 :response-type 'cave::update-step-status-response
+                                                 :metadata (make-auth-metadata auth-token))
+                              (unless (zerop exit-code)
+                                (setf overall-success nil)
+                                (return)))))))) ;; close unless,let,mvb,let,dolist,when(steps)
+                    ;; Stop and remove container
+                    (uiop:run-program (list "podman" "rm" "-f" container-name)
+                                      :output :string :error-output :string
+                                      :ignore-error-status t)) ;; close when(outer)
+              ;; Cleanup workdir
               (uiop:run-program (list "rm" "-rf" workdir)
                                 :ignore-error-status t))
              ;; Report overall job status
@@ -531,8 +554,8 @@
                    (error (e)
                      (format *error-output* "~&Task execution error: ~A~%" e))))))))
 
-      ;; Register with the server
-      (let ((channel (ag-grpc:make-channel host port)))
+      ;; Register with the server (no timeout — builds can take minutes)
+      (let ((channel (ag-grpc:make-channel host port :timeout nil)))
         (handler-case
             (progn
               (format t "~&Registering...~%")
