@@ -1182,46 +1182,13 @@ function caveShowCommentForm(td) {
                       :style "margin:0;padding:var(--sp-2);background:var(--bg);font-size:.8rem;overflow-x:auto;border-top:1px solid var(--border);min-height:1em"
                       (when (and step-log (not (eq step-log :null)) (plusp (length step-log)))
                         step-log))))))
-               (:p.empty "No steps."))))))
+               (:p.empty "No steps.")))))
 
-    ;; SSE live log streaming (only if run is still active)
-    (when (member (getf run :status) '("queued" "running") :test #'equal)
-      (:script :id "sse-config" :type "application/json"
-       (let ((ht (make-hash-table :test #'equal)))
-         (setf (gethash "url" ht)
-               (format nil "/~A/~A/runs/w/~A/logs" owner-name repo-name (getf run :id)))
-         (com.inuoe.jzon:stringify ht)))
-      (:script
-       (spinneret:with-html-string
-         (:raw "
-(function() {
-  var cfg = JSON.parse(document.getElementById('sse-config').textContent);
-  var es = new EventSource(cfg.url);
-  es.addEventListener('step-log', function(e) {
-    var sp = e.data.indexOf(' ');
-    var stepId = e.data.substring(0, sp);
-    var text = e.data.substring(sp + 1).split('\\\\n').join('\\n');
-    var pre = document.getElementById('step-log-' + stepId);
-    if (pre) { pre.textContent += text; pre.parentElement.open = true; }
-  });
-  es.addEventListener('step-status', function(e) {
-    var parts = e.data.split(' ');
-    var stepId = parts[0];
-    var status = parts[1];
-    var el = document.getElementById('step-log-' + stepId);
-    if (el) { var b = el.parentElement.querySelector('.badge'); if (b) b.textContent = status; }
-  });
-  es.addEventListener('run-status', function(e) {
-    var b = document.querySelector('h2').nextElementSibling.querySelector('.badge');
-    if (b) b.textContent = e.data;
-    if (e.data === 'success' || e.data === 'failure' || e.data === 'cancelled') {
-      setTimeout(function() { location.reload(); }, 500);
-    }
-  });
-  es.addEventListener('done', function() { es.close(); location.reload(); });
-  es.onerror = function() { es.close(); };
-})();
-"))))))
+      ;; SSE URL (hidden, read by JS below)
+      (:div :id "sse-url" :style "display:none"
+       :data-active (if (member (getf run :status) '("queued" "running") :test #'equal) "1" "0")
+       (format nil "/~A/~A/runs/w/~A/logs" owner-name repo-name (getf run :id)))
+      (:raw "<script>var u=document.getElementById('sse-url');if(u&&u.dataset.active==='1'){var es=new EventSource(u.textContent.trim());es.addEventListener('step-log',function(e){var sp=e.data.indexOf(' ');var stepId=e.data.substring(0,sp);var text=e.data.substring(sp+1).split('\\\\n').join('\\n');var pre=document.getElementById('step-log-'+stepId);if(pre){pre.textContent+=text;pre.parentElement.open=true;}});es.addEventListener('step-status',function(e){var p=e.data.split(' ');var el=document.getElementById('step-log-'+p[0]);if(el){var b=el.parentElement.querySelector('.badge');if(b)b.textContent=p[1];}});es.addEventListener('run-status',function(e){var b=document.querySelector('h2').nextElementSibling.querySelector('.badge');if(b)b.textContent=e.data;if(e.data==='success'||e.data==='failure'||e.data==='cancelled'){setTimeout(function(){location.reload();},500);}});es.addEventListener('done',function(){es.close();location.reload();});es.onerror=function(){es.close();};}</script>"))))
 
 
 (defun render-runner-management (runners registration-token token-action delete-action-prefix)
