@@ -6,5 +6,7 @@ jobs:
     steps:
       - name: Install build dependencies
         run: dnf -y install sbcl make git gcc zlib-devel golang
+      - name: Install ocicl
+        run: dnf config-manager addrepo --from-repofile=https://ocicl.github.io/ocicl/rpm-repo/ocicl.repo && dnf -y install ocicl && ocicl setup
       - name: Build Cave
         run: make
