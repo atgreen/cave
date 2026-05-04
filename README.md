@@ -220,4 +220,5 @@ MIT
 
 ## Author
 
-Anthony Green
+Anthony Green <green@moxielogic.com>
+
