@@ -1188,7 +1188,24 @@ function caveShowCommentForm(td) {
       (:div :id "sse-url" :style "display:none"
        :data-active (if (member (getf run :status) '("queued" "running") :test #'equal) "1" "0")
        (format nil "/~A/~A/runs/w/~A/logs" owner-name repo-name (getf run :id)))
-      (:raw "<script>var u=document.getElementById('sse-url');if(u&&u.dataset.active==='1'){var es=new EventSource(u.textContent.trim());es.addEventListener('step-log',function(e){var sp=e.data.indexOf(' ');var stepId=e.data.substring(0,sp);var text=e.data.substring(sp+1).split('\\\\n').join('\\n');var pre=document.getElementById('step-log-'+stepId);if(pre){pre.textContent+=text;pre.parentElement.open=true;}});es.addEventListener('step-status',function(e){var p=e.data.split(' ');var el=document.getElementById('step-log-'+p[0]);if(el){var b=el.parentElement.querySelector('.badge');if(b)b.textContent=p[1];}});es.addEventListener('run-status',function(e){var b=document.querySelector('h2').nextElementSibling.querySelector('.badge');if(b)b.textContent=e.data;if(e.data==='success'||e.data==='failure'||e.data==='cancelled'){setTimeout(function(){location.reload();},500);}});es.addEventListener('done',function(){es.close();location.reload();});es.onerror=function(){es.close();};}</script>"))))
+      (:raw (format nil "<script>~A</script>"
+              (concatenate 'string
+               "var u=document.getElementById('sse-url');"
+               "if(u&&u.dataset.active==='1'){(function poll(){"
+               "fetch(u.textContent.trim()).then(function(r){return r.json();}).then(function(d){"
+               "d.steps.forEach(function(s){"
+               "var pre=document.getElementById('step-log-'+s.id);"
+               "if(pre){pre.textContent=s.log;if(s.log)pre.parentElement.open=true;"
+               "var b=pre.parentElement.querySelector('.badge');if(b)b.textContent=s.status;}"
+               "});"
+               "var rb=document.querySelector('h2').nextElementSibling.querySelector('.badge');"
+               "if(rb)rb.textContent=d.run_status;"
+               "if(d.run_status==='success'||d.run_status==='failure'||d.run_status==='cancelled')"
+               "{setTimeout(function(){location.reload();},1000);}"
+               "else{setTimeout(poll,2000);}"
+               "}).catch(function(){setTimeout(poll,5000);});"
+               "})();}"))))))
+
 
 
 (defun render-runner-management (runners registration-token token-action delete-action-prefix)
