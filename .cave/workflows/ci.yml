@@ -1,10 +1,10 @@
 name: CI
 on: [push]
 jobs:
-  test:
+  build:
     image: fedora:latest
     steps:
       - name: Install build dependencies
-        run: dnf -y install make sbcl 
-      - name: Build
+        run: dnf -y install sbcl make git gcc zlib-devel golang
+      - name: Build Cave
         run: make
