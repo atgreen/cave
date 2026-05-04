@@ -1186,14 +1186,20 @@ function caveShowCommentForm(td) {
 
     ;; SSE live log streaming (only if run is still active)
     (when (member (getf run :status) '("queued" "running") :test #'equal)
+      (:script :id "sse-config" :type "application/json"
+       (com.inuoe.jzon:stringify
+        (list (cons "url" (format nil "/~A/~A/runs/w/~A/logs"
+                                  owner-name repo-name (getf run :id))))))
       (:script
-       (format nil "
+       (spinneret:with-html-string
+         (:raw "
 (function() {
-  var es = new EventSource('~A');
+  var cfg = JSON.parse(document.getElementById('sse-config').textContent);
+  var es = new EventSource(cfg.url);
   es.addEventListener('step-log', function(e) {
-    var parts = e.data.split(' ');
-    var stepId = parts[0];
-    var text = parts.slice(1).join(' ').replace(/\\\\n/g, '\\n');
+    var sp = e.data.indexOf(' ');
+    var stepId = e.data.substring(0, sp);
+    var text = e.data.substring(sp + 1).split('\\\\n').join('\\n');
     var pre = document.getElementById('step-log-' + stepId);
     if (pre) { pre.textContent += text; pre.parentElement.open = true; }
   });
@@ -1201,20 +1207,20 @@ function caveShowCommentForm(td) {
     var parts = e.data.split(' ');
     var stepId = parts[0];
     var status = parts[1];
-    var badge = document.querySelector('#step-log-' + stepId).parentElement.querySelector('.badge');
-    if (badge) { badge.textContent = status; }
+    var el = document.getElementById('step-log-' + stepId);
+    if (el) { var b = el.parentElement.querySelector('.badge'); if (b) b.textContent = status; }
   });
   es.addEventListener('run-status', function(e) {
-    var badge = document.querySelector('h2').nextElementSibling.querySelector('.badge');
-    if (badge) { badge.textContent = e.data; }
+    var b = document.querySelector('h2').nextElementSibling.querySelector('.badge');
+    if (b) b.textContent = e.data;
     if (e.data === 'success' || e.data === 'failure' || e.data === 'cancelled') {
       setTimeout(function() { location.reload(); }, 500);
     }
   });
-  es.addEventListener('done', function(e) { es.close(); location.reload(); });
+  es.addEventListener('done', function() { es.close(); location.reload(); });
   es.onerror = function() { es.close(); };
 })();
-" (format nil "/~A/~A/runs/w/~A/logs" owner-name repo-name (getf run :id)))))))
+"))))))
 
 
 (defun render-runner-management (runners registration-token token-action delete-action-prefix)
