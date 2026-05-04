@@ -1191,20 +1191,22 @@ function caveShowCommentForm(td) {
       (:raw (format nil "<script>~A</script>"
               (concatenate 'string
                "var u=document.getElementById('sse-url');"
-               "if(u&&u.dataset.active==='1'){(function poll(){"
-               "fetch(u.textContent.trim()).then(function(r){return r.json();}).then(function(d){"
-               "d.steps.forEach(function(s){"
-               "var pre=document.getElementById('step-log-'+s.id);"
-               "if(pre){pre.textContent=s.log;if(s.log)pre.parentElement.open=true;"
-               "var b=pre.parentElement.querySelector('.badge');if(b)b.textContent=s.status;}"
-               "});"
-               "var rb=document.querySelector('h2').nextElementSibling.querySelector('.badge');"
-               "if(rb)rb.textContent=d.run_status;"
-               "if(d.run_status==='success'||d.run_status==='failure'||d.run_status==='cancelled')"
-               "{setTimeout(function(){location.reload();},1000);}"
-               "else{setTimeout(poll,2000);}"
-               "}).catch(function(){setTimeout(poll,5000);});"
-               "})();}"))))))
+               "if(u&&u.dataset.active==='1'){var es=new EventSource(u.textContent.trim());"
+               "es.addEventListener('step-log',function(e){"
+               "var sp=e.data.indexOf(' ');var sid=e.data.substring(0,sp);"
+               "var t=e.data.substring(sp+1).split('\\\\n').join('\\n');"
+               "var p=document.getElementById('step-log-'+sid);"
+               "if(p){p.textContent+=t;p.parentElement.open=true;p.scrollTop=p.scrollHeight;}});"
+               "es.addEventListener('step-status',function(e){"
+               "var p=e.data.split(' ');var el=document.getElementById('step-log-'+p[0]);"
+               "if(el){var b=el.parentElement.querySelector('.badge');if(b)b.textContent=p[1];}});"
+               "es.addEventListener('run-status',function(e){"
+               "var b=document.querySelector('h2').nextElementSibling.querySelector('.badge');"
+               "if(b)b.textContent=e.data;"
+               "if(e.data==='success'||e.data==='failure'||e.data==='cancelled')"
+               "{setTimeout(function(){location.reload();},1000);}});"
+               "es.addEventListener('done',function(){es.close();location.reload();});"
+               "es.onerror=function(){es.close();};}"))))))
 
 
 

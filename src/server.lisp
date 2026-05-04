@@ -37,7 +37,15 @@
                    (when slash
                      (return-from hunchentoot:acceptor-dispatch-request
                        (handle-git-http (subseq repo-path 0 slash)
-                                        (subseq repo-path (1+ slash))))))))
+                                        (subseq repo-path (1+ slash)))))))
+               ;; Intercept SSE log streaming
+               (when (and (search "/runs/w/" uri)
+                          (uiop:string-suffix-p uri "/logs")
+                          (eq method :get))
+                 (handler-case
+                     (handle-workflow-logs-sse uri)
+                   (error () nil))
+                 (return-from hunchentoot:acceptor-dispatch-request nil)))
              (call-next-method)))
       (let* ((elapsed (/ (- (get-internal-real-time) start)
                          (float internal-time-units-per-second 1.0d0)))
@@ -928,34 +936,73 @@
                                                   :steps (list-workflow-steps (getf j :id))))
                                           jobs)))))))
 
-(easy-routes:defroute workflow-run-logs-poll
-    ("/:owner/:repo-name/runs/w/:run-id/logs" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from workflow-run-logs-poll repo))
-    (let* ((rid (parse-integer run-id :junk-allowed t))
-           (run (when rid (find-workflow-run rid))))
-      (unless (and run (= (getf run :repo-id) (getf repo :id)))
-        (return-from workflow-run-logs-poll (not-found)))
-      ;; Return JSON with current step statuses and logs
-      (setf (hunchentoot:content-type*) "application/json")
-      (let* ((jobs (list-workflow-jobs rid))
-             (result (make-hash-table :test #'equal)))
-        (setf (gethash "run_status" result) (getf run :status))
-        (let ((steps-arr nil))
-          (dolist (job jobs)
-            (dolist (step (list-workflow-steps (getf job :id)))
-              (let ((s (make-hash-table :test #'equal)))
-                (setf (gethash "id" s) (getf step :id))
-                (setf (gethash "status" s) (getf step :status))
-                (setf (gethash "log" s)
-                      (let ((l (getf step :log)))
-                        (if (and l (not (eq l :null))) l "")))
-                (setf (gethash "exit_code" s)
-                      (let ((ec (getf step :exit-code)))
-                        (if (and ec (not (eq ec :null))) ec nil)))
-                (push s steps-arr))))
-          (setf (gethash "steps" result) (coerce (nreverse steps-arr) 'vector)))
-        (com.inuoe.jzon:stringify result)))))
+(defun handle-workflow-logs-sse (uri)
+  "Handle SSE streaming for workflow run logs. Called from acceptor dispatch."
+  ;; Parse run-id from URI: /:owner/:repo/runs/w/:id/logs
+  (let* ((w-pos (search "/runs/w/" uri))
+         (id-start (+ w-pos 8))
+         (id-end (position #\/ uri :start id-start))
+         (run-id (parse-integer (subseq uri id-start id-end) :junk-allowed t))
+         (run (when run-id (find-workflow-run run-id))))
+    (unless run (return-from handle-workflow-logs-sse nil))
+    ;; Send SSE headers
+    (setf (hunchentoot:content-type*) "text/event-stream")
+    (setf (hunchentoot:header-out "Cache-Control") "no-cache")
+    (setf (hunchentoot:header-out "X-Accel-Buffering") "no")
+    (let ((stream (hunchentoot:send-headers))
+          (sent-lengths (make-hash-table))
+          (prev-statuses (make-hash-table :test #'equal)))
+      (flet ((sse-send (event data)
+               (write-sequence
+                (flexi-streams:string-to-octets
+                 (format nil "event: ~A~%data: ~A~%~%" event data)
+                 :external-format :utf-8)
+                stream)
+               (force-output stream)))
+        (handler-case
+            (loop repeat 600
+                  do (let* ((refreshed-run (find-workflow-run run-id))
+                            (run-status (getf refreshed-run :status))
+                            (jobs (list-workflow-jobs run-id))
+                            (any-active nil))
+                       ;; Send run status changes
+                       (unless (equal run-status (gethash "run" prev-statuses))
+                         (setf (gethash "run" prev-statuses) run-status)
+                         (sse-send "run-status" run-status))
+                       ;; Send step updates
+                       (dolist (job jobs)
+                         (dolist (step (list-workflow-steps (getf job :id)))
+                           (let* ((step-id (getf step :id))
+                                  (log-text (getf step :log))
+                                  (log-len (if (and log-text (not (eq log-text :null)))
+                                               (length log-text) 0))
+                                  (prev-len (gethash step-id sent-lengths 0))
+                                  (status (getf step :status))
+                                  (status-key (format nil "s~A" step-id)))
+                             ;; New log content
+                             (when (> log-len prev-len)
+                               (let* ((new-text (subseq log-text prev-len))
+                                      (escaped (with-output-to-string (s)
+                                                 (loop for ch across new-text
+                                                       do (if (char= ch #\Newline)
+                                                              (write-string "\\n" s)
+                                                              (write-char ch s))))))
+                                 (sse-send "step-log" (format nil "~A ~A" step-id escaped))
+                                 (setf (gethash step-id sent-lengths) log-len)))
+                             ;; Status changes
+                             (unless (equal status (gethash status-key prev-statuses))
+                               (setf (gethash status-key prev-statuses) status)
+                               (sse-send "step-status" (format nil "~A ~A" step-id status)))
+                             (when (member status '("pending" "running") :test #'equal)
+                               (setf any-active t)))))
+                       ;; Done?
+                       (when (and (member run-status '("success" "failure" "cancelled")
+                                          :test #'equal)
+                                  (not any-active))
+                         (sse-send "done" run-status)
+                         (return)))
+                     (sleep 1))
+          (error () nil))))))
 
 ;; Automation definition management
 (easy-routes:defroute repo-add-automation-submit

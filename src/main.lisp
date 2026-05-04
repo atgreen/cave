@@ -495,7 +495,7 @@
                                                              (format nil "~A 2>&1" step-cmd))
                                                        :output :stream))
                                              (stdout (uiop:process-info-output process))
-                                             (buf (make-string 4096)))
+                                             (buf (make-string 512)))
                                         ;; Stream output chunks to server
                                         (loop for n = (read-sequence buf stdout)
                                               while (plusp n)
