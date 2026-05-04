@@ -490,60 +490,40 @@
                           (let ((exit-code
                                   (handler-case
                                       (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))
-                                             (process (uiop:launch-program
-                                                       (format nil "podman exec ~A bash -c '~A' >~A 2>&1"
-                                                               container-name
-                                                               (with-output-to-string (s)
-                                                                 (loop for ch across step-cmd
-                                                                       do (if (char= ch #\')
-                                                                              (write-string "'\"'\"'" s)
-                                                                              (write-char ch s))))
-                                                               log-file)
-                                                       :force-shell t))
+                                             (shell-cmd
+                                               (format nil "podman exec ~A bash -c ~A >~A 2>&1"
+                                                       container-name
+                                                       (uiop:escape-sh-token step-cmd)
+                                                       log-file))
+                                             (process (uiop:launch-program shell-cmd :force-shell t))
                                              (sent 0))
                                         ;; Poll log file while process runs
-                                        (loop
-                                          (let ((status (uiop:wait-process process :timeout 1)))
-                                            ;; Send new log content
-                                            (handler-case
-                                                (when (probe-file log-file)
-                                                  (with-open-file (f log-file :direction :input
-                                                                   :if-does-not-exist nil)
-                                                    (when f
-                                                      (let* ((size (file-length f))
-                                                             (new-bytes (- size sent)))
-                                                        (when (plusp new-bytes)
-                                                          (file-position f sent)
-                                                          (let ((buf (make-string new-bytes)))
-                                                            (read-sequence buf f)
-                                                            (ag-grpc:grpc-call channel
-                                                             "/cave.runner.RunnerService/AppendStepLog"
-                                                             (make-instance 'cave::append-step-log-request
-                                                                            :step-id step-id :chunk buf)
-                                                             :response-type 'cave::append-step-log-response
-                                                             :metadata (make-auth-metadata auth-token))
-                                                            (setf sent size)))))))
-                                              (error () nil))
-                                            (when status
-                                              ;; Process finished — send any remaining output
-                                              (handler-case
-                                                  (when (probe-file log-file)
-                                                    (with-open-file (f log-file :direction :input)
-                                                      (let* ((size (file-length f))
-                                                             (new-bytes (- size sent)))
-                                                        (when (plusp new-bytes)
-                                                          (file-position f sent)
-                                                          (let ((buf (make-string new-bytes)))
-                                                            (read-sequence buf f)
-                                                            (ag-grpc:grpc-call channel
-                                                             "/cave.runner.RunnerService/AppendStepLog"
-                                                             (make-instance 'cave::append-step-log-request
-                                                                            :step-id step-id :chunk buf)
-                                                             :response-type 'cave::append-step-log-response
-                                                             :metadata (make-auth-metadata auth-token)))))))
-                                                (error () nil))
-                                              (ignore-errors (delete-file log-file))
-                                              (return status)))))
+                                        (flet ((send-new-log ()
+                                                 (handler-case
+                                                     (when (probe-file log-file)
+                                                       (with-open-file (f log-file :direction :input
+                                                                        :if-does-not-exist nil)
+                                                         (when f
+                                                           (let* ((size (file-length f))
+                                                                  (new-bytes (- size sent)))
+                                                             (when (plusp new-bytes)
+                                                               (file-position f sent)
+                                                               (let ((buf (make-string new-bytes)))
+                                                                 (read-sequence buf f)
+                                                                 (ag-grpc:grpc-call channel
+                                                                  "/cave.runner.RunnerService/AppendStepLog"
+                                                                  (make-instance 'cave::append-step-log-request
+                                                                                 :step-id step-id :chunk buf)
+                                                                  :response-type 'cave::append-step-log-response
+                                                                  :metadata (make-auth-metadata auth-token))
+                                                                 (setf sent size)))))))
+                                                   (error () nil))))
+                                          (loop while (uiop:process-alive-p process)
+                                                do (send-new-log) (sleep 1))
+                                          ;; Final flush
+                                          (send-new-log)
+                                          (ignore-errors (delete-file log-file))
+                                          (uiop:wait-process process)))
                                     (error () 1))))
                             (let ((step-status (if (zerop exit-code) "success" "failure")))
                               (format t "    ~A (exit ~A)~%" step-status exit-code)
