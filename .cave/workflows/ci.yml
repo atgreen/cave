@@ -1,0 +1,10 @@
+name: CI
+on: [push]
+jobs:
+  test:
+    image: fedora:latest
+    steps:
+      - name: Show environment
+        run: uname -a && cat /etc/os-release | head -5
+      - name: List workspace
+        run: ls -la
