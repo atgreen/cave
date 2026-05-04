@@ -486,42 +486,28 @@
                                                             :exit-code 0)
                                              :response-type 'cave::update-step-status-response
                                              :metadata (make-auth-metadata auth-token))
-                          ;; Execute step in container, streaming output line-by-line
+                          ;; Execute step in container, streaming output
                           (let ((exit-code
                                   (handler-case
                                       (let* ((process (uiop:launch-program
                                                        (list "podman" "exec" container-name
-                                                             "bash" "-c" step-cmd)
-                                                       :output :stream
-                                                       :error-output :stream))
+                                                             "bash" "-c"
+                                                             (format nil "~A 2>&1" step-cmd))
+                                                       :output :stream))
                                              (stdout (uiop:process-info-output process))
-                                             (stderr (uiop:process-info-error-output process)))
-                                        ;; Stream stdout lines to server
-                                        (loop for line = (read-line stdout nil nil)
-                                              while line
+                                             (buf (make-string 4096)))
+                                        ;; Stream output chunks to server
+                                        (loop for n = (read-sequence buf stdout)
+                                              while (plusp n)
                                               do (handler-case
                                                      (ag-grpc:grpc-call channel
                                                       "/cave.runner.RunnerService/AppendStepLog"
                                                       (make-instance 'cave::append-step-log-request
                                                                      :step-id step-id
-                                                                     :chunk (format nil "~A~%" line))
+                                                                     :chunk (subseq buf 0 n))
                                                       :response-type 'cave::append-step-log-response
                                                       :metadata (make-auth-metadata auth-token))
                                                    (error () nil)))
-                                        ;; Capture any remaining stderr
-                                        (let ((err-out (handler-case
-                                                           (uiop:slurp-stream-string stderr)
-                                                         (error () ""))))
-                                          (when (plusp (length err-out))
-                                            (handler-case
-                                                (ag-grpc:grpc-call channel
-                                                 "/cave.runner.RunnerService/AppendStepLog"
-                                                 (make-instance 'cave::append-step-log-request
-                                                                :step-id step-id
-                                                                :chunk err-out)
-                                                 :response-type 'cave::append-step-log-response
-                                                 :metadata (make-auth-metadata auth-token))
-                                              (error () nil))))
                                         (uiop:wait-process process))
                                     (error () 1))))
                             (let ((step-status (if (zerop exit-code) "success" "failure")))
