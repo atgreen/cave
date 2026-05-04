@@ -504,19 +504,19 @@
                                                        (with-open-file (f log-file :direction :input
                                                                         :if-does-not-exist nil)
                                                          (when f
-                                                           (let* ((size (file-length f))
-                                                                  (new-bytes (- size sent)))
-                                                             (when (plusp new-bytes)
-                                                               (file-position f sent)
-                                                               (let ((buf (make-string new-bytes)))
-                                                                 (read-sequence buf f)
-                                                                 (ag-grpc:grpc-call channel
-                                                                  "/cave.runner.RunnerService/AppendStepLog"
-                                                                  (make-instance 'cave::append-step-log-request
-                                                                                 :step-id step-id :chunk buf)
-                                                                  :response-type 'cave::append-step-log-response
-                                                                  :metadata (make-auth-metadata auth-token))
-                                                                 (setf sent size)))))))
+                                                           (let ((size (file-length f)))
+                                                             (loop while (< sent size)
+                                                                   do (let* ((chunk-size (min 8192 (- size sent)))
+                                                                             (buf (make-string chunk-size)))
+                                                                        (file-position f sent)
+                                                                        (read-sequence buf f)
+                                                                        (ag-grpc:grpc-call channel
+                                                                         "/cave.runner.RunnerService/AppendStepLog"
+                                                                         (make-instance 'cave::append-step-log-request
+                                                                                        :step-id step-id :chunk buf)
+                                                                         :response-type 'cave::append-step-log-response
+                                                                         :metadata (make-auth-metadata auth-token))
+                                                                        (incf sent chunk-size)))))))
                                                    (error () nil))))
                                           (loop while (uiop:process-alive-p process)
                                                 do (send-new-log) (sleep 1))
