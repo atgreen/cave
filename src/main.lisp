@@ -499,8 +499,7 @@
                                              (sent 0))
                                         ;; Poll log file while process runs
                                         (flet ((send-new-log ()
-                                                 (handler-case
-                                                     (when (probe-file log-file)
+                                                 (when (probe-file log-file)
                                                        (with-open-file (f log-file :direction :input
                                                                         :if-does-not-exist nil)
                                                          (when f
@@ -510,14 +509,16 @@
                                                                              (buf (make-string chunk-size)))
                                                                         (file-position f sent)
                                                                         (read-sequence buf f)
-                                                                        (ag-grpc:grpc-call channel
-                                                                         "/cave.runner.RunnerService/AppendStepLog"
-                                                                         (make-instance 'cave::append-step-log-request
-                                                                                        :step-id step-id :chunk buf)
-                                                                         :response-type 'cave::append-step-log-response
-                                                                         :metadata (make-auth-metadata auth-token))
-                                                                        (incf sent chunk-size)))))))
-                                                   (error () nil))))
+                                                                        (incf sent chunk-size)
+                                                                        (handler-case
+                                                                            (ag-grpc:grpc-call channel
+                                                                             "/cave.runner.RunnerService/AppendStepLog"
+                                                                             (make-instance 'cave::append-step-log-request
+                                                                                            :step-id step-id :chunk buf)
+                                                                             :response-type 'cave::append-step-log-response
+                                                                             :metadata (make-auth-metadata auth-token))
+                                                                          (error () nil))))))))))
+
                                           (loop while (uiop:process-alive-p process)
                                                 do (send-new-log) (sleep 1))
                                           ;; Final flush
