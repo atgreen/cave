@@ -648,6 +648,9 @@
                  (:<= 'last-seen-at
                       (:- (:now) (:raw "'60 seconds'"))))))
   (cleanup-stale-ephemeral-runners)
+  ;; Delete offline runners (they re-register on reconnect)
+  (postmodern:execute
+   (:delete-from 'cave-runners :where (:= 'status "offline")))
   ;; Reset workflow jobs assigned to offline runners
   (postmodern:execute
    (:update 'cave-workflow-jobs
