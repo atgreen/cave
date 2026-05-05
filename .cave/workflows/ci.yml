@@ -6,5 +6,10 @@ jobs:
     steps:
       - name: Install dependencies
         run: ocicl install
+      - name: List files (pre)
+        run: ls -l
       - name: Build Cave
         run: make build
+      - name: List files (post)
+        run: ls -l
+	
