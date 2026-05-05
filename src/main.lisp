@@ -500,10 +500,7 @@
                                         ;; Poll log file and send full content to server
                                         (flet ((send-log ()
                                                  (handler-case
-                                                     (when (and (probe-file log-file)
-                                                                (> (or (ignore-errors (file-length
-                                                                         (open log-file :direction :input))) 0)
-                                                                   sent))
+                                                     (when (probe-file log-file)
                                                        (let ((content (uiop:read-file-string log-file)))
                                                          (when (> (length content) sent)
                                                            (setf sent (length content))
