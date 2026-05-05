@@ -497,32 +497,28 @@
                                                        log-file))
                                              (process (uiop:launch-program shell-cmd :force-shell t))
                                              (sent 0))
-                                        ;; Poll log file while process runs
-                                        (flet ((send-new-log ()
-                                                 (when (probe-file log-file)
-                                                       (with-open-file (f log-file :direction :input
-                                                                        :if-does-not-exist nil)
-                                                         (when f
-                                                           (let ((size (file-length f)))
-                                                             (loop while (< sent size)
-                                                                   do (let* ((chunk-size (min 8192 (- size sent)))
-                                                                             (buf (make-string chunk-size)))
-                                                                        (file-position f sent)
-                                                                        (read-sequence buf f)
-                                                                        (incf sent chunk-size)
-                                                                        (handler-case
-                                                                            (ag-grpc:grpc-call channel
-                                                                             "/cave.runner.RunnerService/AppendStepLog"
-                                                                             (make-instance 'cave::append-step-log-request
-                                                                                            :step-id step-id :chunk buf)
-                                                                             :response-type 'cave::append-step-log-response
-                                                                             :metadata (make-auth-metadata auth-token))
-                                                                          (error () nil))))))))))
+                                        ;; Poll log file and send full content to server
+                                        (flet ((send-log ()
+                                                 (handler-case
+                                                     (when (and (probe-file log-file)
+                                                                (> (or (ignore-errors (file-length
+                                                                         (open log-file :direction :input))) 0)
+                                                                   sent))
+                                                       (let ((content (uiop:read-file-string log-file)))
+                                                         (when (> (length content) sent)
+                                                           (setf sent (length content))
+                                                           (ag-grpc:grpc-call channel
+                                                            "/cave.runner.RunnerService/AppendStepLog"
+                                                            (make-instance 'cave::append-step-log-request
+                                                                           :step-id step-id :chunk content)
+                                                            :response-type 'cave::append-step-log-response
+                                                            :metadata (make-auth-metadata auth-token)))))
+                                                   (error (e)
+                                                     (format *error-output* "  Log send error: ~A~%" e)))))
 
                                           (loop while (uiop:process-alive-p process)
-                                                do (send-new-log) (sleep 1))
-                                          ;; Final flush
-                                          (send-new-log)
+                                                do (send-log) (sleep 2))
+                                          (send-log)
                                           (ignore-errors (delete-file log-file))
                                           (uiop:wait-process process)))
                                     (error () 1))))

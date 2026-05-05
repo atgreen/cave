@@ -871,10 +871,10 @@
        :where (:= 'id step-id))))))
 
 (defun append-step-log (step-id chunk)
-  "Append log text to a workflow step."
+  "Set the log text for a workflow step (replaces existing content)."
   (postmodern:execute
    (:update 'cave-workflow-steps
-    :set 'log (:|| 'log chunk)
+    :set 'log chunk
     :where (:= 'id step-id))))
 
 ;;; ========================== WEBHOOKS ==========================
