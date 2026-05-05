@@ -501,15 +501,20 @@
                                         (flet ((send-log ()
                                                  (handler-case
                                                      (when (probe-file log-file)
-                                                       (let ((content (uiop:read-file-string log-file)))
-                                                         (when (> (length content) sent)
-                                                           (setf sent (length content))
-                                                           (ag-grpc:grpc-call channel
-                                                            "/cave.runner.RunnerService/AppendStepLog"
-                                                            (make-instance 'cave::append-step-log-request
-                                                                           :step-id step-id :chunk content)
-                                                            :response-type 'cave::append-step-log-response
-                                                            :metadata (make-auth-metadata auth-token)))))
+                                                       (let* ((content (uiop:read-file-string log-file))
+                                                              (len (length content)))
+                                                         (when (> len sent)
+                                                           ;; Send only new content since last send (max 64KB per call)
+                                                           (let* ((new-start sent)
+                                                                  (chunk (subseq content new-start
+                                                                                 (min len (+ new-start 65536)))))
+                                                             (setf sent (+ new-start (length chunk)))
+                                                             (ag-grpc:grpc-call channel
+                                                              "/cave.runner.RunnerService/AppendStepLog"
+                                                              (make-instance 'cave::append-step-log-request
+                                                                             :step-id step-id :chunk chunk)
+                                                              :response-type 'cave::append-step-log-response
+                                                              :metadata (make-auth-metadata auth-token))))))
                                                    (error (e)
                                                      (format *error-output* "  Log send error: ~A~%" e)))))
 
