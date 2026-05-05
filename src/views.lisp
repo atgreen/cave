@@ -1196,7 +1196,7 @@ function caveShowCommentForm(td) {
                "var sp=e.data.indexOf(' ');var sid=e.data.substring(0,sp);"
                "var t=e.data.substring(sp+1).split('\\\\n').join('\\n');"
                "var p=document.getElementById('step-log-'+sid);"
-               "if(p){p.textContent+=t;p.parentElement.open=true;p.scrollTop=p.scrollHeight;}});"
+               "if(p){if(!p.dataset.sse){p.textContent='';p.dataset.sse='1';}p.textContent+=t;p.parentElement.open=true;p.scrollTop=p.scrollHeight;}});"
                "es.addEventListener('step-status',function(e){"
                "var p=e.data.split(' ');var el=document.getElementById('step-log-'+p[0]);"
                "if(el){var b=el.parentElement.querySelector('.badge');if(b)b.textContent=p[1];}});"
