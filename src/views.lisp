@@ -1808,20 +1808,23 @@ export CAVE_TOKEN=<your-api-token>
                            do (:tr.search-ctx
                                (:td.line-num (princ-to-string n))
                                (:td.line-content
-                                (:raw (spinneret:escape-string ctx-line))))))
+                                (:raw (spinneret:escape-string
+                                       (string-right-trim '(#\Newline #\Return) ctx-line)))))))
                    ;; Matched line with highlights
                    (:tr.search-match
                     (:td.line-num (princ-to-string line-num))
                     (:td.line-content
                      (if fragments
                          (dolist (frag fragments)
-                           (let ((pre (getf frag :pre))
-                                 (match (getf frag :match))
-                                 (post (getf frag :post)))
+                           (let ((pre (string-right-trim '(#\Newline #\Return)
+                                                          (getf frag :pre)))
+                                 (match (string-right-trim '(#\Newline #\Return)
+                                                           (getf frag :match)))
+                                 (post (string-right-trim '(#\Newline #\Return)
+                                                          (getf frag :post))))
                              (:raw (spinneret:escape-string pre))
                              (:mark (:raw (spinneret:escape-string match)))
-                             (:raw (spinneret:escape-string
-                                    (string-right-trim '(#\Newline) post)))))
+                             (:raw (spinneret:escape-string post))))
                          (:raw ""))))
                    ;; After context
                    (loop for ctx-line in after
@@ -1829,7 +1832,8 @@ export CAVE_TOKEN=<your-api-token>
                          do (:tr.search-ctx
                              (:td.line-num (princ-to-string n))
                              (:td.line-content
-                              (:raw (spinneret:escape-string ctx-line)))))
+                              (:raw (spinneret:escape-string
+                                     (string-right-trim '(#\Newline #\Return) ctx-line))))))
                    ;; Separator between matches in same file
                    (unless (eq m (car (last matches)))
                      (:tr.search-sep
