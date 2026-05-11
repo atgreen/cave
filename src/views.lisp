@@ -143,22 +143,62 @@
 
 ;;; ========================== PERSONAL REPO CREATION ==========================
 
+(defun render-new-repo-form (action &key error)
+  "Render the tabbed new-repo form (Empty / Import / Mirror)."
+  (when error (:div.alert.alert-error error))
+  (:div.repo-create-tabs
+   (:button.repo-tab.active :data-mode "empty" "Empty")
+   (:button.repo-tab :data-mode "import" "Import from URL")
+   (:button.repo-tab :data-mode "mirror" "Mirror"))
+  (:form :method "post" :action action
+   (:input :type "hidden" :id "repo-mode" :name "mode" :value "empty")
+   ;; URL fields (import + mirror only)
+   (:div.field.import-field :style "display:none"
+    (:label :for "url" "Repository URL")
+    (:input :type "text" :id "url" :name "url"
+            :placeholder "https://github.com/user/repo.git"))
+   (:div.field.import-field :style "display:none"
+    (:label :for "auth_token" "Access token (optional)")
+    (:input :type "password" :id "auth_token" :name "auth_token"
+            :placeholder "GitHub PAT or access token"))
+   ;; Mirror-only: interval
+   (:div.field.mirror-field :style "display:none"
+    (:label :for "interval" "Sync interval (minutes)")
+    (:input :type "number" :id "interval" :name "interval" :value "60"
+            :min "5" :max "1440"))
+   ;; Common fields
+   (:div.field
+    (:label :for "name" "Repository name")
+    (:input :type "text" :id "name" :name "name"
+            :pattern "[a-zA-Z0-9._-]+"
+            :placeholder "Leave blank to derive from URL"))
+   (:div.field
+    (:label :for "description" "Description (optional)")
+    (:input :type "text" :id "description" :name "description"))
+   (:div.field
+    (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
+   (:button.btn.btn-primary :type "submit" "Create repository"))
+  (:script (:raw "
+document.querySelectorAll('.repo-tab').forEach(function(tab) {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.repo-tab').forEach(function(t) { t.classList.remove('active'); });
+    tab.classList.add('active');
+    var mode = tab.dataset.mode;
+    document.getElementById('repo-mode').value = mode;
+    var showImport = mode === 'import' || mode === 'mirror';
+    document.querySelectorAll('.import-field').forEach(function(f) { f.style.display = showImport ? '' : 'none'; });
+    document.querySelectorAll('.mirror-field').forEach(function(f) { f.style.display = mode === 'mirror' ? '' : 'none'; });
+    var nameInput = document.getElementById('name');
+    nameInput.required = mode === 'empty';
+    nameInput.placeholder = mode === 'empty' ? '' : 'Leave blank to derive from URL';
+  });
+});")))
+
 (defun view-new-personal-repo (&key error)
   "Render the personal repo creation form."
   (page (:title "New repository — Cave")
     (:h1 "New repository")
-    (when error (:div.alert.alert-error error))
-    (:form :method "post" :action "/-/new-repo"
-     (:div.field
-      (:label :for "name" "Repository name")
-      (:input :type "text" :id "name" :name "name" :required t
-              :pattern "[a-zA-Z0-9._-]+" :autofocus t))
-     (:div.field
-      (:label :for "description" "Description (optional)")
-      (:input :type "text" :id "description" :name "description"))
-     (:div.field
-      (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
-     (:button.btn.btn-primary :type "submit" "Create repository"))))
+    (render-new-repo-form "/-/new-repo" :error error)))
 
 ;;; ========================== USER PROFILE ==========================
 
@@ -271,22 +311,12 @@
 
 ;;; ========================== REPO PAGES ==========================
 
-(defun view-new-repo (&key org)
-  "Render the new repo form."
+(defun view-new-repo (&key org error)
+  "Render the new repo form for an org."
   (let ((org-name (getf org :name)))
     (page (:title "New repository — Cave")
       (:h1 (format nil "New repository in ~A" org-name))
-      (:form :method "post" :action (format nil "/o/~A/-/new-repo" org-name)
-       (:div.field
-        (:label :for "name" "Repository name")
-        (:input :type "text" :id "name" :name "name" :required t
-                :pattern "[a-zA-Z0-9._-]+" :autofocus t))
-       (:div.field
-        (:label :for "description" "Description (optional)")
-        (:input :type "text" :id "description" :name "description"))
-       (:div.field
-        (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
-       (:button.btn.btn-primary :type "submit" "Create repository")))))
+      (render-new-repo-form (format nil "/o/~A/-/new-repo" org-name) :error error))))
 
 (defun render-repo-tabs (owner-name repo-name &optional active-tab &key repo)
   "Render the repo breadcrumb and navigation tab bar."

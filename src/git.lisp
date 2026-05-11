@@ -173,18 +173,42 @@
       (when (probe-file tmpdir)
         (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
 
+(defun inject-auth-token (url token)
+  "Insert TOKEN into a URL: https://TOKEN@host/path. Returns URL unchanged if no token."
+  (if token
+      (let ((pos (search "://" url)))
+        (if pos
+            (format nil "~A://~A@~A"
+                    (subseq url 0 pos)
+                    token
+                    (subseq url (+ pos 3)))
+            url))
+      url))
+
+(defun git-clone-bare-from-url (url dest-path &key auth-token)
+  "Clone a bare repo from a remote URL. Returns (VALUES success-p error-string)."
+  (let ((effective-url (inject-auth-token url auth-token)))
+    (multiple-value-bind (output err exit-code)
+        (uiop:run-program (list "git" "clone" "--bare" effective-url
+                                (namestring dest-path))
+                          :output '(:string :stripped t)
+                          :error-output '(:string :stripped t)
+                          :ignore-error-status t)
+      (declare (ignore output))
+      (values (zerop exit-code) err))))
+
+(defun repo-name-from-url (url)
+  "Extract a repo name from a git URL. E.g. https://github.com/foo/bar.git → bar"
+  (let* ((trimmed (string-right-trim '(#\/) url))
+         (last-slash (position #\/ trimmed :from-end t))
+         (basename (if last-slash (subseq trimmed (1+ last-slash)) trimmed)))
+    (if (uiop:string-suffix-p basename ".git")
+        (subseq basename 0 (- (length basename) 4))
+        basename)))
+
 (defun git-push-mirror (repo-path remote-url &optional auth-token)
   "Push all refs to a remote URL. Returns (VALUES success-p error-string)."
-  (let ((url (if auth-token
-                 ;; Insert token into URL: https://TOKEN@host/path
-                 (let ((pos (search "://" remote-url)))
-                   (if pos
-                       (format nil "~A://~A@~A"
-                               (subseq remote-url 0 pos)
-                               auth-token
-                               (subseq remote-url (+ pos 3)))
-                       remote-url))
-                 remote-url)))
+  (let ((url (inject-auth-token remote-url auth-token)))
     (multiple-value-bind (output err exit-code)
         (git-run repo-path "push" "--mirror" url)
       (declare (ignore output))
@@ -193,15 +217,7 @@
 (defun git-pull-mirror (repo-path remote-url &optional auth-token)
   "Fetch all refs from a remote URL into a bare repo.
    Auto-detects default branch and updates HEAD. Returns (VALUES success-p error-string)."
-  (let ((url (if auth-token
-                 (let ((pos (search "://" remote-url)))
-                   (if pos
-                       (format nil "~A://~A@~A"
-                               (subseq remote-url 0 pos)
-                               auth-token
-                               (subseq remote-url (+ pos 3)))
-                       remote-url))
-                 remote-url)))
+  (let ((url (inject-auth-token remote-url auth-token)))
     (multiple-value-bind (output err exit-code)
         (git-run repo-path "fetch" "--prune" url "+refs/*:refs/*")
       (declare (ignore output))
@@ -360,21 +376,22 @@
    Returns list of (:mode :type :hash :name) plists, directories first."
   (let ((target (if (uiop:emptyp path) ref (format nil "~A:~A" ref path))))
     (multiple-value-bind (output _err exit-code)
-        (git-run repo-path "ls-tree" target)
+        (git-run repo-path "ls-tree" "-l" target)
       (declare (ignore _err))
       (when (zerop exit-code)
         (let ((entries nil))
           (dolist (line (uiop:split-string output :separator '(#\Newline)))
             (unless (uiop:emptyp line)
-              ;; Format: <mode> SP <type> SP <hash> TAB <name>
+              ;; Format with -l: <mode> SP <type> SP <hash> SP+ <size|-> TAB <name>
               (let* ((tab-pos (position #\Tab line))
                      (meta (subseq line 0 tab-pos))
                      (name (subseq line (1+ tab-pos)))
-                     (parts (uiop:split-string meta :separator '(#\Space))))
-                (when (= (length parts) 3)
+                     (parts (remove "" (uiop:split-string meta :separator '(#\Space)) :test #'equal)))
+                (when (>= (length parts) 4)
                   (push (list :mode (first parts)
                               :type (second parts)
                               :hash (third parts)
+                              :size (parse-integer (fourth parts) :junk-allowed t)
                               :name name)
                         entries)))))
           ;; Sort: directories first, then alphabetical
@@ -392,6 +409,14 @@
       (git-run repo-path "cat-file" "blob" (format nil "~A:~A" ref path))
     (declare (ignore _err))
     (when (zerop exit-code) output)))
+
+(defun git-object-is-tree-p (repo-path ref path)
+  "Return T if PATH under REF is a tree (directory)."
+  (multiple-value-bind (output _err exit-code)
+      (git-run repo-path "cat-file" "-t" (format nil "~A:~A" ref path))
+    (declare (ignore _err))
+    (and (zerop exit-code)
+         (equal (string-trim '(#\Newline #\Space) output) "tree"))))
 
 (defun git-blob-size (repo-path ref path)
   "Get file size in bytes at PATH under REF. Returns integer or NIL."

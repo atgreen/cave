@@ -524,18 +524,45 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 
 (easy-routes:defroute create-personal-repo-submit ("/-/new-repo" :method :post) ()
   (when (require-login)
-    (let* ((name (hunchentoot:post-parameter "name"))
+    (let* ((mode (or (hunchentoot:post-parameter "mode") "empty"))
+           (name (hunchentoot:post-parameter "name"))
            (description (hunchentoot:post-parameter "description"))
            (is-private (hunchentoot:post-parameter "is_private"))
-           (username (getf *current-user* :username)))
+           (url (hunchentoot:post-parameter "url"))
+           (auth-token (hunchentoot:post-parameter "auth_token"))
+           (interval (parse-integer (or (hunchentoot:post-parameter "interval") "60")
+                                    :junk-allowed t))
+           (username (getf *current-user* :username))
+           ;; Auto-derive name from URL if name is empty
+           (name (if (and (or (string= mode "import") (string= mode "mirror"))
+                          (or (null name) (uiop:emptyp name))
+                          url (not (uiop:emptyp url)))
+                     (repo-name-from-url url)
+                     name)))
       (handler-case
           (let ((repo (create-repo :owner-id *current-user-id*
                                    :name name
                                    :description description
                                    :is-private (when is-private t))))
-            (init-bare-repo username name)
+            (cond
+              ((string= mode "import")
+               (import-repo-from-url username name url
+                                     :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
+                                                   auth-token)))
+              ((string= mode "mirror")
+               (import-repo-from-url username name url
+                                     :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
+                                                   auth-token))
+               (create-mirror :repo-id (getf repo :id)
+                              :direction "pull"
+                              :remote-url url
+                              :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
+                                            auth-token)
+                              :interval-minutes (or interval 60)))
+              (t (init-bare-repo username name)))
             (log-event "repo.created" :user-id *current-user-id*
-                                      :repo-id (getf repo :id))
+                                      :repo-id (getf repo :id)
+                                      :metadata (format nil "{\"mode\": \"~A\"}" mode))
             (hunchentoot:redirect (format nil "/~A/~A" username name)))
         (error (e)
           (html-response (view-new-personal-repo :error (format nil "~A" e))))))))
@@ -842,17 +869,46 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
       (unless (equal (org-member-role (getf org :id) *current-user-id*) "admin")
         (setf (hunchentoot:return-code*) 403)
         (return-from create-org-repo-submit "Forbidden"))
-      (let* ((name (hunchentoot:post-parameter "name"))
+      (let* ((mode (or (hunchentoot:post-parameter "mode") "empty"))
+             (name (hunchentoot:post-parameter "name"))
              (description (hunchentoot:post-parameter "description"))
              (is-private (hunchentoot:post-parameter "is_private"))
-             (repo (create-repo :org-id (getf org :id)
-                                :name name
-                                :description description
-                                :is-private (when is-private t))))
-        (init-bare-repo org-name name)
-        (log-event "repo.created" :user-id *current-user-id*
-                                  :repo-id (getf repo :id))
-        (hunchentoot:redirect (format nil "/~A/~A" org-name name))))))
+             (url (hunchentoot:post-parameter "url"))
+             (auth-token (hunchentoot:post-parameter "auth_token"))
+             (interval (parse-integer (or (hunchentoot:post-parameter "interval") "60")
+                                      :junk-allowed t))
+             (name (if (and (or (string= mode "import") (string= mode "mirror"))
+                            (or (null name) (uiop:emptyp name))
+                            url (not (uiop:emptyp url)))
+                       (repo-name-from-url url)
+                       name)))
+        (handler-case
+            (let ((repo (create-repo :org-id (getf org :id)
+                                     :name name
+                                     :description description
+                                     :is-private (when is-private t))))
+              (cond
+                ((string= mode "import")
+                 (import-repo-from-url org-name name url
+                                       :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
+                                                     auth-token)))
+                ((string= mode "mirror")
+                 (import-repo-from-url org-name name url
+                                       :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
+                                                     auth-token))
+                 (create-mirror :repo-id (getf repo :id)
+                                :direction "pull"
+                                :remote-url url
+                                :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
+                                              auth-token)
+                                :interval-minutes (or interval 60)))
+                (t (init-bare-repo org-name name)))
+              (log-event "repo.created" :user-id *current-user-id*
+                                        :repo-id (getf repo :id)
+                                        :metadata (format nil "{\"mode\": \"~A\"}" mode))
+              (hunchentoot:redirect (format nil "/~A/~A" org-name name)))
+          (error (e)
+            (html-response (view-new-repo :org org :error (format nil "~A" e)))))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Repo settings
@@ -1777,6 +1833,32 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
   "Return the on-disk path for a bare git repo."
   (merge-pathnames (format nil "~A/~A.git/" owner repo-name) (repos-dir)))
 
+(defun install-repo-hooks (path owner repo-name)
+  "Install pre-receive and post-receive hooks on a bare repo."
+  ;; Pre-receive hook (checks)
+  (let ((hook-path (merge-pathnames "hooks/pre-receive" path)))
+    (ensure-directories-exist hook-path)
+    (with-open-file (out hook-path :direction :output :if-exists :supersede)
+      (format out "#!/bin/bash~%exec cave run-checks --config /etc/cave.conf --repo ~A/~A~%"
+              owner repo-name))
+    (uiop:run-program (list "chmod" "+x" (namestring hook-path))
+                       :ignore-error-status t))
+  ;; Post-receive hook (calls back into running Cave server)
+  (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
+    (with-open-file (out hook-path :direction :output :if-exists :supersede)
+      (format out "#!/bin/bash~%# Pipe ref updates to the running Cave server~%tee >(curl -sf -X POST --data-binary @- http://localhost:~A/-/internal/hook/post-receive/~A/~A) >/dev/null~%"
+              (config-value :http-port 8080) owner repo-name)
+      (format out "cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
+              owner repo-name)
+      (when (string= repo-name "cave-themes")
+        (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
+                owner)))
+    (uiop:run-program (list "chmod" "+x" (namestring hook-path))
+                       :ignore-error-status t))
+  ;; Ensure the cave user owns the repo
+  (uiop:run-program (list "chown" "-R" "cave:cave" (namestring path))
+                     :output :string :error-output :string :ignore-error-status t))
+
 (defun init-bare-repo (owner repo-name)
   "Initialize a bare git repository on disk with HEAD pointing to main.
    Sets ownership to cave:cave so SSH pushes work."
@@ -1784,30 +1866,21 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
     (ensure-directories-exist path)
     (uiop:run-program (list "git" "init" "--bare" "-b" "main" (namestring path))
                        :output :string :error-output :string)
-    ;; Install pre-receive hook (checks)
-    (let ((hook-path (merge-pathnames "hooks/pre-receive" path)))
-      (with-open-file (out hook-path :direction :output :if-exists :supersede)
-        (format out "#!/bin/bash~%exec cave run-checks --config /etc/cave.conf --repo ~A/~A~%"
-                owner repo-name))
-      (uiop:run-program (list "chmod" "+x" (namestring hook-path))
-                         :ignore-error-status t))
-    ;; Install post-receive hook (calls back into running Cave server)
-    (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
-      (with-open-file (out hook-path :direction :output :if-exists :supersede)
-        (format out "#!/bin/bash~%# Pipe ref updates to the running Cave server~%tee >(curl -sf -X POST --data-binary @- http://localhost:~A/-/internal/hook/post-receive/~A/~A) >/dev/null~%"
-                (config-value :http-port 8080) owner repo-name)
-        (format out "cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
-                owner repo-name)
-        (when (string= repo-name "cave-themes")
-          (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
-                  owner)))
-      (uiop:run-program (list "chmod" "+x" (namestring hook-path))
-                         :ignore-error-status t))
-    ;; Ensure the cave user owns the repo (server may run as root)
-    (uiop:run-program (list "chown" "-R" "cave:cave" (namestring path))
-                       :output :string :error-output :string :ignore-error-status t)
+    (install-repo-hooks path owner repo-name)
     (llog:info "Initialized bare repo" :path path)
     path))
+
+(defun import-repo-from-url (owner repo-name url &key auth-token)
+  "Clone a repo from an external URL as a bare repo, install hooks."
+  (let ((path (repo-disk-path owner repo-name)))
+    (multiple-value-bind (success-p err)
+        (git-clone-bare-from-url url path :auth-token auth-token)
+      (unless success-p
+        (error "Clone failed: ~A" err))
+      (install-repo-hooks path owner repo-name)
+      (zoekt-index-repo owner repo-name)
+      (llog:info "Imported repo from URL" :path path :url url)
+      path)))
 
 ;; ----------------------------------------------------------------------------
 ;; Server start

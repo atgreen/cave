@@ -915,6 +915,34 @@ html[data-theme="dracula"] {
   --blue-bg: rgba(139, 233, 253, 0.08);
 }
 
+/* --- Repo creation tabs --- */
+.repo-create-tabs {
+  display: flex;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--sp-1);
+}
+.repo-tab {
+  padding: var(--sp-2) var(--sp-3);
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: .85rem;
+  cursor: pointer;
+}
+.repo-tab:hover { color: var(--text); }
+.repo-tab.active {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface);
+  margin-bottom: -1px;
+  padding-bottom: calc(var(--sp-2) + 1px);
+}
+
 /* --- Search --- */
 .nav-search { display: flex; align-items: center; margin-right: var(--sp-2); }
 .nav-search-input {
