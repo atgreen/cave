@@ -7,8 +7,8 @@
 ;; ----------------------------------------------------------------------------
 ;; Server infrastructure
 
-(defvar *shutdown-cv* (bt:make-condition-variable))
-(defvar *server-lock* (bt:make-lock))
+(defvar *shutdown-cv* (bt2:make-condition-variable))
+(defvar *server-lock* (bt2:make-lock))
 (defvar *acceptor* nil)
 
 (defclass cave-acceptor (easy-routes:easy-routes-acceptor)
@@ -19,7 +19,7 @@
   "Wrap every request with a pooled DB connection, auth context, and metrics."
   (let ((method (hunchentoot:request-method request))
         (start (get-internal-real-time)))
-    (bt:with-lock-held (*metrics-lock*)
+    (bt2:with-lock-held (*metrics-lock*)
       (incf *active-requests*))
     (unwind-protect
          (postmodern:with-connection *db-spec*
@@ -50,7 +50,7 @@
       (let* ((elapsed (/ (- (get-internal-real-time) start)
                          (float internal-time-units-per-second 1.0d0)))
              (status (hunchentoot:return-code*)))
-        (bt:with-lock-held (*metrics-lock*)
+        (bt2:with-lock-held (*metrics-lock*)
           (decf *active-requests*))
         (record-request method status elapsed)))))
 
@@ -222,18 +222,18 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 
 (defvar *active-push-tokens* (make-hash-table :test 'equal)
   "Token → (:owner owner :repo repo-name :time universal-time :lock lock-ref)")
-(defvar *active-push-tokens-lock* (bt:make-lock "push-tokens"))
+(defvar *active-push-tokens-lock* (bt2:make-lock :name "push-tokens"))
 
 (defun start-push-lock-reaper ()
   "Background thread that reaps orphaned push locks (SSH disconnect, timeout)."
-  (bt:make-thread
+  (bt2:make-thread
    (lambda ()
      (loop
        (sleep 60)
        (let ((now (get-universal-time))
              (max-age 600) ; 10 minutes
              (expired nil))
-         (bt:with-lock-held (*active-push-tokens-lock*)
+         (bt2:with-lock-held (*active-push-tokens-lock*)
            (maphash (lambda (token entry)
                       (when (> (- now (getf entry :time)) max-age)
                         (push (cons token entry) expired)))
@@ -246,10 +246,10 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                           :age-seconds (- now (getf entry :time)))
                (chamber-invalidate-repo (getf entry :owner) (getf entry :repo))
                (handler-case
-                   (bt:signal-semaphore (getf entry :sema))
+                   (bt2:signal-semaphore (getf entry :sema))
                  (error () nil))
                (handler-case
-                   (bt:signal-semaphore *chamber-semaphore*)
+                   (bt2:signal-semaphore *chamber-semaphore*)
                  (error () nil))
                (remhash token *active-push-tokens*)))))))
    :name "push-lock-reaper"))
@@ -261,19 +261,19 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
     (return-from internal-push-acquire "Forbidden"))
   ;; Acquire semaphore (concurrent git limit)
   (ensure-chamber-semaphore)
-  (unless (bt:wait-on-semaphore *chamber-semaphore* :timeout 30)
+  (unless (bt2:wait-on-semaphore *chamber-semaphore* :timeout 30)
     (setf (hunchentoot:return-code*) 503)
     (return-from internal-push-acquire "Busy"))
   ;; Acquire per-repo write semaphore (binary sema — cross-thread safe)
   (let ((sema (get-repo-write-sema (format nil "~A/~A" owner repo-name))))
-    (unless (bt:wait-on-semaphore sema :timeout 30)
+    (unless (bt2:wait-on-semaphore sema :timeout 30)
       ;; Release global semaphore on repo-lock timeout
-      (bt:signal-semaphore *chamber-semaphore*)
+      (bt2:signal-semaphore *chamber-semaphore*)
       (setf (hunchentoot:return-code*) 503)
       (return-from internal-push-acquire "Busy"))
     ;; Generate token and store
     (let ((token (fuuid:make-v4-string)))
-      (bt:with-lock-held (*active-push-tokens-lock*)
+      (bt2:with-lock-held (*active-push-tokens-lock*)
         (setf (gethash token *active-push-tokens*)
               (list :owner owner :repo repo-name
                     :time (get-universal-time) :sema sema)))
@@ -287,7 +287,7 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
     (return-from internal-push-release "Forbidden"))
   (let* ((token (string-trim '(#\Space #\Newline #\Return)
                               (hunchentoot:raw-post-data :force-text t)))
-         (entry (bt:with-lock-held (*active-push-tokens-lock*)
+         (entry (bt2:with-lock-held (*active-push-tokens-lock*)
                   (gethash token *active-push-tokens*))))
     (unless entry
       (setf (hunchentoot:return-code*) 404)
@@ -295,10 +295,10 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
     ;; Invalidate cache
     (chamber-invalidate-repo owner repo-name)
     ;; Release repo write semaphore, then global semaphore (reverse of acquire order)
-    (handler-case (bt:signal-semaphore (getf entry :sema)) (error () nil))
-    (handler-case (bt:signal-semaphore *chamber-semaphore*) (error () nil))
+    (handler-case (bt2:signal-semaphore (getf entry :sema)) (error () nil))
+    (handler-case (bt2:signal-semaphore *chamber-semaphore*) (error () nil))
     ;; Remove token
-    (bt:with-lock-held (*active-push-tokens-lock*)
+    (bt2:with-lock-held (*active-push-tokens-lock*)
       (remhash token *active-push-tokens*))
     (llog:info "Push lock released" :repo (format nil "~A/~A" owner repo-name))
     "ok"))
@@ -916,13 +916,13 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 ;; Raw file blob cache — keyed by git object SHA, content-addressable
 (defvar *blob-cache* (make-hash-table :test 'equal)
   "In-memory LRU cache for raw file blobs. Key: git SHA, Value: (content . access-time).")
-(defvar *blob-cache-lock* (bt:make-lock "blob-cache"))
+(defvar *blob-cache-lock* (bt2:make-lock :name "blob-cache"))
 (defvar *blob-cache-max-bytes* (* 64 1024 1024) "Max cache size in bytes (64MB).")
 (defvar *blob-cache-bytes* 0 "Current cache size in bytes.")
 
 (defun blob-cache-get (sha)
   "Get cached blob by SHA. Returns content or NIL."
-  (bt:with-lock-held (*blob-cache-lock*)
+  (bt2:with-lock-held (*blob-cache-lock*)
     (let ((entry (gethash sha *blob-cache*)))
       (when entry
         (setf (cdr entry) (get-universal-time))
@@ -934,7 +934,7 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                   (length content))))
     (when (> size (* 4 1024 1024)) ; don't cache blobs > 4MB
       (return-from blob-cache-put content))
-    (bt:with-lock-held (*blob-cache-lock*)
+    (bt2:with-lock-held (*blob-cache-lock*)
       ;; Evict oldest entries if needed
       (loop while (> (+ *blob-cache-bytes* size) *blob-cache-max-bytes*)
             do (let ((oldest-key nil) (oldest-time (get-universal-time)))

@@ -322,7 +322,7 @@
     :server-streaming t)
 
   ;; Runner cleanup thread (mark offline, delete stale ephemeral)
-  (bt:make-thread
+  (bt2:make-thread
    (lambda ()
      (loop
        (sleep 30)
@@ -333,7 +333,7 @@
    :name "cave-runner-cleanup")
 
   ;; Start in a background thread
-  (bt:make-thread
+  (bt2:make-thread
    (lambda ()
      (handler-case (ag-grpc:server-start *grpc-server*)
        (error (e)

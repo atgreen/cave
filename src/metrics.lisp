@@ -7,7 +7,7 @@
 ;;; Thread-safe counters and histograms for HTTP request instrumentation.
 ;;; Emits Prometheus text exposition format at /metrics.
 
-(defvar *metrics-lock* (bt:make-lock "metrics"))
+(defvar *metrics-lock* (bt2:make-lock :name "metrics"))
 
 ;; Request counters: hash of "method:status" -> count
 (defvar *request-counts* (make-hash-table :test 'equal))
@@ -26,7 +26,7 @@
 
 (defun reset-metrics ()
   "Reset all metrics (for testing)."
-  (bt:with-lock-held (*metrics-lock*)
+  (bt2:with-lock-held (*metrics-lock*)
     (clrhash *request-counts*)
     (clrhash *request-duration-sum*)
     (clrhash *request-duration-count*)
@@ -37,7 +37,7 @@
   "Record a completed HTTP request."
   (let ((count-key (format nil "~A:~A" method status))
         (dur-key (string method)))
-    (bt:with-lock-held (*metrics-lock*)
+    (bt2:with-lock-held (*metrics-lock*)
       ;; Increment request counter
       (incf (gethash count-key *request-counts* 0))
       ;; Update duration histogram
@@ -68,7 +68,7 @@
 (defun collect-metrics ()
   "Collect all metrics and return Prometheus text format string."
   (with-output-to-string (s)
-    (bt:with-lock-held (*metrics-lock*)
+    (bt2:with-lock-held (*metrics-lock*)
       ;; -- Request count --
       (let ((lines nil))
         (maphash (lambda (key count)

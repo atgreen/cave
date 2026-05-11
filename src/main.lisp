@@ -179,7 +179,7 @@
           (error () nil))))
 
     (let ((port (or port-override (config-value :http-port 8080))))
-      (bt:with-lock-held (*server-lock*)
+      (bt2:with-lock-held (*server-lock*)
         ;; Slynk
         (when slynk-port
           (slynk:create-server :port slynk-port :interface "0.0.0.0" :dont-close t)
@@ -211,7 +211,7 @@
         (llog:info "Cave listening" :version +version+ :port port)
 
         ;; Wait forever
-        (bt:condition-wait *shutdown-cv* *server-lock*)))))
+        (bt2:condition-wait *shutdown-cv* *server-lock*)))))
 
 ;;; --- GIT-SHELL subcommand ---
 

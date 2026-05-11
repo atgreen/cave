@@ -19,7 +19,7 @@
           (index-dir (config-value :zoekt-index-dir "/data/zoekt-index"))
           (repos-base (namestring (repos-dir)))
           (index-name (format nil "~A/~A" owner repo-name)))
-      (bt:make-thread
+      (bt2:make-thread
        (lambda ()
          (handler-case
              (multiple-value-bind (_out err exit)

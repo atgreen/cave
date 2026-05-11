@@ -20,60 +20,55 @@
 ;;; --- Concurrency control ---
 
 (defvar *chamber-semaphore* nil "Semaphore limiting concurrent git processes.")
-(defvar *chamber-repo-locks* (make-hash-table :test 'equal) "Per-repo write locks.")
-(defvar *chamber-repo-locks-lock* (bt:make-lock "chamber-repo-locks"))
+(defvar *chamber-repo-semas* (make-hash-table :test 'equal) "Per-repo write semaphores.")
+(defvar *chamber-repo-semas-lock* (bt2:make-lock :name "chamber-repo-semas"))
 
 (defun ensure-chamber-semaphore ()
   (unless *chamber-semaphore*
     (setf *chamber-semaphore*
-          (bt:make-semaphore :name "chamber-git"
+          (bt2:make-semaphore :name "chamber-git"
                              :count (config-value :chamber-max-git-processes 64)))))
 
 (defmacro with-git-read (&body body)
   "Execute BODY with the git semaphore held (concurrent reads OK)."
   `(progn
      (ensure-chamber-semaphore)
-     (if (bt:wait-on-semaphore *chamber-semaphore* :timeout 30)
+     (if (bt2:wait-on-semaphore *chamber-semaphore* :timeout 30)
          (unwind-protect (progn ,@body)
-           (bt:signal-semaphore *chamber-semaphore*))
+           (bt2:signal-semaphore *chamber-semaphore*))
          (error "Git read timed out waiting for semaphore"))))
 
-(defun get-repo-write-lock (repo-key)
-  (bt:with-lock-held (*chamber-repo-locks-lock*)
-    (or (gethash repo-key *chamber-repo-locks*)
-        (setf (gethash repo-key *chamber-repo-locks*)
-              (bt:make-lock (format nil "repo-write:~A" repo-key))))))
-
-;; Per-repo semaphores (count=1) for cross-thread acquire/release (SSH push bracket)
-(defvar *chamber-repo-semas* (make-hash-table :test 'equal) "Per-repo write semaphores.")
-
 (defun get-repo-write-sema (repo-key)
-  "Get or create a per-repo binary semaphore for cross-thread locking."
-  (bt:with-lock-held (*chamber-repo-locks-lock*)
+  "Get or create a per-repo binary semaphore (used by both Chamber RPCs and SSH pushes)."
+  (bt2:with-lock-held (*chamber-repo-semas-lock*)
     (or (gethash repo-key *chamber-repo-semas*)
         (setf (gethash repo-key *chamber-repo-semas*)
-              (bt:make-semaphore :name (format nil "repo-sema:~A" repo-key)
+              (bt2:make-semaphore :name (format nil "repo-write:~A" repo-key)
                                  :count 1)))))
 
 (defmacro with-git-write (repo-key &body body)
-  "Execute BODY with semaphore + per-repo write lock (serialized writes per repo)."
-  (let ((key (gensym "KEY")))
+  "Execute BODY with global semaphore + per-repo write semaphore.
+   Serializes writes per repo, shared between Chamber RPCs and SSH pushes."
+  (let ((key (gensym "KEY")) (sema (gensym "SEMA")))
     `(let ((,key ,repo-key))
        (with-git-read
-         (bt:with-lock-held ((get-repo-write-lock ,key))
-           ,@body)))))
+         (let ((,sema (get-repo-write-sema ,key)))
+           (if (bt2:wait-on-semaphore ,sema :timeout 30)
+               (unwind-protect (progn ,@body)
+                 (bt2:signal-semaphore ,sema))
+               (error "Git write timed out waiting for repo lock")))))))
 
 ;;; --- Result cache ---
 
 (defvar *chamber-cache* (make-hash-table :test 'equal))
-(defvar *chamber-cache-lock* (bt:make-lock "chamber-cache"))
+(defvar *chamber-cache-lock* (bt2:make-lock :name "chamber-cache"))
 (defvar *chamber-cache-bytes* 0)
 
 (defun chamber-cache-max-bytes ()
   (* (config-value :chamber-cache-size-mb 128) 1024 1024))
 
 (defun chamber-cache-get (key)
-  (bt:with-lock-held (*chamber-cache-lock*)
+  (bt2:with-lock-held (*chamber-cache-lock*)
     (let ((entry (gethash key *chamber-cache*)))
       (when entry
         (setf (cddr entry) (get-universal-time)) ; update access time
@@ -87,7 +82,7 @@
                     (t 100)))))
     (when (> size (* 4 1024 1024)) ; skip >4MB
       (return-from chamber-cache-put content))
-    (bt:with-lock-held (*chamber-cache-lock*)
+    (bt2:with-lock-held (*chamber-cache-lock*)
       ;; Evict oldest if needed
       (loop while (> (+ *chamber-cache-bytes* size) (chamber-cache-max-bytes))
             do (let ((oldest-key nil) (oldest-time (get-universal-time)))
@@ -107,7 +102,7 @@
 (defun chamber-invalidate-repo (owner repo-name)
   "Remove all cached entries for a repository after a push."
   (let ((prefix (format nil "~A/~A:" owner repo-name)))
-    (bt:with-lock-held (*chamber-cache-lock*)
+    (bt2:with-lock-held (*chamber-cache-lock*)
       (let ((keys-to-remove nil))
         (maphash (lambda (k v)
                    (declare (ignore v))
@@ -502,7 +497,7 @@
     :request-type 'cave::pull-mirror-request :response-type 'cave::pull-mirror-response)
 
   ;; Start in background
-  (bt:make-thread
+  (bt2:make-thread
    (lambda ()
      (handler-case (ag-grpc:server-start *chamber-server*)
        (error (e)
