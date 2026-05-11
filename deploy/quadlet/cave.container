@@ -18,6 +18,8 @@ Environment=CAVE_OIDC_ISSUER_INTERNAL=http://cave-prod-keycloak:8080/realms/cave
 Environment=CAVE_OIDC_CLIENT_ID=cave
 Environment=CAVE_OIDC_CLIENT_SECRET=cave-dev-secret
 Environment=CAVE_BASE_URL=http://localhost:9080
+Environment=CAVE_SECRET_KEY=9890d71c4510e2775779358fe2e806d3491812b77c855af6595c1fcdf78bd413
+Environment=CAVE_ZOEKT_ENABLED=t
 
 [Service]
 Restart=always

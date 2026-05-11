@@ -7,7 +7,7 @@
 ##           -e CAVE_ADMIN_USER=admin -e CAVE_ADMIN_PASSWORD=admin \
 ##           -v cave-data:/var/lib/cave cave:latest
 
-FROM golang:1.23-alpine AS zoekt-builder
+FROM golang:1.25-alpine AS zoekt-builder
 
 RUN apk add --no-cache git && \
     git clone https://github.com/sourcegraph/zoekt.git /build/zoekt
