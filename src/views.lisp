@@ -1831,11 +1831,11 @@ export CAVE_TOKEN=<your-api-token>
         (let ((ctx-start (- line-num (length before))))
           (loop for ctx-line in before
                 for n from ctx-start
-                do (format s "<tr class=\"search-ctx\"><td class=\"line-num\"><a href=\"~A&line=~A\">~A</a></td><td class=\"line-content\">~A</td></tr>"
+                do (format s "<tr class=\"search-ctx\" data-href=\"~A&line=~A\"><td class=\"line-num\">~A</td><td class=\"line-content\">~A</td></tr>"
                            base-url n n (spinneret:escape-string
                                          (string-right-trim '(#\Newline #\Return) ctx-line)))))
         ;; Matched line
-        (format s "<tr class=\"search-match\"><td class=\"line-num\"><a href=\"~A&line=~A\">~A</a></td><td class=\"line-content\">"
+        (format s "<tr class=\"search-match\" data-href=\"~A&line=~A\"><td class=\"line-num\">~A</td><td class=\"line-content\">"
                 base-url line-num line-num)
         (dolist (frag fragments)
           (let ((pre (string-right-trim '(#\Newline #\Return) (getf frag :pre)))
@@ -1848,10 +1848,11 @@ export CAVE_TOKEN=<your-api-token>
         ;; After context
         (loop for ctx-line in after
               for n from (1+ line-num)
-              do (format s "<tr class=\"search-ctx\"><td class=\"line-num\"><a href=\"~A&line=~A\">~A</a></td><td class=\"line-content\">~A</td></tr>"
+              do (format s "<tr class=\"search-ctx\" data-href=\"~A&line=~A\"><td class=\"line-num\">~A</td><td class=\"line-content\">~A</td></tr>"
                          base-url n n (spinneret:escape-string
                                        (string-right-trim '(#\Newline #\Return) ctx-line))))
         ;; Separator
         (unless (eq m (car (last matches)))
           (write-string "<tr class=\"search-sep\"><td colspan=\"2\"></td></tr>" s))))
-    (write-string "</table>" s))))
+    (write-string "</table>" s)
+    (write-string "<script>document.querySelectorAll('.search-code tr[data-href]').forEach(function(tr){tr.style.cursor='pointer';tr.addEventListener('click',function(){window.location=tr.dataset.href})})</script>" s))))
