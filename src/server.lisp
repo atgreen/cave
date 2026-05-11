@@ -692,7 +692,8 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                                    (search ".md" (string-downcase
                                                    (getf readme-entry :name))))
                           (render-markdown readme-content
-                                          :raw-base-url (format nil "/~A/~A/raw/~A?path="
+                                          :raw-base-url (format nil "~A/~A/~A/raw/~A?path="
+                                                                (config-value :base-url "http://localhost:8080")
                                                                 owner repo-name
                                                                 (or default-branch "HEAD")))))
            (readme-html (or readme-html

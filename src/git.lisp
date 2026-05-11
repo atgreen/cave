@@ -453,15 +453,17 @@
 
 (defun render-markdown (markdown-string &key raw-base-url)
   "Render Markdown to sanitized HTML string.
-   RAW-BASE-URL when provided rewrites relative image src to that base (e.g. /owner/repo/raw/HEAD?path=)."
+   RAW-BASE-URL when provided rewrites relative image src to absolute URLs
+   before sanitization (the sanitizer strips relative src as protocol-less)."
   (let* ((3bmd-tables:*tables* t)
          (3bmd-code-blocks:*code-blocks* t)
          (raw-html (with-output-to-string (s)
                      (3bmd:parse-string-and-print-to-stream markdown-string s)))
-         (sanitized (sanitize-html:sanitize raw-html)))
-    (if raw-base-url
-        (rewrite-relative-img-src sanitized raw-base-url)
-        sanitized)))
+         ;; Rewrite relative URLs BEFORE sanitization so they have a protocol
+         (rewritten (if raw-base-url
+                        (rewrite-relative-img-src raw-html raw-base-url)
+                        raw-html)))
+    (sanitize-html:sanitize rewritten)))
 
 (defun rewrite-relative-img-src (html base-url)
   "Rewrite relative src= in <img> tags to use BASE-URL prefix."
