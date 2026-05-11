@@ -825,23 +825,72 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
       ((member ext '("zip" "gz" "tar" "bz2" "xz") :test #'string=) "application/octet-stream")
       (t "text/plain; charset=utf-8"))))
 
+;; Raw file blob cache — keyed by git object SHA, content-addressable
+(defvar *blob-cache* (make-hash-table :test 'equal)
+  "In-memory LRU cache for raw file blobs. Key: git SHA, Value: (content . access-time).")
+(defvar *blob-cache-lock* (bt:make-lock "blob-cache"))
+(defvar *blob-cache-max-bytes* (* 64 1024 1024) "Max cache size in bytes (64MB).")
+(defvar *blob-cache-bytes* 0 "Current cache size in bytes.")
+
+(defun blob-cache-get (sha)
+  "Get cached blob by SHA. Returns content or NIL."
+  (bt:with-lock-held (*blob-cache-lock*)
+    (let ((entry (gethash sha *blob-cache*)))
+      (when entry
+        (setf (cdr entry) (get-universal-time))
+        (car entry)))))
+
+(defun blob-cache-put (sha content)
+  "Cache blob content by SHA. Evicts oldest entries if over size limit."
+  (let ((size (if (stringp content) (length content)
+                  (length content))))
+    (when (> size (* 4 1024 1024)) ; don't cache blobs > 4MB
+      (return-from blob-cache-put content))
+    (bt:with-lock-held (*blob-cache-lock*)
+      ;; Evict oldest entries if needed
+      (loop while (> (+ *blob-cache-bytes* size) *blob-cache-max-bytes*)
+            do (let ((oldest-key nil) (oldest-time (get-universal-time)))
+                 (maphash (lambda (k v)
+                            (when (< (cdr v) oldest-time)
+                              (setf oldest-key k oldest-time (cdr v))))
+                          *blob-cache*)
+                 (if oldest-key
+                     (let ((old (gethash oldest-key *blob-cache*)))
+                       (decf *blob-cache-bytes*
+                             (if (stringp (car old)) (length (car old)) (length (car old))))
+                       (remhash oldest-key *blob-cache*))
+                     (return))))
+      (setf (gethash sha *blob-cache*) (cons content (get-universal-time)))
+      (incf *blob-cache-bytes* size)))
+  content)
+
 ;; Raw file content
 (easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from raw-page repo))
     (let* ((disk-path (repo-disk-path owner repo-name))
            (path (or (hunchentoot:get-parameter "path") ""))
-           (mime (raw-mime-type path)))
+           (mime (raw-mime-type path))
+           (sha (git-blob-hash disk-path ref path)))
+      (unless sha (return-from raw-page (not-found)))
       (setf (hunchentoot:content-type*) mime)
-      (if (uiop:string-prefix-p "text/" mime)
-          ;; Text files: return as string
-          (let ((content (git-blob disk-path ref path)))
-            (unless content (return-from raw-page (not-found)))
-            content)
-          ;; Binary files: return as octets
-          (let ((content (git-blob-bytes disk-path ref path)))
-            (unless content (return-from raw-page (not-found)))
-            content)))))
+      ;; ETag: browser caches and revalidates with If-None-Match
+      (setf (hunchentoot:header-out :etag) (format nil "\"~A\"" sha))
+      (setf (hunchentoot:header-out :cache-control) "public, max-age=300")
+      ;; 304 Not Modified if browser has current version
+      (let ((if-none-match (hunchentoot:header-in* :if-none-match)))
+        (when (and if-none-match (string= if-none-match (format nil "\"~A\"" sha)))
+          (setf (hunchentoot:return-code*) 304)
+          (return-from raw-page "")))
+      ;; Check server-side cache
+      (let ((cached (blob-cache-get sha)))
+        (when cached (return-from raw-page cached)))
+      ;; Cache miss — read from git
+      (let ((content (if (uiop:string-prefix-p "text/" mime)
+                         (git-blob disk-path ref path)
+                         (git-blob-bytes disk-path ref path))))
+        (unless content (return-from raw-page (not-found)))
+        (blob-cache-put sha content)))))
 
 ;; Commit detail page (also handles .patch and .diff suffixes)
 (easy-routes:defroute commit-page ("/:owner/:repo-name/commit/:hash" :method :get) ()

@@ -403,6 +403,13 @@
                         (string< (getf a :name) (getf b :name))
                         a-dir)))))))))
 
+(defun git-blob-hash (repo-path ref path)
+  "Get the git object hash for a blob at PATH under REF. Returns SHA string or NIL."
+  (multiple-value-bind (output _err exit-code)
+      (git-run repo-path "rev-parse" (format nil "~A:~A" ref path))
+    (declare (ignore _err))
+    (when (zerop exit-code) (string-trim '(#\Newline #\Space) output))))
+
 (defun git-blob (repo-path ref path)
   "Read file content at PATH under REF. Returns string or NIL."
   (multiple-value-bind (output _err exit-code)
