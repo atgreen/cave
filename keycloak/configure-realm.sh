@@ -119,4 +119,32 @@ else
   echo "cave-browser flow already exists"
 fi
 
+# --- Fix reset credentials flow: disable forced OTP setup ---
+# The default reset credentials flow has a "Reset OTP" step set to REQUIRED,
+# which forces users to configure an authenticator after resetting their password.
+# Set it to DISABLED so password reset just resets the password.
+
+RESET_EXECUTIONS=$(curl -sf "${KC_URL}/admin/realms/cave/authentication/flows/reset%20credentials/executions" \
+  -H "${AUTH}")
+
+RESET_OTP_ID=$(echo "$RESET_EXECUTIONS" | python3 -c "
+import sys,json
+execs = json.load(sys.stdin)
+for e in execs:
+    dn = e.get('displayName','')
+    if 'Reset OTP' in dn or 'reset-otp' in e.get('providerId',''):
+        print(e['id'])
+        break
+")
+
+if [ -n "$RESET_OTP_ID" ]; then
+  curl -sf -X PUT "${KC_URL}/admin/realms/cave/authentication/flows/reset%20credentials/executions" \
+    -H "${AUTH}" \
+    -H "Content-Type: application/json" \
+    -d "{\"id\":\"${RESET_OTP_ID}\",\"requirement\":\"DISABLED\"}" -o /dev/null
+  echo "Reset credentials flow: OTP step disabled"
+else
+  echo "Reset credentials flow: no OTP step found (OK)"
+fi
+
 echo "Done."
