@@ -811,16 +811,37 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                     :file-size file-size
                     :language language))))))
 
+(defun raw-mime-type (path)
+  "Guess MIME type from file extension."
+  (let ((ext (string-downcase (or (pathname-type (pathname path)) ""))))
+    (cond
+      ((member ext '("png") :test #'string=) "image/png")
+      ((member ext '("jpg" "jpeg") :test #'string=) "image/jpeg")
+      ((member ext '("gif") :test #'string=) "image/gif")
+      ((member ext '("svg") :test #'string=) "image/svg+xml")
+      ((member ext '("webp") :test #'string=) "image/webp")
+      ((member ext '("ico") :test #'string=) "image/x-icon")
+      ((member ext '("pdf") :test #'string=) "application/pdf")
+      ((member ext '("zip" "gz" "tar" "bz2" "xz") :test #'string=) "application/octet-stream")
+      (t "text/plain; charset=utf-8"))))
+
 ;; Raw file content
 (easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from raw-page repo))
     (let* ((disk-path (repo-disk-path owner repo-name))
            (path (or (hunchentoot:get-parameter "path") ""))
-           (content (git-blob disk-path ref path)))
-      (unless content (return-from raw-page (not-found)))
-      (setf (hunchentoot:content-type*) "text/plain; charset=utf-8")
-      content)))
+           (mime (raw-mime-type path)))
+      (setf (hunchentoot:content-type*) mime)
+      (if (uiop:string-prefix-p "text/" mime)
+          ;; Text files: return as string
+          (let ((content (git-blob disk-path ref path)))
+            (unless content (return-from raw-page (not-found)))
+            content)
+          ;; Binary files: return as octets
+          (let ((content (git-blob-bytes disk-path ref path)))
+            (unless content (return-from raw-page (not-found)))
+            content)))))
 
 ;; Commit detail page (also handles .patch and .diff suffixes)
 (easy-routes:defroute commit-page ("/:owner/:repo-name/commit/:hash" :method :get) ()

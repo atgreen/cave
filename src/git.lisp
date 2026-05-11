@@ -418,6 +418,29 @@
     (and (zerop exit-code)
          (equal (string-trim '(#\Newline #\Space) output) "tree"))))
 
+(defun git-blob-bytes (repo-path ref path)
+  "Read file content at PATH under REF as raw octets. Returns byte vector or NIL."
+  (let* ((cmd (format nil "git -C ~A cat-file blob ~A:~A"
+                      (uiop:escape-sh-token (namestring repo-path))
+                      (uiop:escape-sh-token ref)
+                      (uiop:escape-sh-token path)))
+         (process (uiop:launch-program cmd :output :stream
+                                       :element-type '(unsigned-byte 8)
+                                       :force-shell t))
+         (stream (uiop:process-info-output process)))
+    (unwind-protect
+         (let ((bytes (handler-case
+                          (let ((buf (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0))
+                                (chunk (make-array 4096 :element-type '(unsigned-byte 8))))
+                            (loop for n = (read-sequence chunk stream)
+                                  while (plusp n)
+                                  do (loop for i below n do (vector-push-extend (aref chunk i) buf)))
+                            buf)
+                        (error () nil))))
+           (let ((exit (uiop:wait-process process)))
+             (when (zerop exit) bytes)))
+      (close stream))))
+
 (defun git-blob-size (repo-path ref path)
   "Get file size in bytes at PATH under REF. Returns integer or NIL."
   (multiple-value-bind (output _err exit-code)
