@@ -16,7 +16,7 @@ Environment=CAVE_DB_HOST=cave-prod-pg
 Environment=CAVE_OIDC_ISSUER=http://localhost:9180/realms/cave
 Environment=CAVE_OIDC_ISSUER_INTERNAL=http://cave-prod-keycloak:8080/realms/cave
 Environment=CAVE_OIDC_CLIENT_ID=cave
-Environment=CAVE_OIDC_CLIENT_SECRET=${CAVE_OIDC_CLIENT_SECRET:-}
+Environment=CAVE_OIDC_CLIENT_SECRET=cave-dev-secret
 Environment=CAVE_BASE_URL=http://localhost:9080
 # CAVE_SECRET_KEY is auto-generated on first start if not set
 Environment=CAVE_ZOEKT_ENABLED=t
