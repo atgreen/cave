@@ -525,7 +525,7 @@ require(['vs/editor/editor.main'], function() {
   var ed = monaco.editor.create(container, {
     value: ~A,
     language: ~A,
-    theme: 'vs-dark',
+    theme: document.documentElement.dataset.theme === 'light' ? 'vs' : 'vs-dark',
     readOnly: true,
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
