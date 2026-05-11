@@ -757,7 +757,7 @@
            'needs needs-str
            'runs-on runs-on-str
            'timeout-seconds (or timeout-seconds 0)
-           'continue-on-error (if continue-on-error t :false)
+           'continue-on-error (if continue-on-error t nil)
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
@@ -857,7 +857,7 @@
          'name (or name :null)
          'command command
          'timeout-seconds (or timeout-seconds 0)
-         'continue-on-error (if continue-on-error t :false)
+         'continue-on-error (if continue-on-error t nil)
     :returning '*)
    :plist))
 
