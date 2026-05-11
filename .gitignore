@@ -4,6 +4,8 @@ ocicl
 /cave
 /cav
 /cavectl
+/zoekt-git-index
+/_zoekt
 /.codex
 cave.conf
 data/

@@ -7,7 +7,12 @@
 ##           -e CAVE_ADMIN_USER=admin -e CAVE_ADMIN_PASSWORD=admin \
 ##           -v cave-data:/var/lib/cave cave:latest
 
-FROM ghcr.io/sourcegraph/zoekt AS zoekt-bin
+FROM golang:1.23-alpine AS zoekt-builder
+
+RUN apk add --no-cache git && \
+    git clone https://github.com/sourcegraph/zoekt.git /build/zoekt
+WORKDIR /build/zoekt
+RUN CGO_ENABLED=0 go build -o /usr/local/bin/zoekt-git-index ./cmd/zoekt-git-index
 
 FROM fedora:42 AS builder
 
@@ -42,7 +47,7 @@ RUN dnf install -y openssh-server git && dnf clean all && \
 
 COPY --from=builder /build/cave /usr/bin/cave
 COPY --from=builder /build/cav /usr/bin/cav
-COPY --from=zoekt-bin /usr/local/bin/zoekt-git-index /usr/local/bin/zoekt-git-index
+COPY --from=zoekt-builder /usr/local/bin/zoekt-git-index /usr/local/bin/zoekt-git-index
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /usr/bin/cave /usr/bin/cav

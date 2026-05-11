@@ -1,0 +1,25 @@
+## Zoekt — code search engine (built from source)
+##
+## Build:  podman build -t cave-zoekt -f Containerfile.zoekt .
+
+FROM golang:1.23-alpine AS builder
+
+RUN apk add --no-cache git
+
+RUN git clone https://github.com/sourcegraph/zoekt.git /build/zoekt
+WORKDIR /build/zoekt
+RUN CGO_ENABLED=0 go build -o /usr/local/bin/zoekt-webserver ./cmd/zoekt-webserver && \
+    CGO_ENABLED=0 go build -o /usr/local/bin/zoekt-git-index ./cmd/zoekt-git-index
+
+## --- Runtime image ---
+
+FROM alpine:3.20
+
+RUN apk add --no-cache git ca-certificates
+
+COPY --from=builder /usr/local/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
+COPY --from=builder /usr/local/bin/zoekt-git-index /usr/local/bin/zoekt-git-index
+
+EXPOSE 6070
+ENTRYPOINT ["zoekt-webserver"]
+CMD ["-rpc", "-listen", ":6070", "-index", "/data/index"]

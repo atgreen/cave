@@ -5,7 +5,7 @@ Requires=cave.service
 
 [Container]
 ContainerName=cave-prod-zoekt-web
-Image=ghcr.io/sourcegraph/zoekt
+Image=localhost/cave-zoekt:prod
 Network=cave.network
 Exec=zoekt-webserver -rpc -listen :6070 -index /data/index
 Volume=cave-zoekt.volume:/data/index:ro

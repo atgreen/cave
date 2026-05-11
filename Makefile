@@ -13,10 +13,14 @@ QUADLET_DIR = $(HOME)/.config/containers/systemd
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-build: cave cav ## Build the Cave server and Go CLI binaries
+build: cave cav zoekt-git-index ## Build the Cave server and Go CLI binaries
 
 cav: ## Build the Go CLI client
 	go build -o cav ./cli/cav
+
+zoekt-git-index: ## Build zoekt-git-index from sourcegraph/zoekt source
+	@if [ ! -d _zoekt ]; then git clone --depth 1 https://github.com/sourcegraph/zoekt.git _zoekt; fi
+	cd _zoekt && CGO_ENABLED=0 go build -o ../zoekt-git-index ./cmd/zoekt-git-index
 
 cave: src/*.lisp *.asd
 	$(LISP) --eval '(asdf:make :cave)'
@@ -29,7 +33,7 @@ lint: ## Run ocicl lint on source
 	ocicl lint src/*.lisp
 
 clean: ## Remove build artifacts
-	rm -rf *~ cave cav test-results playwright-report
+	rm -rf *~ cave cav zoekt-git-index _zoekt test-results playwright-report
 
 test: ## Run all Playwright tests (requires running cave)
 	npx playwright test
@@ -140,12 +144,15 @@ tag: ## Tag current commit as a release (e.g., make tag V=0.2.0)
 	git tag -a "v$(V)" -m "Release $(V)"
 	@echo "Tagged v$(V). Run 'make release' to build and deploy."
 
-release: cave ## Build prod image from current tree, tag as cave:prod
+release: build ## Build prod image from current tree, tag as cave:prod
 	podman build -t cave:$(VERSION) -f Containerfile.local .
 	-podman tag cave:prod cave:prod-previous 2>/dev/null
 	podman tag cave:$(VERSION) cave:prod
-	@echo "\n  Built cave:$(VERSION), tagged as cave:prod"
-	@echo "  Previous prod saved as cave:prod-previous"
+	podman build -t cave-zoekt:$(VERSION) -f Containerfile.zoekt .
+	-podman tag cave-zoekt:prod cave-zoekt:prod-previous 2>/dev/null
+	podman tag cave-zoekt:$(VERSION) cave-zoekt:prod
+	@echo "\n  Built cave:$(VERSION) + cave-zoekt:$(VERSION), tagged as :prod"
+	@echo "  Previous prod saved as :prod-previous"
 	@echo "  Run 'make prod-start' or 'systemctl --user restart cave' to deploy"
 
 prod-rollback: ## Roll back prod to the previous release

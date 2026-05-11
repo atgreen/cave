@@ -11,14 +11,15 @@ RUN dnf install -y openssh-server git openssl && dnf clean all && \
     ssh-keygen -A && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
-    mkdir -p /var/lib/cave/repos /var/lib/cave/tmp && \
-    chown -R cave:cave /var/lib/cave && \
+    mkdir -p /var/lib/cave/repos /var/lib/cave/tmp /data/zoekt-index && \
+    chown -R cave:cave /var/lib/cave /data/zoekt-index && \
     mkdir -p /home/cave/.ssh && \
     chmod 700 /home/cave/.ssh && \
     chown cave:cave /home/cave/.ssh
 
 COPY cave /usr/bin/cave
 COPY cav /usr/bin/cav
+COPY zoekt-git-index /usr/local/bin/zoekt-git-index
 COPY cave-shell.sh /usr/bin/cave-shell.sh
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
