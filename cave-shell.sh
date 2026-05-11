@@ -19,7 +19,7 @@ fi
 
 # Parse the git command and repo path
 read -r GIT_CMD REPO_PATH <<< "$SSH_ORIGINAL_COMMAND"
-REPO_PATH=$(echo "$REPO_PATH" | tr -d "'\"")
+REPO_PATH=$(echo "$REPO_PATH" | tr -d "'\"" | sed 's/\.git$//; s|^/||')
 
 case "$GIT_CMD" in
     git-upload-pack|git-receive-pack) ;;

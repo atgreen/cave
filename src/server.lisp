@@ -264,9 +264,19 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
   (unless (bt:wait-on-semaphore *chamber-semaphore* :timeout 30)
     (setf (hunchentoot:return-code*) 503)
     (return-from internal-push-acquire "Busy"))
-  ;; Acquire per-repo write lock
-  (let ((lock (get-repo-write-lock (format nil "~A/~A" owner repo-name))))
-    (unless (bt:acquire-lock lock :timeout 30)
+  ;; Acquire per-repo write lock (poll with timeout since bt v1 has no lock timeout)
+  (let* ((lock (get-repo-write-lock (format nil "~A/~A" owner repo-name)))
+         (deadline (+ (get-internal-real-time)
+                      (* 30 internal-time-units-per-second)))
+         (acquired nil))
+    (loop
+      (when (bt:acquire-lock lock nil)
+        (setf acquired t)
+        (return))
+      (when (>= (get-internal-real-time) deadline)
+        (return))
+      (sleep 0.1))
+    (unless acquired
       ;; Release semaphore on lock timeout
       (bt:signal-semaphore *chamber-semaphore*)
       (setf (hunchentoot:return-code*) 503)
