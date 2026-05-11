@@ -1795,47 +1795,42 @@ export CAVE_TOKEN=<your-api-token>
                 (:span.search-file file))
                (unless (string= lang "")
                  (:span.search-lang lang)))
-              (let ((spinneret::*pre* t))
-               (:table.search-code
-               (dolist (m matches)
-                 (let ((line-num (getf m :line-num))
-                       (before (getf m :before-lines))
-                       (after (getf m :after-lines))
-                       (fragments (getf m :fragments)))
-                   ;; Before context
-                   (let ((ctx-start (- line-num (length before))))
-                     (loop for ctx-line in before
-                           for n from ctx-start
-                           do (:tr.search-ctx
-                               (:td.line-num (princ-to-string n))
-                               (:td.line-content
-                                (:raw (spinneret:escape-string
-                                       (string-right-trim '(#\Newline #\Return) ctx-line)))))))
-                   ;; Matched line with highlights
-                   (:tr.search-match
-                    (:td.line-num (princ-to-string line-num))
-                    (:td.line-content
-                     (if fragments
-                         (dolist (frag fragments)
-                           (let ((pre (string-right-trim '(#\Newline #\Return)
-                                                          (getf frag :pre)))
-                                 (match (string-right-trim '(#\Newline #\Return)
-                                                           (getf frag :match)))
-                                 (post (string-right-trim '(#\Newline #\Return)
-                                                          (getf frag :post))))
-                             (:raw (spinneret:escape-string pre))
-                             (:mark (:raw (spinneret:escape-string match)))
-                             (:raw (spinneret:escape-string post))))
-                         (:raw ""))))
-                   ;; After context
-                   (loop for ctx-line in after
-                         for n from (1+ line-num)
-                         do (:tr.search-ctx
-                             (:td.line-num (princ-to-string n))
-                             (:td.line-content
-                              (:raw (spinneret:escape-string
-                                     (string-right-trim '(#\Newline #\Return) ctx-line))))))
-                   ;; Separator between matches in same file
-                   (unless (eq m (car (last matches)))
-                     (:tr.search-sep
-                      (:td :colspan "2")))))))))))))))
+              (:raw (render-search-code-table matches))))))))))
+
+(defun render-search-code-table (matches)
+  "Render the code matches table as an HTML string with no Spinneret whitespace."
+  (with-output-to-string (s)
+    (write-string "<table class=\"search-code\">" s)
+    (dolist (m matches)
+      (let ((line-num (getf m :line-num))
+            (before (getf m :before-lines))
+            (after (getf m :after-lines))
+            (fragments (getf m :fragments)))
+        ;; Before context
+        (let ((ctx-start (- line-num (length before))))
+          (loop for ctx-line in before
+                for n from ctx-start
+                do (format s "<tr class=\"search-ctx\"><td class=\"line-num\">~A</td><td class=\"line-content\">~A</td></tr>"
+                           n (spinneret:escape-string
+                              (string-right-trim '(#\Newline #\Return) ctx-line)))))
+        ;; Matched line
+        (format s "<tr class=\"search-match\"><td class=\"line-num\">~A</td><td class=\"line-content\">"
+                line-num)
+        (dolist (frag fragments)
+          (let ((pre (string-right-trim '(#\Newline #\Return) (getf frag :pre)))
+                (match (string-right-trim '(#\Newline #\Return) (getf frag :match)))
+                (post (string-right-trim '(#\Newline #\Return) (getf frag :post))))
+            (write-string (spinneret:escape-string pre) s)
+            (format s "<mark>~A</mark>" (spinneret:escape-string match))
+            (write-string (spinneret:escape-string post) s)))
+        (write-string "</td></tr>" s)
+        ;; After context
+        (loop for ctx-line in after
+              for n from (1+ line-num)
+              do (format s "<tr class=\"search-ctx\"><td class=\"line-num\">~A</td><td class=\"line-content\">~A</td></tr>"
+                         n (spinneret:escape-string
+                            (string-right-trim '(#\Newline #\Return) ctx-line))))
+        ;; Separator
+        (unless (eq m (car (last matches)))
+          (write-string "<tr class=\"search-sep\"><td colspan=\"2\"></td></tr>" s))))
+    (write-string "</table>" s)))
