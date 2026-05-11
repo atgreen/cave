@@ -1782,8 +1782,9 @@ export CAVE_TOKEN=<your-api-token>
          (dolist (fm files)
            (:div.search-result
             (:div.search-result-header
-             (:a :href (format nil "/~A/tree/HEAD/~A"
-                         (getf fm :repository) (getf fm :file-name))
+             (:a :href (format nil "/~A/blob/HEAD?path=~A"
+                         (getf fm :repository)
+                         (hunchentoot:url-encode (getf fm :file-name)))
               (:span.search-repo (getf fm :repository))
               " / "
               (:span.search-file (getf fm :file-name))))
