@@ -20,7 +20,7 @@ Environment=KC_BOOTSTRAP_ADMIN_USERNAME=admin
 Environment=KC_BOOTSTRAP_ADMIN_PASSWORD=admin
 Volume=%h/git/cave/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro
 Volume=%h/git/cave/keycloak/themes/cave:/opt/keycloak/themes/cave:ro
-Exec=start-dev --import-realm
+Exec=start-dev
 
 [Service]
 Restart=always
