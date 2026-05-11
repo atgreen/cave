@@ -35,6 +35,18 @@ service Chamber {
   rpc CloneFromURL(CloneFromURLRequest) returns (CloneFromURLResponse) {}
   rpc PushMirror(PushMirrorRequest) returns (PushMirrorResponse) {}
   rpc PullMirror(PullMirrorRequest) returns (PullMirrorResponse) {}
+
+  // Bidirectional streaming: proxy git pack protocol through Chamber
+  rpc ReceivePack(stream PackData) returns (stream PackData) {}
+  rpc UploadPack(stream PackData) returns (stream PackData) {}
+}
+
+// --- Git protocol streaming ---
+
+message PackData {
+  bytes data = 1;        // raw git protocol bytes
+  string owner = 2;      // set only on first message from client
+  string repo_name = 3;  // set only on first message from client
 }
 
 // --- Common ---

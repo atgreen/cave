@@ -425,6 +425,123 @@
                        :ok success-p
                        :error (or err ""))))))
 
+;;; --- Streaming git protocol handlers ---
+
+(defconstant +pack-chunk-size+ 32768 "Bytes per PackData chunk (32KB).")
+
+(defun pump-client-to-process (stream proc-input)
+  "Read PackData messages from gRPC stream, write data to git process stdin.
+   Returns when client closes send (stream-recv returns NIL)."
+  (handler-case
+      (ag-grpc:do-stream-recv (msg stream)
+        (let ((data (slot-value msg 'cave::data)))
+          (when (and data (plusp (length data)))
+            (write-sequence data proc-input)
+            (force-output proc-input))))
+    (error (e)
+      (llog:warn "Client-to-git pump error" :error (princ-to-string e))))
+  (handler-case (close proc-input) (error () nil)))
+
+(defun pump-process-to-client (stream proc-output)
+  "Read git process stdout, send as PackData messages on gRPC stream.
+   Returns when git process closes stdout (EOF)."
+  (let ((buf (make-array +pack-chunk-size+ :element-type '(unsigned-byte 8))))
+    (handler-case
+        (loop
+          (let ((n (read-sequence buf proc-output)))
+            (when (zerop n) (return))
+            (let ((chunk (if (= n +pack-chunk-size+)
+                             buf
+                             (subseq buf 0 n))))
+              (ag-grpc:stream-send stream
+                (make-instance 'cave::pack-data :data chunk)))))
+      (error (e)
+        (llog:warn "Git-to-client pump error" :error (princ-to-string e))))))
+
+(defun handle-chamber-receive-pack (ctx stream)
+  "Bidirectional streaming handler: proxy git-receive-pack through gRPC."
+  (declare (ignore ctx))
+  ;; Read first message to get owner/repo
+  (let ((init-msg (ag-grpc:stream-recv stream)))
+    (unless init-msg (return-from handle-chamber-receive-pack))
+    (let* ((owner (slot-value init-msg 'cave::owner))
+           (repo-name (slot-value init-msg 'cave::repo-name))
+           (disk-path (chamber-repo-path owner repo-name))
+           (repo-key (format nil "~A/~A" owner repo-name))
+           (timeout (config-value :chamber-stream-timeout 300)))
+      (llog:info "ReceivePack started" :repo repo-key)
+      ;; Acquire global semaphore + per-repo write semaphore
+      (ensure-chamber-semaphore)
+      (unless (bt2:wait-on-semaphore *chamber-semaphore* :timeout timeout)
+        (error "ReceivePack timed out on global semaphore"))
+      (let ((sema (get-repo-write-sema repo-key)))
+        (unless (bt2:wait-on-semaphore sema :timeout timeout)
+          (bt2:signal-semaphore *chamber-semaphore*)
+          (error "ReceivePack timed out on repo lock"))
+        (unwind-protect
+            (let ((proc (uiop:launch-program
+                         (list "git" "receive-pack" (namestring disk-path))
+                         :input :stream :output :stream
+                         :element-type '(unsigned-byte 8))))
+              (unwind-protect
+                  (let ((proc-input (uiop:process-info-input proc))
+                        (proc-output (uiop:process-info-output proc)))
+                    ;; Write initial data if any
+                    (let ((init-data (slot-value init-msg 'cave::data)))
+                      (when (and init-data (plusp (length init-data)))
+                        (write-sequence init-data proc-input)
+                        (force-output proc-input)))
+                    ;; Pump in parallel: client→git in a thread, git→client here
+                    (let ((pump-thread (bt2:make-thread
+                                        (lambda () (pump-client-to-process stream proc-input))
+                                        :name "receive-pack-pump")))
+                      (pump-process-to-client stream proc-output)
+                      (bt2:join-thread pump-thread)))
+                ;; Wait for git process to finish
+                (uiop:wait-process proc))
+              ;; Invalidate cache after push
+              (chamber-invalidate-repo owner repo-name)
+              (llog:info "ReceivePack completed" :repo repo-key))
+          ;; Release locks
+          (bt2:signal-semaphore sema)
+          (bt2:signal-semaphore *chamber-semaphore*))))))
+
+(defun handle-chamber-upload-pack (ctx stream)
+  "Bidirectional streaming handler: proxy git-upload-pack through gRPC."
+  (declare (ignore ctx))
+  (let ((init-msg (ag-grpc:stream-recv stream)))
+    (unless init-msg (return-from handle-chamber-upload-pack))
+    (let* ((owner (slot-value init-msg 'cave::owner))
+           (repo-name (slot-value init-msg 'cave::repo-name))
+           (disk-path (chamber-repo-path owner repo-name))
+           (repo-key (format nil "~A/~A" owner repo-name)))
+      (llog:info "UploadPack started" :repo repo-key)
+      ;; Only acquire global semaphore (reads are concurrent)
+      (ensure-chamber-semaphore)
+      (unless (bt2:wait-on-semaphore *chamber-semaphore*
+                                      :timeout (config-value :chamber-stream-timeout 300))
+        (error "UploadPack timed out on global semaphore"))
+      (unwind-protect
+          (let ((proc (uiop:launch-program
+                       (list "git" "upload-pack" (namestring disk-path))
+                       :input :stream :output :stream
+                       :element-type '(unsigned-byte 8))))
+            (unwind-protect
+                (let ((proc-input (uiop:process-info-input proc))
+                      (proc-output (uiop:process-info-output proc)))
+                  (let ((init-data (slot-value init-msg 'cave::data)))
+                    (when (and init-data (plusp (length init-data)))
+                      (write-sequence init-data proc-input)
+                      (force-output proc-input)))
+                  (let ((pump-thread (bt2:make-thread
+                                      (lambda () (pump-client-to-process stream proc-input))
+                                      :name "upload-pack-pump")))
+                    (pump-process-to-client stream proc-output)
+                    (bt2:join-thread pump-thread)))
+              (uiop:wait-process proc))
+            (llog:info "UploadPack completed" :repo repo-key))
+        (bt2:signal-semaphore *chamber-semaphore*)))))
+
 ;;; --- Server lifecycle ---
 
 (defvar *chamber-server* nil)
@@ -496,6 +613,16 @@
     "/cave.chamber.Chamber/PullMirror" #'handle-chamber-pull-mirror
     :request-type 'cave::pull-mirror-request :response-type 'cave::pull-mirror-response)
 
+  ;; Git protocol streaming (bidirectional)
+  (ag-grpc:server-register-handler *chamber-server*
+    "/cave.chamber.Chamber/ReceivePack" #'handle-chamber-receive-pack
+    :request-type 'cave::pack-data :response-type 'cave::pack-data
+    :client-streaming t :server-streaming t)
+  (ag-grpc:server-register-handler *chamber-server*
+    "/cave.chamber.Chamber/UploadPack" #'handle-chamber-upload-pack
+    :request-type 'cave::pack-data :response-type 'cave::pack-data
+    :client-streaming t :server-streaming t)
+
   ;; Start in background
   (bt2:make-thread
    (lambda ()
@@ -503,9 +630,6 @@
        (error (e)
          (llog:error "Chamber server error" :error (princ-to-string e)))))
    :name "chamber-grpc-server")
-
-  ;; Start push-lock reaper for orphaned SSH push locks
-  (start-push-lock-reaper)
 
   (llog:info "Chamber started" :port port))
 

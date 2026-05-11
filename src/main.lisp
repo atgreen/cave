@@ -226,6 +226,100 @@
               :description "SSH key ID from the database"))
    :handler #'handle-git-shell))
 
+;;; --- GIT-PROXY subcommand ---
+
+(defun make-git-proxy-command ()
+  (clingon:make-command
+   :name "git-proxy"
+   :description "Proxy git protocol through Chamber gRPC (called by cave-shell.sh)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "command" :key :command :required t
+              :description "git-upload-pack or git-receive-pack")
+             (clingon:make-option :string
+              :long-name "repo" :key :repo :required t
+              :description "Repository as owner/name"))
+   :handler #'handle-git-proxy))
+
+(defun handle-git-proxy (cmd)
+  "Bridge SSH stdin/stdout to Chamber gRPC bidirectional stream."
+  (let* ((config-path (clingon:getopt cmd :config))
+         (git-command (clingon:getopt cmd :command))
+         (repo-path (clingon:getopt cmd :repo))
+         (parts (uiop:split-string repo-path :separator '(#\/)))
+         (owner (first parts))
+         (repo-name (second parts)))
+    (unless (and owner repo-name)
+      (format *error-output* "cave: invalid repo path~%")
+      (uiop:quit 1))
+    (load-config config-path)
+    ;; Create binary stdin/stdout streams
+    (let ((bin-in (sb-sys:make-fd-stream 0 :input t
+                                          :element-type '(unsigned-byte 8)
+                                          :buffering :full
+                                          :name "git-proxy-stdin"))
+          (bin-out (sb-sys:make-fd-stream 1 :output t
+                                           :element-type '(unsigned-byte 8)
+                                           :buffering :full
+                                           :name "git-proxy-stdout")))
+      ;; Connect to Chamber
+      (let* ((url (config-value :chamber-url))
+             (host (if url
+                       (let ((pos (search "://" url)))
+                         (if pos (subseq url (+ pos 3)) url))
+                       "127.0.0.1"))
+             (port-str (let ((colon (position #\: host :from-end t)))
+                         (when colon (subseq host (1+ colon)))))
+             (host-only (let ((colon (position #\: host :from-end t)))
+                          (if colon (subseq host 0 colon) host)))
+             (port (if port-str
+                       (parse-integer port-str :junk-allowed t)
+                       (config-value :chamber-port 9444)))
+             (channel (ag-grpc:make-channel host-only port :timeout nil))
+             (method (if (equal git-command "git-receive-pack")
+                         "/cave.chamber.Chamber/ReceivePack"
+                         "/cave.chamber.Chamber/UploadPack"))
+             (stream (ag-grpc:call-bidirectional-streaming
+                      channel method
+                      :response-type 'cave::pack-data)))
+        (handler-case
+            (progn
+              ;; Send init message with repo info
+              (ag-grpc:stream-send stream
+                (make-instance 'cave::pack-data
+                               :data (make-array 0 :element-type '(unsigned-byte 8))
+                               :owner owner :repo-name repo-name))
+              ;; Pump stdin→gRPC in a thread
+              (let ((pump-thread
+                      (bt2:make-thread
+                       (lambda ()
+                         (let ((buf (make-array 32768 :element-type '(unsigned-byte 8))))
+                           (handler-case
+                               (loop
+                                 (let ((n (read-sequence buf bin-in)))
+                                   (when (zerop n) (return))
+                                   (ag-grpc:stream-send stream
+                                     (make-instance 'cave::pack-data
+                                                    :data (subseq buf 0 n)))))
+                             (error () nil))
+                           (handler-case (ag-grpc:stream-close-send stream)
+                             (error () nil))))
+                       :name "git-proxy-stdin-pump")))
+                ;; Pump gRPC→stdout in main thread
+                (loop
+                  (let ((msg (ag-grpc:stream-read-message stream)))
+                    (unless msg (return))
+                    (let ((data (slot-value msg 'cave::data)))
+                      (when (and data (plusp (length data)))
+                        (write-sequence data bin-out)
+                        (force-output bin-out)))))
+                (bt2:join-thread pump-thread))
+              (uiop:quit 0))
+          (error (e)
+            (format *error-output* "cave: proxy error: ~A~%" e)
+            (uiop:quit 1)))))))
+
 ;;; --- UPDATE-KEYS subcommand ---
 
 (defun make-update-keys-command ()
@@ -892,6 +986,7 @@
                        (make-serve-command)
                        (make-migrate-command)
                        (make-git-shell-command)
+                       (make-git-proxy-command)
                        (make-update-keys-command)
                        (make-run-checks-command)
                        (make-post-receive-command)

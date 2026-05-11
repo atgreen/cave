@@ -104,10 +104,9 @@
 
 (defun authorized-keys-line (key-record config-path shell-path)
   "Generate an authorized_keys line for a single SSH key record."
-  (format nil "command=\"~A ~A ~A ~A\",~
+  (format nil "command=\"~A ~A ~A\",~
                no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ~A"
-          shell-path config-path (getf key-record :id)
-          (config-value :http-port 8080) (getf key-record :public-key)))
+          shell-path config-path (getf key-record :id) (getf key-record :public-key)))
 
 (defun generate-authorized-keys (config-path shell-path)
   "Generate the full authorized_keys file content from all active SSH keys."
