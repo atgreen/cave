@@ -145,6 +145,7 @@
 
 (defun render-new-repo-form (action &key error)
   "Render the tabbed new-repo form (Empty / Import / Mirror)."
+  (spinneret:with-html
   (when error (:div.alert.alert-error error))
   (:div.repo-create-tabs
    (:raw "<span class=\"repo-tab-active\" data-mode=\"empty\">Empty</span>")
@@ -192,7 +193,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
     nameInput.required = mode === 'empty';
     nameInput.placeholder = mode === 'empty' ? '' : 'Leave blank to derive from URL';
   });
-});")))
+});"))
+  ))
 
 (defun view-new-personal-repo (&key error)
   "Render the personal repo creation form."
