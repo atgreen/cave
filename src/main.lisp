@@ -477,7 +477,8 @@
                               (step-name (slot-value step 'cave::name))
                               (step-cmd (slot-value step 'cave::command))
                               (step-timeout (let ((ts (slot-value step 'cave::timeout-seconds)))
-                                              (when (and ts (plusp ts)) ts))))
+                                              (when (and ts (plusp ts)) ts)))
+                              (step-continue-on-error (slot-value step 'cave::continue-on-error)))
                           (format t "  Step ~A: ~A~%"
                                   (if (uiop:emptyp step-name) "(unnamed)" step-name)
                                   (subseq step-cmd 0 (min 60 (length step-cmd))))
@@ -546,8 +547,11 @@
                                                  :response-type 'cave::update-step-status-response
                                                  :metadata (make-auth-metadata auth-token))
                               (unless (zerop exit-code)
-                                (setf overall-success nil)
-                                (return)))))))) ;; close unless,let,mvb,let,dolist,when(steps)
+                                (if step-continue-on-error
+                                    (format t "    continue-on-error: proceeding despite failure~%")
+                                    (progn
+                                      (setf overall-success nil)
+                                      (return)))))))))) ;; close unless,let,mvb,let,dolist,when(steps)
                     ;; Stop and remove container
                     (uiop:run-program (list "podman" "rm" "-f" container-name)
                                       :output :string :error-output :string

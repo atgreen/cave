@@ -535,7 +535,10 @@ CREATE INDEX idx_workflow_steps_job ON cave_workflow_steps (job_id);")
     (36 . "ALTER TABLE cave_workflow_jobs ADD COLUMN runs_on TEXT DEFAULT '';")
 
     (37 . "ALTER TABLE cave_workflow_jobs ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE cave_workflow_steps ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0;"))
+ALTER TABLE cave_workflow_steps ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0;")
+
+    (38 . "ALTER TABLE cave_workflow_jobs ADD COLUMN continue_on_error BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE cave_workflow_steps ADD COLUMN continue_on_error BOOLEAN NOT NULL DEFAULT FALSE;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

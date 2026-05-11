@@ -171,7 +171,8 @@
                                               :name (let ((n (getf s :name)))
                                                       (if (eq n :null) "" n))
                                               :command (getf s :command)
-                                              :timeout-seconds (getf s :timeout-seconds 0)))
+                                              :timeout-seconds (getf s :timeout-seconds 0)
+                                              :continue-on-error (eq (getf s :continue-on-error) t)))
                              steps)))
     ;; Mark workflow run as running if it's still queued
     (when (and run (equal (getf run :status) "queued"))

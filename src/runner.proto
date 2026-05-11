@@ -82,6 +82,7 @@ message StepSpec {
   string name = 3;
   string command = 4;
   int32 timeout_seconds = 5;
+  bool continue_on_error = 6;
 }
 
 message UpdateStepStatusRequest {

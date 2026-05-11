@@ -741,10 +741,12 @@
        :set 'status status
        :where (:= 'id run-id))))))
 
-(defun create-workflow-job (&key workflow-run-id name image needs runs-on (timeout-seconds 0))
+(defun create-workflow-job (&key workflow-run-id name image needs runs-on
+                                (timeout-seconds 0) continue-on-error)
   "Create a workflow job. NEEDS is a list of job name strings.
    RUNS-ON is a list of label strings the runner must have.
-   TIMEOUT-SECONDS is the max job duration (0 means use default)."
+   TIMEOUT-SECONDS is the max job duration (0 means use default).
+   CONTINUE-ON-ERROR when true prevents dependent jobs from being skipped on failure."
   (let ((needs-str (if needs (format nil "~{~A~^,~}" needs) ""))
         (runs-on-str (if runs-on (format nil "~{~A~^,~}" runs-on) "")))
     (postmodern:query
@@ -755,6 +757,7 @@
            'needs needs-str
            'runs-on runs-on-str
            'timeout-seconds (or timeout-seconds 0)
+           'continue-on-error (if continue-on-error t :false)
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
@@ -844,8 +847,9 @@
         :returning '*)
        :plist))))
 
-(defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0))
-  "Create a workflow step. TIMEOUT-SECONDS is the max step duration (0 means no limit)."
+(defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0) continue-on-error)
+  "Create a workflow step. TIMEOUT-SECONDS is the max step duration (0 means no limit).
+   CONTINUE-ON-ERROR when true allows the job to proceed even if this step fails."
   (postmodern:query
    (:insert-into 'cave-workflow-steps
     :set 'job-id job-id
@@ -853,6 +857,7 @@
          'name (or name :null)
          'command command
          'timeout-seconds (or timeout-seconds 0)
+         'continue-on-error (if continue-on-error t :false)
     :returning '*)
    :plist))
 

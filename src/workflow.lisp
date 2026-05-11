@@ -90,6 +90,7 @@
                                 (t (list runs-on-raw))))
                      (job-timeout (let ((v (cdr (assoc "timeout" job-spec :test #'equal))))
                                     (when (integerp v) v)))
+                     (job-continue-on-error (cdr (assoc "continue-on-error" job-spec :test #'equal)))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
                   (let ((job (create-workflow-job
@@ -98,7 +99,8 @@
                               :image image
                               :needs needs
                               :runs-on runs-on
-                              :timeout-seconds job-timeout)))
+                              :timeout-seconds job-timeout
+                              :continue-on-error (eq job-continue-on-error t))))
                     (llog:info "Created workflow job"
                                :job job-name :job-id (getf job :id))
                     ;; Create steps
@@ -108,15 +110,17 @@
                             do (let ((step-name (cdr (assoc "name" step-spec :test #'equal)))
                                      (command (cdr (assoc "run" step-spec :test #'equal)))
                                      (step-timeout (let ((v (cdr (assoc "timeout" step-spec :test #'equal))))
-                                                     (when (integerp v) v))))
+                                                     (when (integerp v) v)))
+                                     (step-continue-on-error (cdr (assoc "continue-on-error" step-spec :test #'equal))))
                                  (when command
                                    (create-workflow-step
                                     :job-id (getf job :id)
                                     :step-order order
                                     :name step-name
                                     :command command
-                                    :timeout-seconds step-timeout)))))))))))
-        run))))
+                                    :timeout-seconds step-timeout
+                                    :continue-on-error (eq step-continue-on-error t)))))))))))
+        run)))))
 
 (defun check-workflow-job-completion (job)
   "After a job completes, update dependent jobs and the workflow run.
@@ -125,9 +129,10 @@
   (let* ((run-id (getf job :workflow-run-id))
          (job-name (getf job :name))
          (job-status (getf job :status))
+         (continue-on-error (eq (getf job :continue-on-error) t))
          (all-jobs (list-workflow-jobs run-id)))
-    ;; If failed: skip jobs that depend on this one
-    (when (equal job-status "failure")
+    ;; If failed and NOT continue-on-error: skip jobs that depend on this one
+    (when (and (equal job-status "failure") (not continue-on-error))
       (dolist (j all-jobs)
         (when (and (member (getf j :status) '("queued" "blocked") :test #'equal)
                    (job-depends-on-p j job-name))
@@ -137,8 +142,9 @@
            (list :workflow-run-id run-id
                  :name (getf j :name)
                  :status "skipped")))))
-    ;; If succeeded: unblock waiting jobs whose deps are now all met
-    (when (equal job-status "success")
+    ;; If succeeded (or failed with continue-on-error): unblock waiting jobs
+    (when (or (equal job-status "success")
+              (and (equal job-status "failure") continue-on-error))
       (let ((refreshed-jobs (list-workflow-jobs run-id)))
         (dolist (j refreshed-jobs)
           (when (equal (getf j :status) "blocked")
@@ -147,7 +153,9 @@
                             (let ((dep (find dep-name refreshed-jobs
                                              :key (lambda (x) (getf x :name))
                                              :test #'equal)))
-                              (and dep (equal (getf dep :status) "success"))))
+                              (and dep (or (equal (getf dep :status) "success")
+                                           (and (equal (getf dep :status) "failure")
+                                                (eq (getf dep :continue-on-error) t))))))
                           needs)
                 (update-job-status (getf j :id) "queued")))))))
     ;; Check if all jobs are terminal → finalize run
