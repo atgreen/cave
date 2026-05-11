@@ -13,11 +13,11 @@
 
 (defun zoekt-index-repo (owner repo-name)
   "Trigger zoekt indexing for a repository in a background thread.
-   Runs zoekt-git-index with -name owner/repo-name so the index uses
-   the same naming convention as Cave URLs."
+   Uses -repo_cache to derive owner/repo naming from the directory structure."
   (when (config-value :zoekt-enabled)
     (let ((repo-path (namestring (repo-disk-path owner repo-name)))
           (index-dir (config-value :zoekt-index-dir "/data/zoekt-index"))
+          (repos-base (namestring (repos-dir)))
           (index-name (format nil "~A/~A" owner repo-name)))
       (bt:make-thread
        (lambda ()
@@ -27,7 +27,7 @@
                   (list "zoekt-git-index"
                         "-index" index-dir
                         "-branches" "HEAD"
-                        "-name" index-name
+                        "-repo_cache" repos-base
                         repo-path)
                   :output '(:string :stripped t)
                   :error-output '(:string :stripped t)
@@ -44,45 +44,39 @@
 ;;; --- Search API Client ---
 
 (defun zoekt-search (query &key (limit 50) repo-scope)
-  "Search via the Zoekt webserver JSON API.
+  "Search via the Zoekt webserver JSON API (GET /search?format=json).
    Returns a plist with :files (list of file-match plists) and :stats.
    REPO-SCOPE when non-nil restricts search to \"owner/repo-name\"."
   (unless (config-value :zoekt-enabled)
     (return-from zoekt-search (list :files nil :error "Search not configured")))
   (let* ((effective-query (if repo-scope
-                              (format nil "repo:~A ~A" repo-scope query)
+                              (format nil "r:~A ~A" repo-scope query)
                               query))
-         (opts (make-hash-table :test 'equal))
-         (payload (make-hash-table :test 'equal)))
-    (setf (gethash "MaxMatchDisplayCount" opts) limit)
-    (setf (gethash "NumContextLines" opts) 1)
-    (setf (gethash "Q" payload) effective-query)
-    (setf (gethash "Opts" payload) opts)
-    (let ((url (format nil "~A/api/search"
-                       (config-value :zoekt-web-url "http://cave-prod-zoekt-web:6070"))))
-      (handler-case
-          (multiple-value-bind (body status)
-              (dex:post url
-                        :content (com.inuoe.jzon:stringify payload)
-                        :headers '(("Content-Type" . "application/json"))
-                        :connect-timeout 5
-                        :read-timeout 10)
-            (if (= status 200)
-                (parse-zoekt-response body)
-                (list :files nil :error (format nil "Search returned HTTP ~A" status))))
-        (error (e)
-          (llog:warn "Zoekt search failed" :error (princ-to-string e))
-          (list :files nil :error "Search temporarily unavailable"))))))
+         (base-url (config-value :zoekt-web-url "http://cave-prod-zoekt-web:6070"))
+         (url (format nil "~A/search?q=~A&format=json&num=~A&ctx=1"
+                      base-url
+                      (hunchentoot:url-encode effective-query)
+                      limit)))
+    (handler-case
+        (multiple-value-bind (body status)
+            (dex:get url :connect-timeout 5 :read-timeout 10)
+          (if (= status 200)
+              (parse-zoekt-response body)
+              (list :files nil :error (format nil "Search returned HTTP ~A" status))))
+      (error (e)
+        (llog:warn "Zoekt search failed" :error (princ-to-string e))
+        (list :files nil :error "Search temporarily unavailable")))))
 
 (defun parse-zoekt-response (json-string)
-  "Parse Zoekt JSON search response into a plist structure."
+  "Parse Zoekt JSON search response into a plist structure.
+   The response is wrapped in a 'result' key with FileMatches array."
   (let* ((data (com.inuoe.jzon:parse json-string))
-         (file-matches (gethash "FileMatches" data))
+         (result-obj (gethash "result" data))
+         (file-matches (when result-obj (gethash "FileMatches" result-obj)))
          (result nil))
     (when file-matches
       (loop for fm across file-matches
-            do (let* ((repo-obj (gethash "Repository" fm))
-                      (repo-name (when repo-obj (gethash "Name" repo-obj)))
+            do (let* ((repo-name (gethash "Repo" fm))
                       (file-name (gethash "FileName" fm))
                       (chunk-matches (gethash "ChunkMatches" fm)))
                  (when repo-name

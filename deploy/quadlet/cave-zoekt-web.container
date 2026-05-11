@@ -7,8 +7,8 @@ Requires=cave.service
 ContainerName=cave-prod-zoekt-web
 Image=localhost/cave-zoekt:prod
 Network=cave.network
-Exec=zoekt-webserver -rpc -listen :6070 -index /data/index
-Volume=cave-zoekt.volume:/data/index:ro
+Exec=-rpc -listen :6070 -index /data/index
+Volume=cave-zoekt.volume:/data/index
 Volume=cave-data.volume:/var/lib/cave:ro
 
 [Service]
