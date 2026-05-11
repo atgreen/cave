@@ -691,7 +691,10 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
            (readme-html (when (and readme-content
                                    (search ".md" (string-downcase
                                                    (getf readme-entry :name))))
-                          (render-markdown readme-content)))
+                          (render-markdown readme-content
+                                          :raw-base-url (format nil "/~A/~A/raw/~A?path="
+                                                                owner repo-name
+                                                                (or default-branch "HEAD")))))
            (readme-html (or readme-html
                             (when readme-content
                               (format nil "<pre>~A</pre>"

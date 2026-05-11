@@ -451,13 +451,43 @@
                   :key (lambda (e) (string-downcase (getf e :name))) :test #'string=)
             (first candidates))))))
 
-(defun render-markdown (markdown-string)
-  "Render Markdown to sanitized HTML string."
+(defun render-markdown (markdown-string &key raw-base-url)
+  "Render Markdown to sanitized HTML string.
+   RAW-BASE-URL when provided rewrites relative image src to that base (e.g. /owner/repo/raw/HEAD?path=)."
   (let* ((3bmd-tables:*tables* t)
          (3bmd-code-blocks:*code-blocks* t)
          (raw-html (with-output-to-string (s)
-                     (3bmd:parse-string-and-print-to-stream markdown-string s))))
-    (sanitize-html:sanitize raw-html)))
+                     (3bmd:parse-string-and-print-to-stream markdown-string s)))
+         (sanitized (sanitize-html:sanitize raw-html)))
+    (if raw-base-url
+        (rewrite-relative-img-src sanitized raw-base-url)
+        sanitized)))
+
+(defun rewrite-relative-img-src (html base-url)
+  "Rewrite relative src= in <img> tags to use BASE-URL prefix."
+  (let ((result html)
+        (pos 0))
+    (loop
+      (let ((img-pos (search "<img " result :start2 pos)))
+        (unless img-pos (return result))
+        (let ((src-pos (search "src=\"" result :start2 img-pos)))
+          (unless src-pos (return result))
+          (let* ((url-start (+ src-pos 5))
+                 (url-end (position #\" result :start url-start))
+                 (url (subseq result url-start url-end)))
+            ;; Skip absolute URLs (http://, https://, //, data:)
+            (if (or (uiop:string-prefix-p "http://" url)
+                    (uiop:string-prefix-p "https://" url)
+                    (uiop:string-prefix-p "//" url)
+                    (uiop:string-prefix-p "data:" url))
+                (setf pos (1+ url-end))
+                ;; Rewrite relative URL
+                (let ((new-url (format nil "~A~A" base-url url)))
+                  (setf result (concatenate 'string
+                                            (subseq result 0 url-start)
+                                            new-url
+                                            (subseq result url-end)))
+                  (setf pos (+ url-start (length new-url) 1))))))))))
 
 (defun file-language (filename)
   "Map a filename to a Monaco editor language identifier."
