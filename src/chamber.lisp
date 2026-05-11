@@ -44,6 +44,17 @@
         (setf (gethash repo-key *chamber-repo-locks*)
               (bt:make-lock (format nil "repo-write:~A" repo-key))))))
 
+;; Per-repo semaphores (count=1) for cross-thread acquire/release (SSH push bracket)
+(defvar *chamber-repo-semas* (make-hash-table :test 'equal) "Per-repo write semaphores.")
+
+(defun get-repo-write-sema (repo-key)
+  "Get or create a per-repo binary semaphore for cross-thread locking."
+  (bt:with-lock-held (*chamber-repo-locks-lock*)
+    (or (gethash repo-key *chamber-repo-semas*)
+        (setf (gethash repo-key *chamber-repo-semas*)
+              (bt:make-semaphore :name (format nil "repo-sema:~A" repo-key)
+                                 :count 1)))))
+
 (defmacro with-git-write (repo-key &body body)
   "Execute BODY with semaphore + per-repo write lock (serialized writes per repo)."
   (let ((key (gensym "KEY")))

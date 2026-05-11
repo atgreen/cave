@@ -246,7 +246,7 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                           :age-seconds (- now (getf entry :time)))
                (chamber-invalidate-repo (getf entry :owner) (getf entry :repo))
                (handler-case
-                   (bt:release-lock (getf entry :lock))
+                   (bt:signal-semaphore (getf entry :sema))
                  (error () nil))
                (handler-case
                    (bt:signal-semaphore *chamber-semaphore*)
@@ -264,20 +264,10 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
   (unless (bt:wait-on-semaphore *chamber-semaphore* :timeout 30)
     (setf (hunchentoot:return-code*) 503)
     (return-from internal-push-acquire "Busy"))
-  ;; Acquire per-repo write lock (poll with timeout since bt v1 has no lock timeout)
-  (let* ((lock (get-repo-write-lock (format nil "~A/~A" owner repo-name)))
-         (deadline (+ (get-internal-real-time)
-                      (* 30 internal-time-units-per-second)))
-         (acquired nil))
-    (loop
-      (when (bt:acquire-lock lock nil)
-        (setf acquired t)
-        (return))
-      (when (>= (get-internal-real-time) deadline)
-        (return))
-      (sleep 0.1))
-    (unless acquired
-      ;; Release semaphore on lock timeout
+  ;; Acquire per-repo write semaphore (binary sema — cross-thread safe)
+  (let ((sema (get-repo-write-sema (format nil "~A/~A" owner repo-name))))
+    (unless (bt:wait-on-semaphore sema :timeout 30)
+      ;; Release global semaphore on repo-lock timeout
       (bt:signal-semaphore *chamber-semaphore*)
       (setf (hunchentoot:return-code*) 503)
       (return-from internal-push-acquire "Busy"))
@@ -286,7 +276,7 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
       (bt:with-lock-held (*active-push-tokens-lock*)
         (setf (gethash token *active-push-tokens*)
               (list :owner owner :repo repo-name
-                    :time (get-universal-time) :lock lock)))
+                    :time (get-universal-time) :sema sema)))
       (llog:info "Push lock acquired" :repo (format nil "~A/~A" owner repo-name))
       token)))
 
@@ -304,8 +294,8 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
       (return-from internal-push-release "Unknown token"))
     ;; Invalidate cache
     (chamber-invalidate-repo owner repo-name)
-    ;; Release repo write lock, then semaphore (reverse of acquire order)
-    (handler-case (bt:release-lock (getf entry :lock)) (error () nil))
+    ;; Release repo write semaphore, then global semaphore (reverse of acquire order)
+    (handler-case (bt:signal-semaphore (getf entry :sema)) (error () nil))
     (handler-case (bt:signal-semaphore *chamber-semaphore*) (error () nil))
     ;; Remove token
     (bt:with-lock-held (*active-push-tokens-lock*)
