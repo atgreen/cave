@@ -530,7 +530,9 @@ CREATE TABLE cave_workflow_steps (
   started_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ
 );
-CREATE INDEX idx_workflow_steps_job ON cave_workflow_steps (job_id);"))
+CREATE INDEX idx_workflow_steps_job ON cave_workflow_steps (job_id);")
+
+    (36 . "ALTER TABLE cave_workflow_jobs ADD COLUMN runs_on TEXT DEFAULT '';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

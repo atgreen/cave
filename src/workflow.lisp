@@ -83,13 +83,19 @@
                               ((null needs-raw) nil)
                               ((listp needs-raw) needs-raw)
                               (t (list needs-raw))))
+                     (runs-on-raw (cdr (assoc "runs-on" job-spec :test #'equal)))
+                     (runs-on (cond
+                                ((null runs-on-raw) nil)
+                                ((listp runs-on-raw) runs-on-raw)
+                                (t (list runs-on-raw))))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
                   (let ((job (create-workflow-job
                               :workflow-run-id (getf run :id)
                               :name job-name
                               :image image
-                              :needs needs)))
+                              :needs needs
+                              :runs-on runs-on)))
                     (llog:info "Created workflow job"
                                :job job-name :job-id (getf job :id))
                     ;; Create steps

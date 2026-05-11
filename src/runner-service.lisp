@@ -246,7 +246,7 @@
                  (ag-grpc:stream-send stream (make-automation-task-event run)))
                 ;; Try workflow job
                 (t
-                 (let ((job (fetch-queued-workflow-job runner-id scope scope-id)))
+                 (let ((job (fetch-queued-workflow-job runner-id (getf runner-rec :labels) scope scope-id)))
                    (when job
                      (ag-grpc:stream-send stream (make-workflow-task-event job)))))))))
           (error (e)

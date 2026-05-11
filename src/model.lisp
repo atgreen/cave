@@ -741,15 +741,18 @@
        :set 'status status
        :where (:= 'id run-id))))))
 
-(defun create-workflow-job (&key workflow-run-id name image needs)
-  "Create a workflow job. NEEDS is a list of job name strings."
-  (let ((needs-str (if needs (format nil "~{~A~^,~}" needs) "")))
+(defun create-workflow-job (&key workflow-run-id name image needs runs-on)
+  "Create a workflow job. NEEDS is a list of job name strings.
+   RUNS-ON is a list of label strings the runner must have."
+  (let ((needs-str (if needs (format nil "~{~A~^,~}" needs) ""))
+        (runs-on-str (if runs-on (format nil "~{~A~^,~}" runs-on) "")))
     (postmodern:query
      (:insert-into 'cave-workflow-jobs
       :set 'workflow-run-id workflow-run-id
            'name name
            'image image
            'needs needs-str
+           'runs-on runs-on-str
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
@@ -782,9 +785,10 @@
        :set 'status status
        :where (:= 'id job-id))))))
 
-(defun fetch-queued-workflow-job (runner-id runner-scope runner-scope-id)
+(defun fetch-queued-workflow-job (runner-id runner-labels runner-scope runner-scope-id)
   "Fetch a queued workflow job whose dependencies are met.
-   Respects runner scope and one-task-per-runner policy."
+   Respects runner scope, label matching, and one-task-per-runner policy.
+   RUNNER-LABELS is the runner's comma-separated label string."
   ;; Check if runner already has an active task (automation or workflow)
   (let ((active-auto (postmodern:query
                       (:select 'id :from 'cave-automation-runs
@@ -798,29 +802,36 @@
                      :single)))
     (when (or active-auto active-job)
       (return-from fetch-queued-workflow-job nil)))
-  ;; Find a queued job with all dependencies met (using raw SQL for the subquery)
-  (let ((job (postmodern:query
-              (format nil "SELECT wj.* FROM cave_workflow_jobs wj ~
-                WHERE wj.status = 'queued' ~
-                  AND NOT EXISTS ( ~
-                    SELECT 1 FROM cave_workflow_jobs dep ~
-                    WHERE dep.workflow_run_id = wj.workflow_run_id ~
-                      AND dep.name = ANY(string_to_array(wj.needs, ',')) ~
-                      AND dep.status != 'success') ~
-                  ~A ~
-                ORDER BY wj.created_at LIMIT 1"
-                      (cond
-                        ((equal runner-scope "repo")
-                         (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id = ~A)"
-                                 runner-scope-id))
-                        ((equal runner-scope "org")
-                         (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id IN (SELECT id FROM cave_repos WHERE org_id = ~A))"
-                                 runner-scope-id))
-                        ((equal runner-scope "user")
-                         (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id IN (SELECT id FROM cave_repos WHERE owner_id = ~A))"
-                                 runner-scope-id))
-                        (t "")))
-              :plist)))
+  ;; Find a queued job with all dependencies met and labels matched.
+  ;; Label matching: if runs_on is empty, any runner can take it.
+  ;; If runs_on is set, every required label must appear in the runner's labels.
+  (let* ((safe-labels (if (and runner-labels (not (equal runner-labels "")))
+                         (postmodern:sql-escape-string runner-labels)
+                         "''"))
+         (job (postmodern:query
+               (format nil "SELECT wj.* FROM cave_workflow_jobs wj ~
+                 WHERE wj.status = 'queued' ~
+                   AND NOT EXISTS ( ~
+                     SELECT 1 FROM cave_workflow_jobs dep ~
+                     WHERE dep.workflow_run_id = wj.workflow_run_id ~
+                       AND dep.name = ANY(string_to_array(wj.needs, ',')) ~
+                       AND dep.status != 'success') ~
+                   AND (wj.runs_on = '' OR string_to_array(wj.runs_on, ',') <@ string_to_array(~A, ',')) ~
+                   ~A ~
+                 ORDER BY wj.created_at LIMIT 1"
+                       safe-labels
+                       (cond
+                         ((equal runner-scope "repo")
+                          (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id = ~A)"
+                                  runner-scope-id))
+                         ((equal runner-scope "org")
+                          (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id IN (SELECT id FROM cave_repos WHERE org_id = ~A))"
+                                  runner-scope-id))
+                         ((equal runner-scope "user")
+                          (format nil "AND wj.workflow_run_id IN (SELECT id FROM cave_workflow_runs WHERE repo_id IN (SELECT id FROM cave_repos WHERE owner_id = ~A))"
+                                  runner-scope-id))
+                         (t "")))
+               :plist)))
     (when job
       ;; Atomically assign
       (postmodern:query
