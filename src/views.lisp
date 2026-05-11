@@ -49,6 +49,10 @@
           (:div.nav-right
            (if *current-user*
                (progn
+                 (when (config-value :zoekt-enabled)
+                   (:form.nav-search :method "get" :action "/-/search"
+                    (:input.nav-search-input :type "text" :name "q"
+                     :placeholder "Search code..." :autocomplete "off")))
                  (:a.btn.btn-sm :href "/-/new-org" "New org")
                  (:a.btn.btn-sm :href "/-/settings" "Settings")
                  (when (getf *current-user* :is-admin)
@@ -321,7 +325,8 @@
                               (format nil "/~A/~A" owner-name repo-name)
                               (format nil "/~A/~A/tree/~A?path=~A"
                                       owner-name repo-name default-branch parent))
-                 "..")))))
+                 ".."))
+           (:td.file-size ""))))
       (dolist (entry file-tree)
         (let* ((name (getf entry :name))
                (is-dir (equal (getf entry :type) "tree"))
@@ -336,7 +341,14 @@
                                   owner-name repo-name default-branch entry-path)
                           (format nil "/~A/~A/blob/~A?path=~A"
                                   owner-name repo-name default-branch entry-path))
-             name)))))))))
+             name))
+           (:td.file-size
+            (let ((size (getf entry :size)))
+              (when (and size (not is-dir))
+                (cond
+                  ((>= size (* 1024 1024)) (format nil "~,1f MB" (/ size (* 1024.0 1024.0))))
+                  ((>= size 1024) (format nil "~,1f KB" (/ size 1024.0)))
+                  (t (format nil "~A B" size)))))))))))))
 
 (defun view-repo (&key owner-name repo empty default-branch
                        readme-html readme-filename)
@@ -502,6 +514,11 @@
           (:raw (format nil "
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs' } });
 require(['vs/editor/editor.main'], function() {
+  var s = document.createElement('script');
+  s.src = '/static/js/lisp-language.js';
+  s.onload = init; s.onerror = init;
+  document.head.appendChild(s);
+  function init() {
   var container = document.getElementById('editor-container');
   var lineCount = ~A.split('\\n').length;
   container.style.height = Math.min(Math.max(lineCount * 19 + 20, 200), 800) + 'px';
@@ -521,6 +538,7 @@ require(['vs/editor/editor.main'], function() {
     hideCursorInOverviewRuler: true,
     scrollbar: { verticalScrollbarSize: 8 }
   });
+  }
 });"
                   (com.inuoe.jzon:stringify content)
                   (com.inuoe.jzon:stringify content)
@@ -1728,3 +1746,75 @@ export CAVE_TOKEN=<your-api-token>
          (:input :type "text" :id "token_name" :name "name" :required t
                  :placeholder "e.g. ci-bot"))
         (:button.btn.btn-primary :type "submit" "Create token"))))))
+
+;;; --- Search Results ---
+
+(defun view-search-results (&key query repo-scope results)
+  "Render the search results page."
+  (page (:title (if (string= query "") "Search" (format nil "~A — Search" query)))
+    (:h1 "Search")
+    (:form.search-form :method "get" :action "/-/search"
+     (:div.search-bar
+      (:input.search-input :type "text" :name "q" :value query
+       :placeholder "Search code..." :autofocus "autofocus")
+      (when repo-scope
+        (:input :type "hidden" :name "repo" :value repo-scope))
+      (:button.btn.btn-primary :type "submit" "Search"))
+     (when repo-scope
+       (:div.search-scope
+        (:span "Searching in ")
+        (:a :href (format nil "/~A" repo-scope) repo-scope)
+        " "
+        (:a.btn.btn-sm :href (format nil "/-/search?q=~A"
+                               (hunchentoot:url-encode query))
+         "Search all repos"))))
+    (when (getf results :error)
+      (:div.alert (:raw (spinneret:escape-string (getf results :error)))))
+    (let ((files (getf results :files)))
+      (cond
+        ((string= query "")
+         nil)
+        ((null files)
+         (:p.text-muted "No results found."))
+        (t
+         (:p.text-muted (format nil "~A file~:P matched."
+                                (length files)))
+         (dolist (fm files)
+           (:div.search-result
+            (:div.search-result-header
+             (:a :href (format nil "/~A/tree/HEAD/~A"
+                         (getf fm :repository) (getf fm :file-name))
+              (:span.search-repo (getf fm :repository))
+              " / "
+              (:span.search-file (getf fm :file-name))))
+            (let ((lines (getf fm :lines)))
+              (when lines
+                (:pre.search-lines
+                 (dolist (line lines)
+                   (:div.search-line
+                    (:span.line-num
+                     (princ-to-string (getf line :line-number)))
+                    (:span.line-content
+                     (render-search-line (getf line :line)
+                                         (getf line :fragments)))))))))))))))
+
+(defun render-search-line (line-text fragments)
+  "Render a line of search results with highlighted match fragments."
+  (if (or (null fragments) (null line-text))
+      (spinneret:with-html
+        (:raw (spinneret:escape-string (or line-text ""))))
+      (let ((sorted (sort (copy-list fragments) #'<
+                          :key (lambda (f) (getf f :offset))))
+            (pos 0)
+            (len (length line-text)))
+        (spinneret:with-html
+          (dolist (frag sorted)
+            (let ((offset (min (getf frag :offset) len))
+                  (frag-len (getf frag :length)))
+              (when (> offset pos)
+                (:raw (spinneret:escape-string (subseq line-text pos offset))))
+              (let ((end (min (+ offset frag-len) len)))
+                (:mark (subseq line-text offset end))
+                (setf pos end))))
+          (when (< pos len)
+            (:raw (spinneret:escape-string (subseq line-text pos))))))))

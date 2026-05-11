@@ -32,7 +32,10 @@
     :oidc-issuer nil
     :oidc-issuer-internal nil
     :oidc-client-id "cave"
-    :oidc-client-secret nil))
+    :oidc-client-secret nil
+    :zoekt-enabled nil
+    :zoekt-web-url "http://cave-prod-zoekt-web:6070"
+    :zoekt-index-dir "/data/zoekt-index"))
 
 (defun load-config (path)
   "Load cave.conf from PATH. Returns the merged config plist."

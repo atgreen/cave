@@ -17,6 +17,7 @@ Cave is built for small teams who want to own their infrastructure without the b
 - **Webhooks** — HTTP callbacks on push, PR, and issue events
 - **Commit status API** — external CI reports pass/fail on PRs
 - **Automation runners** — self-hosted gRPC runners execute checks and automations
+- **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), with repo-scoped and global modes
 - **Repo mirroring** — push to and pull from GitHub/GitLab/Codeberg
 - **User themes** — built-in themes (Terminal Warmth, Nord, Solarized, Dracula, Light) plus custom themes via `cave-themes` repos
 - **Backup/restore** — one-command backup and restore of all data
@@ -90,6 +91,7 @@ src/
 ├── git.lisp            — Git CLI integration (branch, log, tree, diff, merge)
 ├── views.lisp          — All HTML views via Spinneret
 ├── notify.lisp         — Email notifications, webhooks, automation scheduling
+├── search-zoekt.lisp   — Zoekt code search: indexing, API client, visibility filter
 ├── metrics.lisp        — Prometheus metrics endpoint
 ├── runner-service.lisp — gRPC service for automation runners
 ├── ssh.lisp            — SSH transport, authorized_keys generation

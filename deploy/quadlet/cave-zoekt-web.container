@@ -1,0 +1,18 @@
+[Unit]
+Description=Zoekt search webserver (sourcegraph/zoekt)
+After=cave.service
+Requires=cave.service
+
+[Container]
+ContainerName=cave-prod-zoekt-web
+Image=ghcr.io/sourcegraph/zoekt
+Network=cave.network
+Exec=zoekt-webserver -rpc -listen :6070 -index /data/index
+Volume=cave-zoekt.volume:/data/index:ro
+Volume=cave-data.volume:/var/lib/cave:ro
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

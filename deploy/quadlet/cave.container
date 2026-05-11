@@ -11,6 +11,7 @@ PublishPort=127.0.0.1:9080:8080
 PublishPort=127.0.0.1:9222:22
 PublishPort=127.0.0.1:9443:9443
 Volume=cave-data.volume:/var/lib/cave
+Volume=cave-zoekt.volume:/data/zoekt-index
 Environment=CAVE_DB_HOST=cave-prod-pg
 Environment=CAVE_OIDC_ISSUER=http://localhost:9180/realms/cave
 Environment=CAVE_OIDC_ISSUER_INTERNAL=http://cave-prod-keycloak:8080/realms/cave

@@ -99,11 +99,30 @@
     (return-from require-sudo nil))
   t)
 
+(defun plist-to-hash-table (plist)
+  "Convert a plist to a hash table with lowercase string keys."
+  (let ((ht (make-hash-table :test 'equal)))
+    (loop for (key val) on plist by #'cddr
+          do (setf (gethash (string-downcase (substitute #\_ #\- (symbol-name key))) ht)
+                   (if (eq val :null) 'null val)))
+    ht))
+
+(defun api-serialize (data)
+  "Convert postmodern query results to JSON-friendly structures.
+Plists become objects, lists of plists become arrays of objects, NIL becomes #()."
+  (cond
+    ((null data) #())
+    ((and (listp data) (keywordp (car data)))
+     (plist-to-hash-table data))
+    ((and (listp data) (listp (car data)) (keywordp (caar data)))
+     (map 'vector #'plist-to-hash-table data))
+    (t data)))
+
 (defun json-response (data &key (status 200))
   "Return a JSON response."
   (setf (hunchentoot:content-type*) "application/json; charset=utf-8")
   (setf (hunchentoot:return-code*) status)
-  (com.inuoe.jzon:stringify data))
+  (com.inuoe.jzon:stringify (api-serialize data)))
 
 (defun json-error (message &key (status 400))
   "Return a JSON error response."
@@ -134,12 +153,21 @@
       (and *current-user-id*
            (repo-member-role (getf repo :id) *current-user-id*))))
 
+(defmacro with-visible-repo ((var owner repo-name responder) &body body)
+  "Bind VAR to the repo if visible, otherwise return the responder's error response."
+  (let ((err (gensym "ERR")))
+    `(multiple-value-bind (,var ,err)
+         (ensure-repo-visible (find-repo ,owner ,repo-name) ,responder)
+       (if ,var
+           (progn ,@body)
+           ,err))))
+
 (defun ensure-repo-visible (repo responder)
-  "Return REPO when visible, otherwise return RESPONDER's not-found response."
+  "Return REPO when visible, otherwise return (VALUES NIL error-response)."
   (unless repo
-    (return-from ensure-repo-visible (funcall responder)))
+    (return-from ensure-repo-visible (values nil (funcall responder))))
   (unless (repo-visible-p repo)
-    (return-from ensure-repo-visible (funcall responder)))
+    (return-from ensure-repo-visible (values nil (funcall responder))))
   repo)
 
 ;; ----------------------------------------------------------------------------
@@ -175,6 +203,8 @@
                                           :ref (getf r :ref))
           (error (e)
             (llog:error "Workflow scheduling failed" :error (princ-to-string e)))))
+      ;; Trigger Zoekt reindexing
+      (zoekt-index-repo owner repo-name)
       ;; Fire webhooks
       (dolist (r refs)
         (fire-webhooks (getf repo :id) "push"
@@ -184,6 +214,22 @@
                          ("repository" . (("owner" . ,owner)
                                           ("name" . ,repo-name)))))))
     "ok"))
+
+;; ----------------------------------------------------------------------------
+;; Routes: Search
+
+(easy-routes:defroute search-page ("/-/search" :method :get) ()
+  (when (require-login)
+    (let* ((query (or (hunchentoot:get-parameter "q") ""))
+           (repo-scope (hunchentoot:get-parameter "repo"))
+           (results (if (string= query "")
+                        (list :files nil)
+                        (zoekt-search-visible query :limit 50
+                                              :repo-scope repo-scope))))
+      (html-response
+       (view-search-results :query query
+                            :repo-scope repo-scope
+                            :results results)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Metrics
@@ -715,19 +761,24 @@
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from blob-page repo))
     (let* ((disk-path (repo-disk-path owner repo-name))
-           (path (or (hunchentoot:get-parameter "path") ""))
-           (file-size (git-blob-size disk-path ref path))
-           (content (when (and file-size (<= file-size (* 2 1024 1024)))
-                      (git-blob disk-path ref path)))
-           (is-binary (git-blob-binary-p content))
-           (language (file-language path)))
-      (unless file-size (return-from blob-page (not-found)))
-      (html-response
-       (view-blob :owner-name owner :repo repo :ref ref :path path
-                  :content (unless is-binary content)
-                  :is-binary is-binary
-                  :file-size file-size
-                  :language language)))))
+           (path (or (hunchentoot:get-parameter "path") "")))
+      ;; If path is a directory, redirect to tree view
+      (when (git-object-is-tree-p disk-path ref path)
+        (hunchentoot:redirect
+         (format nil "/~A/~A/tree/~A?path=~A" owner repo-name ref path))
+        (return-from blob-page nil))
+      (let* ((file-size (git-blob-size disk-path ref path))
+             (content (when (and file-size (<= file-size (* 2 1024 1024)))
+                        (git-blob disk-path ref path)))
+             (is-binary (git-blob-binary-p content))
+             (language (file-language path)))
+        (unless file-size (return-from blob-page (not-found)))
+        (html-response
+         (view-blob :owner-name owner :repo repo :ref ref :path path
+                    :content (unless is-binary content)
+                    :is-binary is-binary
+                    :file-size file-size
+                    :language language))))))
 
 ;; Raw file content
 (easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
@@ -1497,9 +1548,7 @@
 
 (easy-routes:defroute api-list-issues
     ("/api/v1/repos/:owner/:repo-name/issues" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-list-issues repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (issues (list-issues (getf repo :id) :status status)))
       (json-response issues))))
@@ -1508,9 +1557,7 @@
     ("/api/v1/repos/:owner/:repo-name/issues" :method :post) ()
   (unless *current-user-id*
     (return-from api-create-issue (json-error "unauthorized" :status 401)))
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-create-issue repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((body-text (hunchentoot:raw-post-data :force-text t))
            (json (com.inuoe.jzon:parse body-text))
            (title (gethash "title" json))
@@ -1525,31 +1572,42 @@
 
 (easy-routes:defroute api-get-issue
     ("/api/v1/repos/:owner/:repo-name/issues/:id" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-get-issue repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((num (parse-integer id :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from api-get-issue (json-error "not found" :status 404)))
       (json-response issue))))
+
+(easy-routes:defroute api-update-issue
+    ("/api/v1/repos/:owner/:repo-name/issues/:id" :method :patch) ()
+  (unless *current-user-id*
+    (return-from api-update-issue (json-error "unauthorized" :status 401)))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (let* ((num (parse-integer id :junk-allowed t))
+           (issue (when num (find-issue (getf repo :id) num))))
+      (unless issue (return-from api-update-issue (json-error "not found" :status 404)))
+      (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+             (json (com.inuoe.jzon:parse body-text))
+             (status (gethash "status" json)))
+        (when status
+          (unless (member status '("open" "closed") :test #'equal)
+            (return-from api-update-issue (json-error "status must be open or closed")))
+          (update-issue (getf issue :id) :status status))
+        (json-response (find-issue (getf repo :id) num))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Pull Requests
 
 (easy-routes:defroute api-list-pulls
     ("/api/v1/repos/:owner/:repo-name/pulls" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-list-pulls repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (pulls (list-pull-requests (getf repo :id) :status status)))
       (json-response pulls))))
 
 (easy-routes:defroute api-get-pull
     ("/api/v1/repos/:owner/:repo-name/pulls/:number" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-get-pull repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((num (parse-integer number :junk-allowed t))
            (pr (when num (find-pull-request (getf repo :id) num))))
       (unless pr (return-from api-get-pull (json-error "not found" :status 404)))
@@ -1559,9 +1617,7 @@
     ("/api/v1/repos/:owner/:repo-name/pulls" :method :post) ()
   (unless *current-user-id*
     (return-from api-create-pull (json-error "unauthorized" :status 401)))
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-create-pull repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((body-text (hunchentoot:raw-post-data :force-text t))
            (json (com.inuoe.jzon:parse body-text))
            (source (gethash "source_branch" json))
@@ -1585,9 +1641,7 @@
 
 (easy-routes:defroute api-list-reviews
     ("/api/v1/repos/:owner/:repo-name/pulls/:number/reviews" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-list-reviews repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((num (parse-integer number :junk-allowed t))
            (pr (when num (find-pull-request (getf repo :id) num))))
       (unless pr (return-from api-list-reviews (json-error "not found" :status 404)))
@@ -1597,9 +1651,7 @@
     ("/api/v1/repos/:owner/:repo-name/pulls/:number/reviews" :method :post) ()
   (unless *current-user-id*
     (return-from api-submit-review (json-error "unauthorized" :status 401)))
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-submit-review repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((num (parse-integer number :junk-allowed t))
            (pr (when num (find-pull-request (getf repo :id) num))))
       (unless pr (return-from api-submit-review (json-error "not found" :status 404)))
@@ -1623,18 +1675,14 @@
 
 (easy-routes:defroute api-list-commit-statuses
     ("/api/v1/repos/:owner/:repo-name/statuses/:sha" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-list-commit-statuses repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (json-response (list-commit-statuses (getf repo :id) sha))))
 
 (easy-routes:defroute api-set-commit-status
     ("/api/v1/repos/:owner/:repo-name/statuses/:sha" :method :post) ()
   (unless *current-user-id*
     (return-from api-set-commit-status (json-error "unauthorized" :status 401)))
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name)
-                                   (lambda () (json-error "not found" :status 404)))))
-    (unless repo (return-from api-set-commit-status repo))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
     (let* ((body-text (hunchentoot:raw-post-data :force-text t))
            (json (com.inuoe.jzon:parse body-text))
            (state (gethash "state" json))

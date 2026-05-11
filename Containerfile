@@ -7,6 +7,8 @@
 ##           -e CAVE_ADMIN_USER=admin -e CAVE_ADMIN_PASSWORD=admin \
 ##           -v cave-data:/var/lib/cave cave:latest
 
+FROM ghcr.io/sourcegraph/zoekt AS zoekt-bin
+
 FROM fedora:42 AS builder
 
 RUN dnf install -y sbcl make git gcc zlib-devel golang && dnf clean all
@@ -32,14 +34,15 @@ RUN dnf install -y openssh-server git && dnf clean all && \
     ssh-keygen -A && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
-    mkdir -p /var/lib/cave/repos /var/lib/cave/tmp && \
-    chown -R cave:cave /var/lib/cave && \
+    mkdir -p /var/lib/cave/repos /var/lib/cave/tmp /data/zoekt-index && \
+    chown -R cave:cave /var/lib/cave /data/zoekt-index && \
     mkdir -p /home/cave/.ssh && \
     chmod 700 /home/cave/.ssh && \
     chown cave:cave /home/cave/.ssh
 
 COPY --from=builder /build/cave /usr/bin/cave
 COPY --from=builder /build/cav /usr/bin/cav
+COPY --from=zoekt-bin /usr/local/bin/zoekt-git-index /usr/local/bin/zoekt-git-index
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /usr/bin/cave /usr/bin/cav

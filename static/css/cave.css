@@ -504,6 +504,7 @@ code {
 .file-tree .file-dir .file-icon { color: var(--accent-dim); }
 .file-tree a { color: var(--link); }
 .file-tree a:hover { color: var(--link-hover); }
+.file-tree .file-size { text-align: right; color: var(--text-muted); font-size: .75rem; white-space: nowrap; }
 
 /* --- Blob view --- */
 .blob-meta {
@@ -912,4 +913,79 @@ html[data-theme="dracula"] {
   --yellow-bg: rgba(241, 250, 140, 0.08);
   --blue: #8be9fd;
   --blue-bg: rgba(139, 233, 253, 0.08);
+}
+
+/* --- Search --- */
+.nav-search { display: flex; align-items: center; margin-right: var(--sp-2); }
+.nav-search-input {
+  width: 160px;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: .8rem;
+  font-family: var(--font-mono);
+  transition: width 0.2s;
+}
+.nav-search-input:focus { outline: none; border-color: var(--accent-dim); width: 240px; }
+.nav-search-input::placeholder { color: var(--text-muted); }
+
+.search-form { margin-bottom: var(--sp-6); }
+.search-bar { display: flex; gap: var(--sp-2); align-items: center; }
+.search-input {
+  flex: 1;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: .9rem;
+  font-family: var(--font-mono);
+}
+.search-input:focus { outline: none; border-color: var(--accent-dim); }
+.search-input::placeholder { color: var(--text-muted); }
+.search-scope { margin-top: var(--sp-2); color: var(--text-muted); font-size: .85rem; }
+
+.search-result {
+  margin-bottom: var(--sp-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.search-result-header {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: .85rem;
+}
+.search-result-header a { color: var(--text); text-decoration: none; }
+.search-result-header a:hover { color: var(--accent); }
+.search-repo { color: var(--accent); }
+.search-file { color: var(--text-secondary); }
+
+.search-lines { margin: 0; padding: 0; background: var(--bg-warm); overflow-x: auto; }
+.search-line {
+  display: flex;
+  font-size: .8rem;
+  line-height: 1.6;
+  padding: 0 var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.search-line:last-child { border-bottom: none; }
+.line-num {
+  color: var(--text-muted);
+  min-width: 4ch;
+  text-align: right;
+  padding-right: var(--sp-3);
+  user-select: none;
+  flex-shrink: 0;
+}
+.line-content { white-space: pre; }
+.search-line mark {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
 }
