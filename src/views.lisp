@@ -546,12 +546,10 @@ require(['vs/editor/editor.main'], function() {
     ed.setPosition({ lineNumber: line, column: 1 });
   }
   if (search) {
-    ed.getModel().findMatches(search, false, false, false, null, true);
-    ed.getAction('actions.find').run();
-    setTimeout(function() {
-      var findInput = document.querySelector('.find-widget .input');
-      if (findInput) { findInput.value = search; }
-    }, 100);
+    var fc = ed.getContribution('editor.contrib.findController');
+    fc.setSearchString(search);
+    fc.start({ forceRevealReplace: false, seedSearchStringFromSelection: 'none',
+               shouldFocus: 0, shouldAnimate: true, loop: true });
   }
   }
 });"
