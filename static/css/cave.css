@@ -1007,6 +1007,8 @@ html[data-theme="dracula"] {
   padding-right: var(--sp-3);
   user-select: none;
 }
+.search-code .line-num a { color: inherit; text-decoration: none; }
+.search-code .line-num a:hover { color: var(--accent); }
 .search-code .line-content { width: 99%; overflow-x: auto; }
 
 /* Context lines (dimmed) */

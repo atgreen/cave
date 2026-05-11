@@ -522,7 +522,7 @@ require(['vs/editor/editor.main'], function() {
   var container = document.getElementById('editor-container');
   var lineCount = ~A.split('\\n').length;
   container.style.height = Math.min(Math.max(lineCount * 19 + 20, 200), 800) + 'px';
-  monaco.editor.create(container, {
+  var ed = monaco.editor.create(container, {
     value: ~A,
     language: ~A,
     theme: 'vs-dark',
@@ -538,6 +538,21 @@ require(['vs/editor/editor.main'], function() {
     hideCursorInOverviewRuler: true,
     scrollbar: { verticalScrollbarSize: 8 }
   });
+  var params = new URLSearchParams(window.location.search);
+  var line = parseInt(params.get('line'));
+  var search = params.get('search');
+  if (line) {
+    ed.revealLineInCenter(line);
+    ed.setPosition({ lineNumber: line, column: 1 });
+  }
+  if (search) {
+    ed.getModel().findMatches(search, false, false, false, null, true);
+    ed.getAction('actions.find').run();
+    setTimeout(function() {
+      var findInput = document.querySelector('.find-widget .input');
+      if (findInput) { findInput.value = search; }
+    }, 100);
+  }
   }
 });"
                   (com.inuoe.jzon:stringify content)
@@ -1788,17 +1803,23 @@ export CAVE_TOKEN=<your-api-token>
               (:summary.search-result-header
                (:span.search-chevron)
                (:a.search-result-link
-                :href (format nil "/~A/blob/HEAD?path=~A"
-                        repo (hunchentoot:url-encode file))
+                :href (format nil "/~A/blob/HEAD?path=~A&search=~A"
+                        repo (hunchentoot:url-encode file)
+                        (hunchentoot:url-encode query))
                 (:span.search-repo repo)
                 " / "
                 (:span.search-file file))
                (unless (string= lang "")
                  (:span.search-lang lang)))
-              (:raw (render-search-code-table matches))))))))))
+              (:raw (render-search-code-table matches repo file query))))))))))
 
-(defun render-search-code-table (matches)
-  "Render the code matches table as an HTML string with no Spinneret whitespace."
+(defun render-search-code-table (matches repo file query)
+  "Render the code matches table as an HTML string with no Spinneret whitespace.
+   Line numbers link to the blob page at that line with the search term."
+  (let ((base-url (format nil "/~A/blob/HEAD?path=~A&search=~A"
+                          repo
+                          (hunchentoot:url-encode file)
+                          (hunchentoot:url-encode query))))
   (with-output-to-string (s)
     (write-string "<table class=\"search-code\">" s)
     (dolist (m matches)
@@ -1810,12 +1831,12 @@ export CAVE_TOKEN=<your-api-token>
         (let ((ctx-start (- line-num (length before))))
           (loop for ctx-line in before
                 for n from ctx-start
-                do (format s "<tr class=\"search-ctx\"><td class=\"line-num\">~A</td><td class=\"line-content\">~A</td></tr>"
-                           n (spinneret:escape-string
-                              (string-right-trim '(#\Newline #\Return) ctx-line)))))
+                do (format s "<tr class=\"search-ctx\"><td class=\"line-num\"><a href=\"~A&line=~A\">~A</a></td><td class=\"line-content\">~A</td></tr>"
+                           base-url n n (spinneret:escape-string
+                                         (string-right-trim '(#\Newline #\Return) ctx-line)))))
         ;; Matched line
-        (format s "<tr class=\"search-match\"><td class=\"line-num\">~A</td><td class=\"line-content\">"
-                line-num)
+        (format s "<tr class=\"search-match\"><td class=\"line-num\"><a href=\"~A&line=~A\">~A</a></td><td class=\"line-content\">"
+                base-url line-num line-num)
         (dolist (frag fragments)
           (let ((pre (string-right-trim '(#\Newline #\Return) (getf frag :pre)))
                 (match (string-right-trim '(#\Newline #\Return) (getf frag :match)))
@@ -1827,10 +1848,10 @@ export CAVE_TOKEN=<your-api-token>
         ;; After context
         (loop for ctx-line in after
               for n from (1+ line-num)
-              do (format s "<tr class=\"search-ctx\"><td class=\"line-num\">~A</td><td class=\"line-content\">~A</td></tr>"
-                         n (spinneret:escape-string
-                            (string-right-trim '(#\Newline #\Return) ctx-line))))
+              do (format s "<tr class=\"search-ctx\"><td class=\"line-num\"><a href=\"~A&line=~A\">~A</a></td><td class=\"line-content\">~A</td></tr>"
+                         base-url n n (spinneret:escape-string
+                                       (string-right-trim '(#\Newline #\Return) ctx-line))))
         ;; Separator
         (unless (eq m (car (last matches)))
           (write-string "<tr class=\"search-sep\"><td colspan=\"2\"></td></tr>" s))))
-    (write-string "</table>" s)))
+    (write-string "</table>" s))))
