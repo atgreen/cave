@@ -1795,7 +1795,8 @@ export CAVE_TOKEN=<your-api-token>
                 (:span.search-file file))
                (unless (string= lang "")
                  (:span.search-lang lang)))
-              (:table.search-code
+              (let ((*print-pretty* nil))
+               (:table.search-code
                (dolist (m matches)
                  (let ((line-num (getf m :line-num))
                        (before (getf m :before-lines))
@@ -1837,4 +1838,4 @@ export CAVE_TOKEN=<your-api-token>
                    ;; Separator between matches in same file
                    (unless (eq m (car (last matches)))
                      (:tr.search-sep
-                      (:td :colspan "2"))))))))))))))
+                      (:td :colspan "2")))))))))))))))
