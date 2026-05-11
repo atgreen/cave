@@ -10,6 +10,7 @@ set -e
 
 CONFIG="$1"
 KEY_ID="$2"
+HTTP_PORT="${3:-8080}"
 
 if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
     echo "cave: interactive shell access is not supported" >&2
@@ -47,5 +48,20 @@ if [ -z "$DISK_PATH" ]; then
     exit 1
 fi
 
-# Exec the git command — replaces this process, inherits stdin/stdout from SSH
-exec $GIT_CMD "$DISK_PATH"
+# For pushes, bracket with Chamber write lock acquire/release.
+# For fetches, exec directly — reads don't need write locks.
+if [ "$GIT_CMD" = "git-receive-pack" ]; then
+    PUSH_TOKEN=$(curl -sf -X POST "http://localhost:${HTTP_PORT}/-/internal/push/acquire/${REPO_PATH}")
+    if [ $? -ne 0 ] || [ -z "$PUSH_TOKEN" ]; then
+        echo "cave: server busy, try again" >&2
+        exit 1
+    fi
+    # Run (not exec) so we can release the lock after git exits
+    $GIT_CMD "$DISK_PATH"
+    EXIT_CODE=$?
+    curl -sf -X POST -d "$PUSH_TOKEN" \
+         "http://localhost:${HTTP_PORT}/-/internal/push/release/${REPO_PATH}" >/dev/null 2>&1
+    exit $EXIT_CODE
+else
+    exec $GIT_CMD "$DISK_PATH"
+fi

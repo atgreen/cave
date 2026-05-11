@@ -203,6 +203,8 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                                           :ref (getf r :ref))
           (error (e)
             (llog:error "Workflow scheduling failed" :error (princ-to-string e)))))
+      ;; Invalidate Chamber cache for this repo
+      (chamber-invalidate-repo owner repo-name)
       ;; Trigger Zoekt reindexing
       (zoekt-index-repo owner repo-name)
       ;; Fire webhooks
@@ -213,6 +215,92 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                          ("before" . ,(getf r :old))
                          ("repository" . (("owner" . ,owner)
                                           ("name" . ,repo-name)))))))
+    "ok"))
+
+;; ----------------------------------------------------------------------------
+;; Push lock-bracket: SSH pushes acquire/release Chamber write locks via HTTP
+
+(defvar *active-push-tokens* (make-hash-table :test 'equal)
+  "Token → (:owner owner :repo repo-name :time universal-time :lock lock-ref)")
+(defvar *active-push-tokens-lock* (bt:make-lock "push-tokens"))
+
+(defun start-push-lock-reaper ()
+  "Background thread that reaps orphaned push locks (SSH disconnect, timeout)."
+  (bt:make-thread
+   (lambda ()
+     (loop
+       (sleep 60)
+       (let ((now (get-universal-time))
+             (max-age 600) ; 10 minutes
+             (expired nil))
+         (bt:with-lock-held (*active-push-tokens-lock*)
+           (maphash (lambda (token entry)
+                      (when (> (- now (getf entry :time)) max-age)
+                        (push (cons token entry) expired)))
+                    *active-push-tokens*)
+           (dolist (pair expired)
+             (let ((token (car pair))
+                   (entry (cdr pair)))
+               (llog:warn "Reaping orphaned push lock"
+                          :repo (format nil "~A/~A" (getf entry :owner) (getf entry :repo))
+                          :age-seconds (- now (getf entry :time)))
+               (chamber-invalidate-repo (getf entry :owner) (getf entry :repo))
+               (handler-case
+                   (bt:release-lock (getf entry :lock))
+                 (error () nil))
+               (handler-case
+                   (bt:signal-semaphore *chamber-semaphore*)
+                 (error () nil))
+               (remhash token *active-push-tokens*)))))))
+   :name "push-lock-reaper"))
+
+(easy-routes:defroute internal-push-acquire
+    ("/-/internal/push/acquire/:owner/:repo-name" :method :post) ()
+  (unless (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+    (setf (hunchentoot:return-code*) 403)
+    (return-from internal-push-acquire "Forbidden"))
+  ;; Acquire semaphore (concurrent git limit)
+  (ensure-chamber-semaphore)
+  (unless (bt:wait-on-semaphore *chamber-semaphore* :timeout 30)
+    (setf (hunchentoot:return-code*) 503)
+    (return-from internal-push-acquire "Busy"))
+  ;; Acquire per-repo write lock
+  (let ((lock (get-repo-write-lock (format nil "~A/~A" owner repo-name))))
+    (unless (bt:acquire-lock lock :timeout 30)
+      ;; Release semaphore on lock timeout
+      (bt:signal-semaphore *chamber-semaphore*)
+      (setf (hunchentoot:return-code*) 503)
+      (return-from internal-push-acquire "Busy"))
+    ;; Generate token and store
+    (let ((token (fuuid:make-v4-string)))
+      (bt:with-lock-held (*active-push-tokens-lock*)
+        (setf (gethash token *active-push-tokens*)
+              (list :owner owner :repo repo-name
+                    :time (get-universal-time) :lock lock)))
+      (llog:info "Push lock acquired" :repo (format nil "~A/~A" owner repo-name))
+      token)))
+
+(easy-routes:defroute internal-push-release
+    ("/-/internal/push/release/:owner/:repo-name" :method :post) ()
+  (unless (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+    (setf (hunchentoot:return-code*) 403)
+    (return-from internal-push-release "Forbidden"))
+  (let* ((token (string-trim '(#\Space #\Newline #\Return)
+                              (hunchentoot:raw-post-data :force-text t)))
+         (entry (bt:with-lock-held (*active-push-tokens-lock*)
+                  (gethash token *active-push-tokens*))))
+    (unless entry
+      (setf (hunchentoot:return-code*) 404)
+      (return-from internal-push-release "Unknown token"))
+    ;; Invalidate cache
+    (chamber-invalidate-repo owner repo-name)
+    ;; Release repo write lock, then semaphore (reverse of acquire order)
+    (handler-case (bt:release-lock (getf entry :lock)) (error () nil))
+    (handler-case (bt:signal-semaphore *chamber-semaphore*) (error () nil))
+    ;; Remove token
+    (bt:with-lock-held (*active-push-tokens-lock*)
+      (remhash token *active-push-tokens*))
+    (llog:info "Push lock released" :repo (format nil "~A/~A" owner repo-name))
     "ok"))
 
 ;; ----------------------------------------------------------------------------

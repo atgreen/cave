@@ -93,6 +93,25 @@
       (incf *chamber-cache-bytes* size)))
   content)
 
+(defun chamber-invalidate-repo (owner repo-name)
+  "Remove all cached entries for a repository after a push."
+  (let ((prefix (format nil "~A/~A:" owner repo-name)))
+    (bt:with-lock-held (*chamber-cache-lock*)
+      (let ((keys-to-remove nil))
+        (maphash (lambda (k v)
+                   (declare (ignore v))
+                   (when (search prefix k)
+                     (push k keys-to-remove)))
+                 *chamber-cache*)
+        (dolist (k keys-to-remove)
+          (let ((entry (gethash k *chamber-cache*)))
+            (when entry
+              (decf *chamber-cache-bytes* (cadr entry))
+              (remhash k *chamber-cache*))))
+        (when keys-to-remove
+          (llog:info "Invalidated chamber cache" :repo (format nil "~A/~A" owner repo-name)
+                                                  :entries (length keys-to-remove)))))))
+
 (defmacro with-chamber-cache ((key) &body body)
   "Return cached result for KEY if available, otherwise execute BODY and cache."
   (let ((k (gensym "KEY")) (result (gensym "RESULT")))
@@ -478,6 +497,9 @@
        (error (e)
          (llog:error "Chamber server error" :error (princ-to-string e)))))
    :name "chamber-grpc-server")
+
+  ;; Start push-lock reaper for orphaned SSH push locks
+  (start-push-lock-reaper)
 
   (llog:info "Chamber started" :port port))
 
