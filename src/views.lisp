@@ -1795,7 +1795,7 @@ export CAVE_TOKEN=<your-api-token>
                 (:span.search-file file))
                (unless (string= lang "")
                  (:span.search-lang lang)))
-              (let ((*print-pretty* nil))
+              (let ((spinneret::*pre* t))
                (:table.search-code
                (dolist (m matches)
                  (let ((line-num (getf m :line-num))
