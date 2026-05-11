@@ -147,9 +147,9 @@
   "Render the tabbed new-repo form (Empty / Import / Mirror)."
   (when error (:div.alert.alert-error error))
   (:div.repo-create-tabs
-   (:span.repo-tab-active :data-mode "empty" "Empty")
-   (:span.repo-tab :data-mode "import" "Import from URL")
-   (:span.repo-tab :data-mode "mirror" "Mirror"))
+   (:raw "<span class=\"repo-tab-active\" data-mode=\"empty\">Empty</span>")
+   (:raw "<span class=\"repo-tab\" data-mode=\"import\">Import from URL</span>")
+   (:raw "<span class=\"repo-tab\" data-mode=\"mirror\">Mirror</span>"))
   (:form :method "post" :action action
    (:input :type "hidden" :id "repo-mode" :name "mode" :value "empty")
    ;; URL fields (import + mirror only)
