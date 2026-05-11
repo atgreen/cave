@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 )
@@ -17,16 +18,16 @@ import (
 const defaultBaseURL = "http://localhost:8080"
 
 type Issue struct {
-	ID        int64  `json:"id"`
-	RepoID    int64  `json:"repo-id"`
-	Number    int64  `json:"number"`
-	AuthorID  int64  `json:"author-id"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created-at"`
-	UpdatedAt string `json:"updated-at"`
-	ClosedAt  string `json:"closed-at"`
+	ID        int64        `json:"id"`
+	RepoID    int64        `json:"repo_id"`
+	Number    int64        `json:"number"`
+	AuthorID  int64        `json:"author_id"`
+	Title     string       `json:"title"`
+	Body      string       `json:"body"`
+	Status    string       `json:"status"`
+	CreatedAt json.Number  `json:"created_at"`
+	UpdatedAt json.Number  `json:"updated_at"`
+	ClosedAt  *json.Number `json:"closed_at"`
 }
 
 type issueCreateRequest struct {
@@ -34,14 +35,53 @@ type issueCreateRequest struct {
 	Body  string `json:"body,omitempty"`
 }
 
+type issueUpdateRequest struct {
+	Status string `json:"status"`
+}
+
 type apiError struct {
 	Error string `json:"error"`
+}
+
+type config struct {
+	BaseURL string `json:"base_url,omitempty"`
+	Token   string `json:"token,omitempty"`
 }
 
 type client struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+}
+
+func configPath() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "cav", "config.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "cav", "config.json")
+}
+
+func loadConfig() config {
+	var cfg config
+	data, err := os.ReadFile(configPath())
+	if err != nil {
+		return cfg
+	}
+	json.Unmarshal(data, &cfg)
+	return cfg
+}
+
+func saveConfig(cfg config) error {
+	p := configPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, append(data, '\n'), 0600)
 }
 
 func main() {
@@ -57,10 +97,23 @@ func run(args []string) error {
 		return errors.New("missing command")
 	}
 
+	// Handle login/logout before flag parsing — they don't need global flags
+	if args[0] == "login" {
+		return runLogin(args[1:])
+	}
+	if args[0] == "logout" {
+		return runLogout()
+	}
+	if args[0] == "status" {
+		return runStatus()
+	}
+
+	cfg := loadConfig()
+
 	global := flag.NewFlagSet("cav", flag.ContinueOnError)
 	global.SetOutput(io.Discard)
-	baseURL := global.String("base-url", envOrDefault("CAVE_BASE_URL", defaultBaseURL), "Cave base URL")
-	token := global.String("token", os.Getenv("CAVE_TOKEN"), "Cave API token")
+	baseURL := global.String("base-url", envOrDefault("CAVE_BASE_URL", firstNonEmpty(cfg.BaseURL, defaultBaseURL)), "Cave base URL")
+	token := global.String("token", firstNonEmpty(os.Getenv("CAVE_TOKEN"), cfg.Token), "Cave API token")
 	repo := global.String("repo", os.Getenv("CAVE_REPO"), "Repository in OWNER/REPO form")
 	owner := global.String("owner", os.Getenv("CAVE_OWNER"), "Repository owner")
 	repoName := global.String("name", os.Getenv("CAVE_REPO_NAME"), "Repository name")
@@ -85,8 +138,8 @@ func run(args []string) error {
 	}
 
 	c := &client{
-		baseURL: strings.TrimRight(*baseURL, "/"),
-		token:   strings.TrimSpace(*token),
+		baseURL:    strings.TrimRight(*baseURL, "/"),
+		token:      strings.TrimSpace(*token),
 		httpClient: &http.Client{},
 	}
 
@@ -102,6 +155,65 @@ func run(args []string) error {
 	}
 }
 
+func runLogin(args []string) error {
+	fs := flag.NewFlagSet("login", flag.ContinueOnError)
+	baseURL := fs.String("base-url", "", "Cave base URL")
+	token := fs.String("token", "", "Cave API token")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg := loadConfig()
+
+	if *baseURL != "" {
+		cfg.BaseURL = strings.TrimRight(*baseURL, "/")
+	} else if cfg.BaseURL == "" {
+		cfg.BaseURL = defaultBaseURL
+	}
+
+	if *token != "" {
+		cfg.Token = *token
+	} else {
+		fmt.Fprint(os.Stderr, "Token: ")
+		var t string
+		if _, err := fmt.Scanln(&t); err != nil {
+			return errors.New("token is required")
+		}
+		cfg.Token = strings.TrimSpace(t)
+	}
+
+	if err := saveConfig(cfg); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Logged in to %s\n", cfg.BaseURL)
+	fmt.Fprintf(os.Stdout, "Config saved to %s\n", configPath())
+	return nil
+}
+
+func runLogout() error {
+	p := configPath()
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, "Logged out (config removed)")
+	return nil
+}
+
+func runStatus() error {
+	cfg := loadConfig()
+	if cfg.Token == "" && cfg.BaseURL == "" {
+		fmt.Fprintln(os.Stdout, "Not logged in")
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "Server:  %s\n", firstNonEmpty(cfg.BaseURL, defaultBaseURL))
+	if cfg.Token != "" {
+		fmt.Fprintf(os.Stdout, "Token:   %s...%s\n", cfg.Token[:8], cfg.Token[len(cfg.Token)-4:])
+	}
+	fmt.Fprintf(os.Stdout, "Config:  %s\n", configPath())
+	return nil
+}
+
 func runIssues(c *client, ownerName, repoName string, args []string) error {
 	if len(args) == 0 {
 		printIssueUsage(os.Stderr)
@@ -115,6 +227,10 @@ func runIssues(c *client, ownerName, repoName string, args []string) error {
 		return runIssueGet(c, ownerName, repoName, args[1:])
 	case "create":
 		return runIssueCreate(c, ownerName, repoName, args[1:])
+	case "close":
+		return runIssueClose(c, ownerName, repoName, args[1:])
+	case "reopen":
+		return runIssueReopen(c, ownerName, repoName, args[1:])
 	case "help", "-h", "--help":
 		printIssueUsage(os.Stdout)
 		return nil
@@ -216,6 +332,38 @@ func runIssueCreate(c *client, ownerName, repoName string, args []string) error 
 
 	fmt.Fprintf(os.Stdout, "Created issue #%d: %s\n", issue.Number, issue.Title)
 	return nil
+}
+
+func runIssueClose(c *client, ownerName, repoName string, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: cav issue close <number>")
+	}
+	issue, err := c.updateIssue(ownerName, repoName, args[0], issueUpdateRequest{Status: "closed"})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Closed issue #%d: %s\n", issue.Number, issue.Title)
+	return nil
+}
+
+func runIssueReopen(c *client, ownerName, repoName string, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: cav issue reopen <number>")
+	}
+	issue, err := c.updateIssue(ownerName, repoName, args[0], issueUpdateRequest{Status: "open"})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Reopened issue #%d: %s\n", issue.Number, issue.Title)
+	return nil
+}
+
+func (c *client) updateIssue(ownerName, repoName, number string, payload issueUpdateRequest) (*Issue, error) {
+	var issue Issue
+	if err := c.doJSON(http.MethodPatch, issueURL(c.baseURL, ownerName, repoName, number, nil), payload, &issue); err != nil {
+		return nil, err
+	}
+	return &issue, nil
 }
 
 func (c *client) listIssues(ownerName, repoName, status string) ([]Issue, error) {
@@ -329,6 +477,15 @@ func envOrDefault(key, fallback string) string {
 	return value
 }
 
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func writeJSON(w io.Writer, value any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -337,7 +494,7 @@ func writeJSON(w io.Writer, value any) error {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  cav [global flags] issue <command> [flags]")
+	fmt.Fprintln(w, "  cav [global flags] <command> [flags]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Global flags:")
 	fmt.Fprintln(w, "  --base-url URL     Cave base URL (default: http://localhost:8080)")
@@ -345,6 +502,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --repo OWNER/REPO  Repository target (or CAVE_REPO)")
 	fmt.Fprintln(w, "  --owner OWNER      Repository owner (or CAVE_OWNER)")
 	fmt.Fprintln(w, "  --name REPO        Repository name (or CAVE_REPO_NAME)")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  login [--base-url URL] [--token TOKEN]   Save server URL and token")
+	fmt.Fprintln(w, "  logout                                   Remove saved config")
+	fmt.Fprintln(w, "  status                                   Show current auth config")
 	fmt.Fprintln(w)
 	printIssueUsage(w)
 }
@@ -354,4 +516,6 @@ func printIssueUsage(w io.Writer) {
 	fmt.Fprintln(w, "  issue list [--status open|closed] [--json]")
 	fmt.Fprintln(w, "  issue get [--json] <number>")
 	fmt.Fprintln(w, "  issue create --title TITLE [--body TEXT] [--json]")
+	fmt.Fprintln(w, "  issue close <number>")
+	fmt.Fprintln(w, "  issue reopen <number>")
 }
