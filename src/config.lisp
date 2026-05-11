@@ -33,6 +33,11 @@
     :oidc-issuer-internal nil
     :oidc-client-id "cave"
     :oidc-client-secret nil
+    :chamber-enabled nil
+    :chamber-port 9444
+    :chamber-url nil
+    :chamber-max-git-processes 64
+    :chamber-cache-size-mb 128
     :zoekt-enabled nil
     :zoekt-web-url "http://cave-prod-zoekt-web:6070"
     :zoekt-index-dir "/data/zoekt-index"))

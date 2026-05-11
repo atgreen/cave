@@ -1,0 +1,291 @@
+syntax = "proto3";
+
+package cave.chamber;
+
+// Chamber — Git storage service for Cave.
+// Mediates all git repository access with concurrency control,
+// caching, and timeouts. Runs in-process or as a separate service.
+
+service Chamber {
+  // Repo lifecycle
+  rpc InitRepo(InitRepoRequest) returns (InitRepoResponse) {}
+  rpc DeleteRepo(DeleteRepoRequest) returns (DeleteRepoResponse) {}
+
+  // Read operations
+  rpc GetTree(GetTreeRequest) returns (GetTreeResponse) {}
+  rpc GetBlob(GetBlobRequest) returns (GetBlobResponse) {}
+  rpc GetBlobBytes(GetBlobBytesRequest) returns (GetBlobBytesResponse) {}
+  rpc GetBlobInfo(GetBlobInfoRequest) returns (GetBlobInfoResponse) {}
+  rpc GetCommit(GetCommitRequest) returns (GetCommitResponse) {}
+  rpc GetLog(GetLogRequest) returns (GetLogResponse) {}
+  rpc GetBranches(GetBranchesRequest) returns (GetBranchesResponse) {}
+  rpc GetTags(GetTagsRequest) returns (GetTagsResponse) {}
+  rpc GetDefaultBranch(GetDefaultBranchRequest) returns (GetDefaultBranchResponse) {}
+  rpc IsEmpty(IsEmptyRequest) returns (IsEmptyResponse) {}
+  rpc GetDiff(GetDiffRequest) returns (GetDiffResponse) {}
+  rpc GetDiffMergeBase(GetDiffMergeBaseRequest) returns (GetDiffResponse) {}
+  rpc GetCommitCount(GetCommitCountRequest) returns (GetCommitCountResponse) {}
+  rpc FindReadme(FindReadmeRequest) returns (FindReadmeResponse) {}
+
+  // Write operations
+  rpc MergeBranch(MergeBranchRequest) returns (MergeBranchResponse) {}
+  rpc DeleteBranch(DeleteBranchRequest) returns (DeleteBranchResponse) {}
+
+  // Mirror/clone operations
+  rpc CloneFromURL(CloneFromURLRequest) returns (CloneFromURLResponse) {}
+  rpc PushMirror(PushMirrorRequest) returns (PushMirrorResponse) {}
+  rpc PullMirror(PullMirrorRequest) returns (PullMirrorResponse) {}
+}
+
+// --- Common ---
+
+message TreeEntry {
+  string mode = 1;
+  string type = 2;
+  string hash = 3;
+  int64 size = 4;
+  string name = 5;
+}
+
+message CommitInfo {
+  string hash = 1;
+  string short_hash = 2;
+  string author = 3;
+  string date = 4;
+  string subject = 5;
+}
+
+// --- Repo lifecycle ---
+
+message InitRepoRequest {
+  string owner = 1;
+  string repo_name = 2;
+}
+
+message InitRepoResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message DeleteRepoRequest {
+  string owner = 1;
+  string repo_name = 2;
+}
+
+message DeleteRepoResponse {
+  bool ok = 1;
+}
+
+// --- Read operations ---
+
+message GetTreeRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string ref = 3;
+  string path = 4;
+}
+
+message GetTreeResponse {
+  repeated TreeEntry entries = 1;
+}
+
+message GetBlobRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string ref = 3;
+  string path = 4;
+}
+
+message GetBlobResponse {
+  string content = 1;
+  bool found = 2;
+}
+
+message GetBlobBytesRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string ref = 3;
+  string path = 4;
+}
+
+message GetBlobBytesResponse {
+  bytes content = 1;
+  bool found = 2;
+}
+
+message GetBlobInfoRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string ref = 3;
+  string path = 4;
+}
+
+message GetBlobInfoResponse {
+  string hash = 1;
+  int64 size = 2;
+  bool is_binary = 3;
+  bool found = 4;
+}
+
+message GetCommitRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string hash = 3;
+}
+
+message GetCommitResponse {
+  CommitInfo commit = 1;
+  string diff = 2;
+  string stat = 3;
+  bool found = 4;
+}
+
+message GetLogRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string branch = 3;
+  int32 limit = 4;
+}
+
+message GetLogResponse {
+  repeated CommitInfo commits = 1;
+}
+
+message GetBranchesRequest {
+  string owner = 1;
+  string repo_name = 2;
+}
+
+message GetBranchesResponse {
+  repeated string branches = 1;
+}
+
+message GetTagsRequest {
+  string owner = 1;
+  string repo_name = 2;
+}
+
+message GetTagsResponse {
+  repeated string tags = 1;
+}
+
+message GetDefaultBranchRequest {
+  string owner = 1;
+  string repo_name = 2;
+}
+
+message GetDefaultBranchResponse {
+  string branch = 1;
+}
+
+message IsEmptyRequest {
+  string owner = 1;
+  string repo_name = 2;
+}
+
+message IsEmptyResponse {
+  bool empty = 1;
+}
+
+message GetDiffRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string base_ref = 3;
+  string head_ref = 4;
+}
+
+message GetDiffMergeBaseRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string target = 3;
+  string source = 4;
+}
+
+// shared response for both diff RPCs
+// (already defined above as GetDiffResponse)
+
+message GetCommitCountRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string branch = 3;
+}
+
+message GetCommitCountResponse {
+  int64 count = 1;
+}
+
+message FindReadmeRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string ref = 3;
+}
+
+message FindReadmeResponse {
+  string name = 1;
+  bool found = 2;
+}
+
+// --- Write operations ---
+
+message MergeBranchRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string target = 3;
+  string source = 4;
+  string author = 5;
+  string message = 6;
+  bool squash = 7;
+}
+
+message MergeBranchResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message DeleteBranchRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string branch = 3;
+}
+
+message DeleteBranchResponse {
+  bool ok = 1;
+}
+
+// --- Mirror/clone operations ---
+
+message CloneFromURLRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string url = 3;
+  string auth_token = 4;
+}
+
+message CloneFromURLResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message PushMirrorRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string url = 3;
+  string auth_token = 4;
+}
+
+message PushMirrorResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message PullMirrorRequest {
+  string owner = 1;
+  string repo_name = 2;
+  string url = 3;
+  string auth_token = 4;
+}
+
+message PullMirrorResponse {
+  bool ok = 1;
+  string error = 2;
+}

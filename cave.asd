@@ -49,6 +49,8 @@
                 (:file "src/yaml")
                 (:file "src/model")
                 (:file "src/git")
+                (:file "src/chamber")
+                (:file "src/chamber-client")
                 (:file "src/views")
                 (:file "src/metrics")
                 (:file "src/notify")
