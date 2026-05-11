@@ -1777,45 +1777,60 @@ export CAVE_TOKEN=<your-api-token>
         ((null files)
          (:p.text-muted "No results found."))
         (t
-         (:p.text-muted (format nil "~A file~:P matched."
-                                (length files)))
+         (:p.search-stats
+          (format nil "~A file~:P matched" (length files)))
          (dolist (fm files)
-           (:div.search-result
-            (:div.search-result-header
-             (:a :href (format nil "/~A/blob/HEAD?path=~A"
-                         (getf fm :repository)
-                         (hunchentoot:url-encode (getf fm :file-name)))
-              (:span.search-repo (getf fm :repository))
-              " / "
-              (:span.search-file (getf fm :file-name))))
-            (let ((lines (getf fm :lines)))
-              (when lines
-                (:pre.search-lines
-                 (dolist (line lines)
-                   (:div.search-line
-                    (:span.line-num
-                     (princ-to-string (getf line :line-number)))
-                    (:span.line-content
-                     (render-search-line (getf line :line)
-                                         (getf line :fragments)))))))))))))))
-
-(defun render-search-line (line-text fragments)
-  "Render a line of search results with highlighted match fragments."
-  (if (or (null fragments) (null line-text))
-      (spinneret:with-html
-        (:raw (spinneret:escape-string (or line-text ""))))
-      (let ((sorted (sort (copy-list fragments) #'<
-                          :key (lambda (f) (getf f :offset))))
-            (pos 0)
-            (len (length line-text)))
-        (spinneret:with-html
-          (dolist (frag sorted)
-            (let ((offset (min (getf frag :offset) len))
-                  (frag-len (getf frag :length)))
-              (when (> offset pos)
-                (:raw (spinneret:escape-string (subseq line-text pos offset))))
-              (let ((end (min (+ offset frag-len) len)))
-                (:mark (subseq line-text offset end))
-                (setf pos end))))
-          (when (< pos len)
-            (:raw (spinneret:escape-string (subseq line-text pos))))))))
+           (let ((repo (getf fm :repository))
+                 (file (getf fm :file-name))
+                 (lang (getf fm :language))
+                 (matches (getf fm :matches)))
+             (:details.search-result :open "open"
+              (:summary.search-result-header
+               (:span.search-chevron)
+               (:a.search-result-link
+                :href (format nil "/~A/blob/HEAD?path=~A"
+                        repo (hunchentoot:url-encode file))
+                (:span.search-repo repo)
+                " / "
+                (:span.search-file file))
+               (unless (string= lang "")
+                 (:span.search-lang lang)))
+              (:table.search-code
+               (dolist (m matches)
+                 (let ((line-num (getf m :line-num))
+                       (before (getf m :before-lines))
+                       (after (getf m :after-lines))
+                       (fragments (getf m :fragments)))
+                   ;; Before context
+                   (let ((ctx-start (- line-num (length before))))
+                     (loop for ctx-line in before
+                           for n from ctx-start
+                           do (:tr.search-ctx
+                               (:td.line-num (princ-to-string n))
+                               (:td.line-content
+                                (:raw (spinneret:escape-string ctx-line))))))
+                   ;; Matched line with highlights
+                   (:tr.search-match
+                    (:td.line-num (princ-to-string line-num))
+                    (:td.line-content
+                     (if fragments
+                         (dolist (frag fragments)
+                           (let ((pre (getf frag :pre))
+                                 (match (getf frag :match))
+                                 (post (getf frag :post)))
+                             (:raw (spinneret:escape-string pre))
+                             (:mark (:raw (spinneret:escape-string match)))
+                             (:raw (spinneret:escape-string
+                                    (string-right-trim '(#\Newline) post)))))
+                         (:raw ""))))
+                   ;; After context
+                   (loop for ctx-line in after
+                         for n from (1+ line-num)
+                         do (:tr.search-ctx
+                             (:td.line-num (princ-to-string n))
+                             (:td.line-content
+                              (:raw (spinneret:escape-string ctx-line)))))
+                   ;; Separator between matches in same file
+                   (unless (eq m (car (last matches)))
+                     (:tr.search-sep
+                      (:td :colspan "2"))))))))))))))

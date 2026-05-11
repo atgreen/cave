@@ -69,7 +69,8 @@
 
 (defun parse-zoekt-response (json-string)
   "Parse Zoekt JSON search response into a plist structure.
-   The response is wrapped in a 'result' key with FileMatches array."
+   The response is wrapped in a 'result' key with FileMatches array.
+   Each FileMatch has Matches with Before/After context and Fragments."
   (let* ((data (com.inuoe.jzon:parse json-string))
          (result-obj (gethash "result" data))
          (file-matches (when result-obj (gethash "FileMatches" result-obj)))
@@ -78,68 +79,37 @@
       (loop for fm across file-matches
             do (let* ((repo-name (gethash "Repo" fm))
                       (file-name (gethash "FileName" fm))
-                      (chunk-matches (gethash "ChunkMatches" fm)))
+                      (language (gethash "Language" fm))
+                      (matches (gethash "Matches" fm)))
                  (when repo-name
                    (push (list :repository repo-name
                                :file-name file-name
-                               :lines (parse-chunk-matches chunk-matches))
+                               :language (or language "")
+                               :matches (parse-zoekt-matches matches))
                          result)))))
     (list :files (nreverse result)
           :stats (list :file-count (length (or file-matches #()))))))
 
-(defun parse-chunk-matches (chunks)
-  "Parse Zoekt ChunkMatch array into line plists.
-   Each ChunkMatch has Content (base64 bytes), ContentStart (line/col),
-   and Ranges for match highlighting."
-  (when chunks
-    (let ((lines nil))
-      (loop for chunk across chunks
-            do (let* ((content-raw (gethash "Content" chunk))
-                      (content (if (stringp content-raw)
-                                   content-raw
-                                   (cl-base64:base64-string-to-string
-                                    (if (vectorp content-raw)
-                                        (flexi-streams:octets-to-string content-raw)
-                                        (princ-to-string content-raw)))))
-                      (start-obj (gethash "ContentStart" chunk))
-                      (start-line (when start-obj
-                                    (gethash "LineNumber" start-obj)))
-                      (ranges (gethash "Ranges" chunk))
-                      (content-lines (uiop:split-string content :separator '(#\Newline))))
-                 (loop for line-text in content-lines
-                       for line-num from (or start-line 1)
-                       unless (and (= line-num (+ (or start-line 1) (length content-lines) -1))
-                                   (string= line-text ""))
-                       do (push (list :line-number line-num
-                                      :line line-text
-                                      :fragments (collect-fragments-for-line
-                                                  line-num (or start-line 1) ranges))
-                                lines))))
-      (nreverse lines))))
-
-(defun collect-fragments-for-line (line-num start-line ranges)
-  "Extract match fragments that overlap with LINE-NUM from Zoekt Ranges."
-  (when ranges
-    (let ((frags nil))
-      (loop for range across ranges
-            do (let* ((range-start (gethash "Start" range))
-                      (range-end (gethash "End" range))
-                      (start-ln (when range-start (gethash "LineNumber" range-start)))
-                      (end-ln (when range-end (gethash "LineNumber" range-end)))
-                      (start-col (when range-start (gethash "Column" range-start)))
-                      (end-col (when range-end (gethash "Column" range-end))))
-                 (when (and start-ln end-ln
-                            (<= start-ln line-num)
-                            (>= end-ln line-num))
-                   (let ((offset (if (= start-ln line-num) (1- start-col) 0))
-                         (len (cond
-                                ((= start-ln end-ln) (- end-col start-col))
-                                ((= line-num start-ln) 200) ; extends past line
-                                (t 200))))
-                     (push (list :offset (max 0 offset)
-                                 :length (max 1 len))
-                           frags)))))
-      (nreverse frags))))
+(defun parse-zoekt-matches (matches)
+  "Parse Zoekt Match array into plists with context.
+   Each match has LineNum, Before (context), After (context),
+   and Fragments with Pre/Match/Post for the matched line."
+  (when matches
+    (loop for m across matches
+          collect (let ((line-num (gethash "LineNum" m))
+                        (before (gethash "Before" m))
+                        (after (gethash "After" m))
+                        (fragments (gethash "Fragments" m)))
+                   (list :line-num (or line-num 0)
+                         :before-lines (when (and before (not (string= before "")))
+                                         (butlast (uiop:split-string before :separator '(#\Newline))))
+                         :after-lines (when (and after (not (string= after "")))
+                                        (cdr (uiop:split-string after :separator '(#\Newline))))
+                         :fragments (when fragments
+                                      (loop for f across fragments
+                                            collect (list :pre (or (gethash "Pre" f) "")
+                                                         :match (or (gethash "Match" f) "")
+                                                         :post (or (gethash "Post" f) "")))))))))
 
 ;;; --- Visibility Filter ---
 
