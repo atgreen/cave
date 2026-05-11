@@ -935,7 +935,7 @@ html[data-theme="dracula"] {
   cursor: pointer;
 }
 .repo-tab:hover { color: var(--text); }
-.repo-tab.active {
+.repo-tab-active {
   color: var(--text);
   border-color: var(--border);
   background: var(--surface);

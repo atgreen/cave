@@ -147,7 +147,7 @@
   "Render the tabbed new-repo form (Empty / Import / Mirror)."
   (when error (:div.alert.alert-error error))
   (:div.repo-create-tabs
-   (:span.repo-tab.active :data-mode "empty" "Empty")
+   (:span.repo-tab-active :data-mode "empty" "Empty")
    (:span.repo-tab :data-mode "import" "Import from URL")
    (:span.repo-tab :data-mode "mirror" "Mirror"))
   (:form :method "post" :action action
@@ -179,10 +179,10 @@
     (:label (:input :type "checkbox" :name "is_private" :value "1") " Private"))
    (:button.btn.btn-primary :type "submit" "Create repository"))
   (:script (:raw "
-document.querySelectorAll('.repo-tab').forEach(function(tab) {
+document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
   tab.addEventListener('click', function() {
-    document.querySelectorAll('.repo-tab').forEach(function(t) { t.classList.remove('active'); });
-    tab.classList.add('active');
+    document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(t) { t.className = 'repo-tab'; });
+    tab.className = 'repo-tab-active';
     var mode = tab.dataset.mode;
     document.getElementById('repo-mode').value = mode;
     var showImport = mode === 'import' || mode === 'mirror';
