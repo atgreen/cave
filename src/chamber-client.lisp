@@ -238,3 +238,45 @@
                                 'cave::delete-branch-response)))
         (slot-value resp 'cave::ok))
       (git-delete-branch (repo-disk-path owner repo-name) branch)))
+
+;;; --- Mirror/clone operations ---
+
+(defun chamber-clone-from-url (owner repo-name url &key auth-token)
+  "Clone bare repo from external URL. Returns (VALUES success-p error-string)."
+  (if (chamber-enabled-p)
+      (let ((resp (chamber-call "/cave.chamber.Chamber/CloneFromURL"
+                                (make-instance 'cave::clone-from-url-request
+                                               :owner owner :repo-name repo-name
+                                               :url url
+                                               :auth-token (or auth-token ""))
+                                'cave::clone-from-url-response)))
+        (values (slot-value resp 'cave::ok)
+                (slot-value resp 'cave::error)))
+      (git-clone-bare-from-url url (repo-disk-path owner repo-name)
+                                :auth-token auth-token)))
+
+(defun chamber-push-mirror (owner repo-name url &optional auth-token)
+  "Push all refs to remote. Returns (VALUES success-p error-string)."
+  (if (chamber-enabled-p)
+      (let ((resp (chamber-call "/cave.chamber.Chamber/PushMirror"
+                                (make-instance 'cave::push-mirror-request
+                                               :owner owner :repo-name repo-name
+                                               :url url
+                                               :auth-token (or auth-token ""))
+                                'cave::push-mirror-response)))
+        (values (slot-value resp 'cave::ok)
+                (slot-value resp 'cave::error)))
+      (git-push-mirror (repo-disk-path owner repo-name) url auth-token)))
+
+(defun chamber-pull-mirror (owner repo-name url &optional auth-token)
+  "Fetch all refs from remote. Returns (VALUES success-p error-string)."
+  (if (chamber-enabled-p)
+      (let ((resp (chamber-call "/cave.chamber.Chamber/PullMirror"
+                                (make-instance 'cave::pull-mirror-request
+                                               :owner owner :repo-name repo-name
+                                               :url url
+                                               :auth-token (or auth-token ""))
+                                'cave::pull-mirror-response)))
+        (values (slot-value resp 'cave::ok)
+                (slot-value resp 'cave::error)))
+      (git-pull-mirror (repo-disk-path owner repo-name) url auth-token)))

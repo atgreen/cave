@@ -681,13 +681,12 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (easy-routes:defroute repo-page ("/:owner/:repo-name" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from repo-page repo))
-    (let* ((disk-path (repo-disk-path owner repo-name))
-           (empty (git-repo-empty-p disk-path))
-           (default-branch (unless empty (or (git-default-branch disk-path) "main")))
-           (readme-entry (unless empty (git-readme-path disk-path :ref default-branch)))
+    (let* ((empty (chamber-is-empty owner repo-name))
+           (default-branch (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
+           (readme-entry (unless empty (chamber-find-readme owner repo-name :ref default-branch)))
            (readme-content (when readme-entry
-                             (git-blob disk-path default-branch
-                                       (getf readme-entry :name))))
+                             (chamber-get-blob owner repo-name default-branch
+                                               (getf readme-entry :name))))
            (readme-html (when (and readme-content
                                    (search ".md" (string-downcase
                                                    (getf readme-entry :name))))
@@ -710,14 +709,13 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (easy-routes:defroute code-page ("/:owner/:repo-name/code" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from code-page repo))
-    (let* ((disk-path (repo-disk-path owner repo-name))
-           (empty (git-repo-empty-p disk-path))
-           (default-branch (unless empty (or (git-default-branch disk-path) "main")))
-           (branches (unless empty (git-branches disk-path)))
-           (tags (unless empty (git-tags disk-path)))
-           (commit-count (unless empty (git-commit-count disk-path :branch default-branch)))
-           (file-tree (unless empty (git-tree disk-path :ref default-branch)))
-           (recent-commits (unless empty (git-log disk-path :limit 10))))
+    (let* ((empty (chamber-is-empty owner repo-name))
+           (default-branch (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
+           (branches (unless empty (chamber-get-branches owner repo-name)))
+           (tags (unless empty (chamber-get-tags owner repo-name)))
+           (commit-count (unless empty (chamber-get-commit-count owner repo-name :branch default-branch)))
+           (file-tree (unless empty (chamber-get-tree owner repo-name :ref default-branch)))
+           (recent-commits (unless empty (chamber-get-log owner repo-name :limit 10))))
       (if empty
           (hunchentoot:redirect (format nil "/~A/~A" owner repo-name))
           (html-response
@@ -780,9 +778,8 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from tree-page repo))
-    (let* ((disk-path (repo-disk-path owner repo-name))
-           (path (or (hunchentoot:get-parameter "path") ""))
-           (file-tree (git-tree disk-path :ref ref :path path)))
+    (let* ((path (or (hunchentoot:get-parameter "path") ""))
+           (file-tree (chamber-get-tree owner repo-name :ref ref :path path)))
       (html-response
        (view-tree :owner-name owner :repo repo :ref ref
                   :path path :file-tree file-tree)))))
@@ -791,22 +788,25 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (easy-routes:defroute blob-page ("/:owner/:repo-name/blob/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from blob-page repo))
-    (let* ((disk-path (repo-disk-path owner repo-name))
-           (path (or (hunchentoot:get-parameter "path") "")))
-      ;; If path is a directory, redirect to tree view
-      (when (git-object-is-tree-p disk-path ref path)
-        (hunchentoot:redirect
-         (format nil "/~A/~A/tree/~A?path=~A" owner repo-name ref path))
-        (return-from blob-page nil))
-      (let* ((file-size (git-blob-size disk-path ref path))
-             (content (when (and file-size (<= file-size (* 2 1024 1024)))
-                        (git-blob disk-path ref path)))
-             (is-binary (git-blob-binary-p content))
+    (let* ((path (or (hunchentoot:get-parameter "path") ""))
+           (info (chamber-get-blob-info owner repo-name ref path)))
+      ;; If not found, might be a directory — redirect to tree view
+      (unless info
+        (let ((tree (chamber-get-tree owner repo-name :ref ref :path path)))
+          (if tree
+              (progn
+                (hunchentoot:redirect
+                 (format nil "/~A/~A/tree/~A?path=~A" owner repo-name ref path))
+                (return-from blob-page nil))
+              (return-from blob-page (not-found)))))
+      (let* ((file-size (getf info :size))
+             (is-binary (getf info :is-binary))
+             (content (when (and (not is-binary) (<= file-size (* 2 1024 1024)))
+                        (chamber-get-blob owner repo-name ref path)))
              (language (file-language path)))
-        (unless file-size (return-from blob-page (not-found)))
         (html-response
          (view-blob :owner-name owner :repo repo :ref ref :path path
-                    :content (unless is-binary content)
+                    :content content
                     :is-binary is-binary
                     :file-size file-size
                     :language language))))))
@@ -868,29 +868,28 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from raw-page repo))
-    (let* ((disk-path (repo-disk-path owner repo-name))
-           (path (or (hunchentoot:get-parameter "path") ""))
+    (let* ((path (or (hunchentoot:get-parameter "path") ""))
            (mime (raw-mime-type path))
-           (sha (git-blob-hash disk-path ref path)))
-      (unless sha (return-from raw-page (not-found)))
-      (setf (hunchentoot:content-type*) mime)
-      ;; ETag: browser caches and revalidates with If-None-Match
-      (setf (hunchentoot:header-out :etag) (format nil "\"~A\"" sha))
-      (setf (hunchentoot:header-out :cache-control) "public, max-age=300")
-      ;; 304 Not Modified if browser has current version
-      (let ((if-none-match (hunchentoot:header-in* :if-none-match)))
-        (when (and if-none-match (string= if-none-match (format nil "\"~A\"" sha)))
-          (setf (hunchentoot:return-code*) 304)
-          (return-from raw-page "")))
-      ;; Check server-side cache
-      (let ((cached (blob-cache-get sha)))
-        (when cached (return-from raw-page cached)))
-      ;; Cache miss — read from git
-      (let ((content (if (uiop:string-prefix-p "text/" mime)
-                         (git-blob disk-path ref path)
-                         (git-blob-bytes disk-path ref path))))
-        (unless content (return-from raw-page (not-found)))
-        (blob-cache-put sha content)))))
+           (info (chamber-get-blob-info owner repo-name ref path)))
+      (unless info (return-from raw-page (not-found)))
+      (let ((sha (getf info :hash)))
+        (setf (hunchentoot:content-type*) mime)
+        (setf (hunchentoot:header-out :etag) (format nil "\"~A\"" sha))
+        (setf (hunchentoot:header-out :cache-control) "public, max-age=300")
+        ;; 304 Not Modified if browser has current version
+        (let ((if-none-match (hunchentoot:header-in* :if-none-match)))
+          (when (and if-none-match (string= if-none-match (format nil "\"~A\"" sha)))
+            (setf (hunchentoot:return-code*) 304)
+            (return-from raw-page "")))
+        ;; Check server-side blob cache
+        (let ((cached (blob-cache-get sha)))
+          (when cached (return-from raw-page cached)))
+        ;; Cache miss — read via Chamber
+        (let ((content (if (uiop:string-prefix-p "text/" mime)
+                           (chamber-get-blob owner repo-name ref path)
+                           (chamber-get-blob-bytes owner repo-name ref path))))
+          (unless content (return-from raw-page (not-found)))
+          (blob-cache-put sha content))))))
 
 ;; Commit detail page (also handles .patch and .diff suffixes)
 (easy-routes:defroute commit-page ("/:owner/:repo-name/commit/:hash" :method :get) ()
@@ -920,12 +919,12 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
            diff))
         ;; HTML commit page
         (t
-         (let ((commit (git-show-commit disk-path clean-hash)))
-           (unless commit (return-from commit-page (not-found)))
-           (let ((diff-raw (git-commit-diff disk-path clean-hash)))
-             (html-response
-              (view-commit :owner-name owner :repo repo :commit commit
-                           :diff-raw diff-raw)))))))))
+         (let ((result (chamber-get-commit owner repo-name clean-hash)))
+           (unless result (return-from commit-page (not-found)))
+           (html-response
+            (view-commit :owner-name owner :repo repo
+                         :commit (getf result :commit)
+                         :diff-raw (getf result :diff)))))))))
 
 (easy-routes:defroute new-org-repo-page ("/o/:org-name/-/new-repo" :method :get) ()
   (when (require-login)
@@ -1306,10 +1305,9 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                                        :interval-minutes (or interval 60))))
             ;; Immediately sync pull mirrors
             (when (equal direction "pull")
-              (let ((disk-path (repo-disk-path owner repo-name))
-                    (token (unless (uiop:emptyp auth-token) auth-token)))
+              (let ((token (unless (uiop:emptyp auth-token) auth-token)))
                 (multiple-value-bind (ok err)
-                    (git-pull-mirror disk-path remote-url token)
+                    (chamber-pull-mirror owner repo-name remote-url token)
                   (update-mirror-sync (getf mirror :id)
                                       :error (unless ok err))))))))
       (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
@@ -1460,9 +1458,8 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
   (when (require-login)
     (let ((repo (find-repo owner repo-name)))
       (unless repo (return-from new-pull-request-page (not-found)))
-      (let* ((disk-path (repo-disk-path owner repo-name))
-             (branches (git-branches disk-path))
-             (default-branch (or (git-default-branch disk-path) "main")))
+      (let* ((branches (chamber-get-branches owner repo-name))
+             (default-branch (or (chamber-get-default-branch owner repo-name) "main")))
         (html-response
          (view-new-pull-request :owner-name owner :repo repo
                                 :branches branches
@@ -1522,10 +1519,9 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
              (stack (find-stack-by-id (getf pr :stack-id)))
              (stack-items (when stack (list-stack-pull-requests (getf stack :id))))
              ;; Diff
-             (disk-path (repo-disk-path owner repo-name))
              (source (getf pr :source-branch))
              (target (getf pr :target-branch))
-             (diff-raw (git-diff-merge-base disk-path target source))
+             (diff-raw (chamber-get-diff-merge-base owner repo-name target source))
              ;; Inline diff comments
              (raw-comments (list-diff-comments (getf pr :id)))
              (comment-hts (mapcar (lambda (c)
@@ -1644,21 +1640,18 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
           (setf (hunchentoot:return-code*) 422)
           (return-from merge-pull-request-submit "Pull request is not mergeable")))
       ;; Perform the actual git merge
-      (let* ((disk-path (repo-disk-path owner repo-name))
-             (source (getf pr :source-branch))
+      (let* ((source (getf pr :source-branch))
              (target (getf pr :target-branch))
              (strategy (hunchentoot:post-parameter "strategy"))
-             (merged (git-merge-branch disk-path source target
-                                       :squash (equal strategy "squash"))))
+             (merged (chamber-merge-branch owner repo-name source target
+                                           :squash (equal strategy "squash"))))
         (unless merged
           (setf (hunchentoot:return-code*) 409)
           (return-from merge-pull-request-submit "Merge failed — conflicts?")))
       (merge-pull-request (getf pr :id))
       ;; Auto-delete source branch
       (when (getf repo :auto-delete-branch)
-        (let ((source (getf pr :source-branch))
-              (disk-path (repo-disk-path owner repo-name)))
-          (git-delete-branch disk-path source)))
+        (chamber-delete-branch owner repo-name (getf pr :source-branch)))
       (log-event "pr.merged"
                  :user-id *current-user-id*
                  :repo-id (getf repo :id)
@@ -1946,15 +1939,14 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 
 (defun import-repo-from-url (owner repo-name url &key auth-token)
   "Clone a repo from an external URL as a bare repo, install hooks."
-  (let ((path (repo-disk-path owner repo-name)))
-    (multiple-value-bind (success-p err)
-        (git-clone-bare-from-url url path :auth-token auth-token)
-      (unless success-p
-        (error "Clone failed: ~A" err))
-      (install-repo-hooks path owner repo-name)
-      (zoekt-index-repo owner repo-name)
-      (llog:info "Imported repo from URL" :path path :url url)
-      path)))
+  (multiple-value-bind (success-p err)
+      (chamber-clone-from-url owner repo-name url :auth-token auth-token)
+    (unless success-p
+      (error "Clone failed: ~A" err))
+    (let ((path (repo-disk-path owner repo-name)))
+      (install-repo-hooks path owner repo-name))
+    (zoekt-index-repo owner repo-name)
+    (llog:info "Imported repo from URL" :owner owner :repo repo-name :url url)))
 
 ;; ----------------------------------------------------------------------------
 ;; Server start

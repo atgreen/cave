@@ -185,6 +185,15 @@
           (slynk:create-server :port slynk-port :interface "0.0.0.0" :dont-close t)
           (llog:info "Slynk server started" :port slynk-port))
 
+        ;; Start Chamber (git storage service)
+        (when (config-value :chamber-enabled)
+          (let ((chamber-port (config-value :chamber-port 9444)))
+            (handler-case
+                (start-chamber chamber-port)
+              (error (e)
+                (llog:warn "Chamber failed to start — using direct git"
+                           :error (princ-to-string e))))))
+
         ;; Start HTTP
         (start-server port)
 
