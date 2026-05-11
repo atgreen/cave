@@ -102,9 +102,11 @@
                         (fragments (gethash "Fragments" m)))
                    (list :line-num (or line-num 0)
                          :before-lines (when (and before (not (string= before "")))
-                                         (butlast (uiop:split-string before :separator '(#\Newline))))
+                                         (remove "" (uiop:split-string before :separator '(#\Newline))
+                                                 :test #'string=))
                          :after-lines (when (and after (not (string= after "")))
-                                        (cdr (uiop:split-string after :separator '(#\Newline))))
+                                        (remove "" (uiop:split-string after :separator '(#\Newline))
+                                                :test #'string=))
                          :fragments (when fragments
                                       (loop for f across fragments
                                             collect (list :pre (or (gethash "Pre" f) "")
