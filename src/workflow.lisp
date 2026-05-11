@@ -88,6 +88,8 @@
                                 ((null runs-on-raw) nil)
                                 ((listp runs-on-raw) runs-on-raw)
                                 (t (list runs-on-raw))))
+                     (job-timeout (let ((v (cdr (assoc "timeout" job-spec :test #'equal))))
+                                    (when (integerp v) v)))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
                   (let ((job (create-workflow-job
@@ -95,7 +97,8 @@
                               :name job-name
                               :image image
                               :needs needs
-                              :runs-on runs-on)))
+                              :runs-on runs-on
+                              :timeout-seconds job-timeout)))
                     (llog:info "Created workflow job"
                                :job job-name :job-id (getf job :id))
                     ;; Create steps
@@ -103,13 +106,16 @@
                       (loop for step-spec in steps-raw
                             for order from 1
                             do (let ((step-name (cdr (assoc "name" step-spec :test #'equal)))
-                                     (command (cdr (assoc "run" step-spec :test #'equal))))
+                                     (command (cdr (assoc "run" step-spec :test #'equal)))
+                                     (step-timeout (let ((v (cdr (assoc "timeout" step-spec :test #'equal))))
+                                                     (when (integerp v) v))))
                                  (when command
                                    (create-workflow-step
                                     :job-id (getf job :id)
                                     :step-order order
                                     :name step-name
-                                    :command command)))))))))))
+                                    :command command
+                                    :timeout-seconds step-timeout)))))))))))
         run))))
 
 (defun check-workflow-job-completion (job)

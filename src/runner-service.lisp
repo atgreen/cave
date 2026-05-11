@@ -170,7 +170,8 @@
                                               :step-order (getf s :step-order)
                                               :name (let ((n (getf s :name)))
                                                       (if (eq n :null) "" n))
-                                              :command (getf s :command)))
+                                              :command (getf s :command)
+                                              :timeout-seconds (getf s :timeout-seconds 0)))
                              steps)))
     ;; Mark workflow run as running if it's still queued
     (when (and run (equal (getf run :status) "queued"))
@@ -192,7 +193,8 @@
                                           (config-value :base-url "http://localhost:8080")
                                           owner-name repo-name)
                                   "")
-                   :timeout-seconds 300)))
+                   :timeout-seconds (let ((t-s (getf job :timeout-seconds 0)))
+                                      (if (and t-s (plusp t-s)) t-s 300)))))
 
 (defun handle-update-step-status (request ctx)
   "Update a workflow step's status."

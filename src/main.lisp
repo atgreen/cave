@@ -475,7 +475,9 @@
                       (dolist (step steps)
                         (let ((step-id (slot-value step 'cave::step-id))
                               (step-name (slot-value step 'cave::name))
-                              (step-cmd (slot-value step 'cave::command)))
+                              (step-cmd (slot-value step 'cave::command))
+                              (step-timeout (let ((ts (slot-value step 'cave::timeout-seconds)))
+                                              (when (and ts (plusp ts)) ts))))
                           (format t "  Step ~A: ~A~%"
                                   (if (uiop:emptyp step-name) "(unnamed)" step-name)
                                   (subseq step-cmd 0 (min 60 (length step-cmd))))
@@ -488,7 +490,8 @@
                                              :metadata (make-auth-metadata auth-token))
                           ;; Execute step in container, streaming output
                           (let ((exit-code
-                                  (handler-case
+                                  (block step-run
+                                    (handler-case
                                       (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))
                                              (shell-cmd
                                                (format nil "podman exec ~A bash -c ~A >~A 2>&1"
@@ -518,12 +521,21 @@
                                                    (error (e)
                                                      (format *error-output* "  Log send error: ~A~%" e)))))
 
-                                          (loop while (uiop:process-alive-p process)
-                                                do (send-log) (sleep 2))
-                                          (send-log)
-                                          (ignore-errors (delete-file log-file))
-                                          (uiop:wait-process process)))
-                                    (error () 1))))
+                                          (let ((deadline (when step-timeout
+                                                          (+ (get-universal-time) step-timeout))))
+                                            (loop while (uiop:process-alive-p process)
+                                                  do (when (and deadline (>= (get-universal-time) deadline))
+                                                       (format *error-output* "    Step timed out after ~As~%" step-timeout)
+                                                       (uiop:terminate-process process :urgent t)
+                                                       (uiop:wait-process process)
+                                                       (send-log)
+                                                       (ignore-errors (delete-file log-file))
+                                                       (return-from step-run 124))
+                                                     (send-log) (sleep 2))
+                                            (send-log)
+                                            (ignore-errors (delete-file log-file))
+                                            (uiop:wait-process process))))
+                                      (error () 1)))))
                             (let ((step-status (if (zerop exit-code) "success" "failure")))
                               (format t "    ~A (exit ~A)~%" step-status exit-code)
                               (ag-grpc:grpc-call channel

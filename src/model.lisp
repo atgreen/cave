@@ -741,9 +741,10 @@
        :set 'status status
        :where (:= 'id run-id))))))
 
-(defun create-workflow-job (&key workflow-run-id name image needs runs-on)
+(defun create-workflow-job (&key workflow-run-id name image needs runs-on (timeout-seconds 0))
   "Create a workflow job. NEEDS is a list of job name strings.
-   RUNS-ON is a list of label strings the runner must have."
+   RUNS-ON is a list of label strings the runner must have.
+   TIMEOUT-SECONDS is the max job duration (0 means use default)."
   (let ((needs-str (if needs (format nil "~{~A~^,~}" needs) ""))
         (runs-on-str (if runs-on (format nil "~{~A~^,~}" runs-on) "")))
     (postmodern:query
@@ -753,6 +754,7 @@
            'image image
            'needs needs-str
            'runs-on runs-on-str
+           'timeout-seconds (or timeout-seconds 0)
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
@@ -842,14 +844,15 @@
         :returning '*)
        :plist))))
 
-(defun create-workflow-step (&key job-id step-order name command)
-  "Create a workflow step."
+(defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0))
+  "Create a workflow step. TIMEOUT-SECONDS is the max step duration (0 means no limit)."
   (postmodern:query
    (:insert-into 'cave-workflow-steps
     :set 'job-id job-id
          'step-order step-order
          'name (or name :null)
          'command command
+         'timeout-seconds (or timeout-seconds 0)
     :returning '*)
    :plist))
 
