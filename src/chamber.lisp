@@ -631,6 +631,9 @@
          (llog:error "Chamber server error" :error (princ-to-string e)))))
    :name "chamber-grpc-server")
 
+  ;; Start push-lock reaper for orphaned SSH push locks
+  (start-push-lock-reaper)
+
   (llog:info "Chamber started" :port port))
 
 (defun stop-chamber ()

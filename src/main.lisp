@@ -243,7 +243,9 @@
    :handler #'handle-git-proxy))
 
 (defun handle-git-proxy (cmd)
-  "Bridge SSH stdin/stdout to Chamber gRPC bidirectional stream."
+  "Bridge SSH stdin/stdout to Chamber gRPC bidirectional stream.
+   Single-threaded: the main thread reads gRPC responses and forwards to stdout,
+   a reader thread drives the HTTP/2 connection, and a sender thread reads stdin."
   (let* ((config-path (clingon:getopt cmd :config))
          (git-command (clingon:getopt cmd :command))
          (repo-path (clingon:getopt cmd :repo))
@@ -277,48 +279,65 @@
                        (parse-integer port-str :junk-allowed t)
                        (config-value :chamber-port 9444)))
              (channel (ag-grpc:make-channel host-only port :timeout nil))
+             (conn (ag-grpc::channel-connection channel))
              (method (if (equal git-command "git-receive-pack")
                          "/cave.chamber.Chamber/ReceivePack"
                          "/cave.chamber.Chamber/UploadPack"))
              (stream (ag-grpc:call-bidirectional-streaming
                       channel method
                       :response-type 'cave::pack-data)))
-        (handler-case
-            (progn
-              ;; Send init message with repo info
-              (ag-grpc:stream-send stream
-                (make-instance 'cave::pack-data
-                               :data (make-array 0 :element-type '(unsigned-byte 8))
-                               :owner owner :repo-name repo-name))
-              ;; Pump stdin→gRPC in a thread
-              (let ((pump-thread
-                      (bt2:make-thread
-                       (lambda ()
-                         (let ((buf (make-array 32768 :element-type '(unsigned-byte 8))))
-                           (handler-case
-                               (loop
-                                 (let ((n (read-sequence buf bin-in)))
-                                   (when (zerop n) (return))
-                                   (ag-grpc:stream-send stream
-                                     (make-instance 'cave::pack-data
-                                                    :data (subseq buf 0 n)))))
-                             (error () nil))
-                           (handler-case (ag-grpc:stream-close-send stream)
-                             (error () nil))))
-                       :name "git-proxy-stdin-pump")))
-                ;; Pump gRPC→stdout in main thread
-                (loop
-                  (let ((msg (ag-grpc:stream-read-message stream)))
-                    (unless msg (return))
-                    (let ((data (slot-value msg 'cave::data)))
-                      (when (and data (plusp (length data)))
-                        (write-sequence data bin-out)
-                        (force-output bin-out)))))
-                (bt2:join-thread pump-thread))
-              (uiop:quit 0))
-          (error (e)
-            (format *error-output* "cave: proxy error: ~A~%" e)
-            (uiop:quit 1)))))))
+        ;; Start a dedicated reader thread for the HTTP/2 connection.
+        ;; This drives frame processing so stream-read-message and
+        ;; stream-send (flow control) work from separate threads.
+        (setf (ag-http2:connection-reader-thread-active-p conn) t)
+        (let ((reader-done nil))
+          (bt2:make-thread
+           (lambda ()
+             (handler-case
+                 (loop while (not (member (ag-http2:connection-state conn)
+                                          '(:closing :closed)))
+                       do (ag-http2:connection-read-frame conn))
+               (error () nil))
+             (setf reader-done t)
+             ;; Wake any waiters on flow control
+             (bt2:condition-notify (ag-http2:connection-flow-control-cv conn)))
+           :name "git-proxy-reader")
+          (handler-case
+              (progn
+                ;; Send init message with repo info
+                (ag-grpc:stream-send stream
+                  (make-instance 'cave::pack-data
+                                 :data (make-array 0 :element-type '(unsigned-byte 8))
+                                 :owner owner :repo-name repo-name))
+                ;; Stdin→gRPC sender thread
+                (let ((sender-thread
+                        (bt2:make-thread
+                         (lambda ()
+                           (let ((buf (make-array 32768 :element-type '(unsigned-byte 8))))
+                             (handler-case
+                                 (loop
+                                   (let ((n (read-sequence buf bin-in)))
+                                     (when (zerop n) (return))
+                                     (ag-grpc:stream-send stream
+                                       (make-instance 'cave::pack-data
+                                                      :data (subseq buf 0 n)))))
+                               (error () nil))
+                             (handler-case (ag-grpc:stream-close-send stream)
+                               (error () nil))))
+                         :name "git-proxy-sender")))
+                  ;; gRPC→stdout in main thread
+                  (loop
+                    (let ((msg (ag-grpc:stream-read-message stream)))
+                      (unless msg (return))
+                      (let ((data (slot-value msg 'cave::data)))
+                        (when (and data (plusp (length data)))
+                          (write-sequence data bin-out)
+                          (force-output bin-out)))))
+                  (bt2:join-thread sender-thread))
+                (uiop:quit 0))
+            (error (e)
+              (format *error-output* "cave: proxy error: ~A~%" e)
+              (uiop:quit 1))))))))
 
 ;;; --- UPDATE-KEYS subcommand ---
 
