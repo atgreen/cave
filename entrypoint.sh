@@ -25,6 +25,7 @@ if [ ! -f "$CONFIG" ]; then
  :oidc-client-secret "${CAVE_OIDC_CLIENT_SECRET:-}"
  :zoekt-enabled ${CAVE_ZOEKT_ENABLED:-nil}
  :zoekt-web-url "${CAVE_ZOEKT_WEB_URL:-http://cave-prod-zoekt-web:6070}"
+ :chamber-enabled ${CAVE_CHAMBER_ENABLED:-t}
  :zoekt-index-dir "${CAVE_ZOEKT_INDEX_DIR:-/data/zoekt-index}")
 CONF
 fi
