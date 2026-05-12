@@ -276,20 +276,47 @@
                                            :element-type '(unsigned-byte 8)
                                            :buffering :full
                                            :name "git-proxy-stdout")))
-      ;; Connect to Chamber
-      (let* ((url (config-value :chamber-url))
-             (host (if url
-                       (let ((pos (search "://" url)))
-                         (if pos (subseq url (+ pos 3)) url))
-                       "127.0.0.1"))
-             (port-str (let ((colon (position #\: host :from-end t)))
-                         (when colon (subseq host (1+ colon)))))
-             (host-only (let ((colon (position #\: host :from-end t)))
-                          (if colon (subseq host 0 colon) host)))
-             (port (if port-str
-                       (parse-integer port-str :junk-allowed t)
-                       (config-value :chamber-port 9444)))
-             (channel (ag-grpc:make-channel host-only port :timeout nil))
+      ;; Connect to the correct Chamber node
+      (let* ((is-write (equal git-command "git-receive-pack"))
+             (nodes-config (config-value :chamber-nodes))
+             (multi-p (and nodes-config (> (length nodes-config) 1)))
+             (channel
+               (if multi-p
+                   ;; Multi-chamber: look up node assignment from DB
+                   (progn
+                     (connect-db)
+                     (unwind-protect
+                         (let* ((repo (find-repo owner repo-name))
+                                (repo-id (when repo (getf repo :id)))
+                                (node (when repo-id
+                                        (if is-write
+                                            (repo-primary-node repo-id)
+                                            (let ((healthy (repo-healthy-nodes repo-id)))
+                                              (if healthy
+                                                  (nth (random (length healthy)) healthy)
+                                                  (repo-primary-node repo-id))))))
+                                (addr (when node (getf node :address)))
+                                (colon (when addr (position #\: addr :from-end t)))
+                                (host (if colon (subseq addr 0 colon) (or addr "127.0.0.1")))
+                                (port (if colon
+                                          (parse-integer (subseq addr (1+ colon)) :junk-allowed t)
+                                          (config-value :chamber-port 9444))))
+                           (ag-grpc:make-channel host (or port 9444) :timeout nil))
+                       (disconnect-db)))
+                   ;; Single-chamber: use config URL
+                   (let* ((url (config-value :chamber-url))
+                          (host (if url
+                                    (let ((pos (search "://" url)))
+                                      (if pos (subseq url (+ pos 3)) url))
+                                    "127.0.0.1"))
+                          (port-str (let ((colon (position #\: host :from-end t)))
+                                      (when colon (subseq host (1+ colon)))))
+                          (host-only (let ((colon (position #\: host :from-end t)))
+                                       (if colon (subseq host 0 colon) host)))
+                          (port (if port-str
+                                    (parse-integer port-str :junk-allowed t)
+                                    (config-value :chamber-port 9444))))
+                     (ag-grpc:make-channel host-only port :timeout nil))))
              (conn (ag-grpc::channel-connection channel))
              (method (if (equal git-command "git-receive-pack")
                          "/cave.chamber.Chamber/ReceivePack"

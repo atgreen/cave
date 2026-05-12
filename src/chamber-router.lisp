@@ -200,6 +200,21 @@
         (llog:warn "Failed to connect to chamber node"
                    :node (getf node :name)
                    :error (princ-to-string e)))))
+  ;; Auto-assign any existing repos that have no node assignment
+  (let ((unassigned (postmodern:query
+                     (:select 'id :from 'cave-repos
+                      :where (:not (:exists
+                               (:select 1 :from 'cave-repo-assignments
+                                :where (:= 'cave-repo-assignments.repo-id
+                                            'cave-repos.id)))))
+                     :column)))
+    (when unassigned
+      (dolist (repo-id unassigned)
+        (handler-case (ensure-repo-assigned repo-id)
+          (error (e)
+            (llog:warn "Failed to assign existing repo"
+                       :repo-id repo-id :error (princ-to-string e)))))
+      (llog:info "Assigned existing repos to chamber nodes" :count (length unassigned))))
   (llog:info "Chamber router initialized" :nodes (length *chamber-nodes*)))
 
 (defun stop-chamber-router ()
