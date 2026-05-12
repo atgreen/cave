@@ -24,6 +24,7 @@ const (
 	GenerateConfig
 	MigrateDatabase
 	ConfigureKeycloak
+	CreateRunnerToken
 )
 
 // Action represents a single step in the apply plan.
@@ -36,7 +37,7 @@ type Action struct {
 
 func (a Action) Symbol() string {
 	switch a.Type {
-	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, ConfigureKeycloak:
+	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, ConfigureKeycloak, CreateRunnerToken:
 		return "+"
 	case UpdateContainer:
 		return "~"
@@ -201,6 +202,38 @@ func Diff(cfg *config.Config, current *state.DeploymentState) []Action {
 			Service:     "cave",
 			Description: fmt.Sprintf("update container %q (%s)", cfg.ContainerName("cave"), cfg.Cave.Image),
 		})
+	}
+
+	// 7. Runners
+	if cfg.Runner.Enabled {
+		for i := 0; i < cfg.Runner.Count; i++ {
+			svc := "runner"
+			if i > 0 {
+				svc = fmt.Sprintf("runner-%d", i+1)
+			}
+			rInfo := current.Containers[svc]
+			if rInfo == nil || rInfo.Status == "not-found" {
+				// Need a registration token before creating runners
+				if i == 0 {
+					actions = append(actions, Action{
+						Type:        CreateRunnerToken,
+						Service:     "runner",
+						Description: "create runner registration token",
+					})
+				}
+				actions = append(actions, Action{
+					Type:        CreateContainer,
+					Service:     svc,
+					Description: fmt.Sprintf("create container %q (%s)", cfg.ContainerName(svc), cfg.Runner.Image),
+				})
+			} else if needsUpdate(rInfo, cfg.Runner.Image) {
+				actions = append(actions, Action{
+					Type:        UpdateContainer,
+					Service:     svc,
+					Description: fmt.Sprintf("update container %q", cfg.ContainerName(svc)),
+				})
+			}
+		}
 	}
 
 	return actions

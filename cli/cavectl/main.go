@@ -498,7 +498,16 @@ func cmdDestroy(args []string) error {
 		return err
 	}
 
-	services := []string{"cave", "zoekt-web", "keycloak", "pg"}
+	services := []string{"cave"}
+	// Add runners (reverse order for clean shutdown)
+	for i := cfg.Runner.Count; i >= 1; i-- {
+		if i == 1 {
+			services = append(services, "runner")
+		} else {
+			services = append(services, fmt.Sprintf("runner-%d", i))
+		}
+	}
+	services = append(services, "zoekt-web", "keycloak", "pg")
 	for _, svc := range services {
 		name := cfg.ContainerName(svc)
 		info, _ := rt.Inspect(name)

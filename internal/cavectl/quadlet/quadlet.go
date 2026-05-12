@@ -59,6 +59,15 @@ func Enable(cfg *config.Config) error {
 	if cfg.Zoekt.Enabled {
 		services = append(services, prefix+"-zoekt-web")
 	}
+	if cfg.Runner.Enabled {
+		for i := 0; i < cfg.Runner.Count; i++ {
+			if i == 0 {
+				services = append(services, prefix+"-runner")
+			} else {
+				services = append(services, fmt.Sprintf("%s-runner-%d", prefix, i+1))
+			}
+		}
+	}
 
 	args := append([]string{"--user", "start"}, services...)
 	if err := exec.Command("systemctl", args...).Run(); err != nil {
@@ -253,6 +262,40 @@ Restart=always
 WantedBy=default.target
 `, prefix, cfg.ContainerName("zoekt-web"), cfg.Zoekt.Image,
 			prefix, prefix, prefix, prefix)
+	}
+
+	// Runners
+	if cfg.Runner.Enabled {
+		for i := 0; i < cfg.Runner.Count; i++ {
+			svc := "runner"
+			if i > 0 {
+				svc = fmt.Sprintf("runner-%d", i+1)
+			}
+			containerName := cfg.ContainerName(svc)
+			grpcURL := fmt.Sprintf("grpc://%s:9443", cfg.ContainerName("cave"))
+
+			units[prefix+"-"+svc+".container"] = fmt.Sprintf(`[Unit]
+Description=Cave Runner %s (%s)
+After=%s.service
+Requires=%s.service
+
+[Container]
+ContainerName=%s
+Image=%s
+Network=%s.network
+Exec=cave runner --url %s --name %s
+Label=cave.managed-by=cavectl
+Label=cave.instance=%s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
+`, svc, prefix, prefix, prefix,
+				containerName, cfg.Runner.Image, prefix,
+				grpcURL, containerName, prefix)
+		}
 	}
 
 	return units

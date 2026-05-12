@@ -1,6 +1,8 @@
 package state
 
 import (
+	"fmt"
+
 	"moxielogic.com/cave/internal/cavectl/config"
 	"moxielogic.com/cave/internal/cavectl/runtime"
 )
@@ -27,6 +29,15 @@ func Read(cfg *config.Config, rt runtime.Runtime) (*DeploymentState, error) {
 	}
 	if cfg.Zoekt.Enabled {
 		services = append(services, "zoekt-web")
+	}
+	if cfg.Runner.Enabled {
+		for i := 0; i < cfg.Runner.Count; i++ {
+			if i == 0 {
+				services = append(services, "runner")
+			} else {
+				services = append(services, fmt.Sprintf("runner-%d", i+1))
+			}
+		}
 	}
 
 	for _, svc := range services {

@@ -18,6 +18,7 @@ type Config struct {
 	Ports      PortsConfig     `yaml:"ports"`
 	Database   DatabaseConfig  `yaml:"database"`
 	Auth       AuthConfig      `yaml:"auth"`
+	Runner     RunnerConfig    `yaml:"runner"`
 	Zoekt      ZoektConfig     `yaml:"zoekt"`
 	Chamber    ChamberConfig   `yaml:"chamber"`
 	Runtime    RuntimeConfig   `yaml:"runtime"`
@@ -57,6 +58,12 @@ type OIDCConfig struct {
 	Issuer       string `yaml:"issuer"`
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
+}
+
+type RunnerConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Image   string `yaml:"image"`
+	Count   int    `yaml:"count"` // number of runner instances
 }
 
 type ZoektConfig struct {
@@ -103,6 +110,11 @@ func Default() *Config {
 				AdminUser:     "admin",
 				AdminPassword: "admin",
 			},
+		},
+		Runner: RunnerConfig{
+			Enabled: true,
+			Image:   "localhost/cave-runner:latest",
+			Count:   1,
 		},
 		Zoekt: ZoektConfig{
 			Enabled: true,

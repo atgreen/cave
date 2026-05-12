@@ -1,7 +1,10 @@
 package apply
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"moxielogic.com/cave/internal/cavectl/config"
@@ -12,8 +15,9 @@ import (
 
 // Executor runs plan actions against a container runtime.
 type Executor struct {
-	Config  *config.Config
-	Runtime runtime.Runtime
+	Config      *config.Config
+	Runtime     runtime.Runtime
+	runnerToken string // set by createRunnerToken, used by createRunner
 }
 
 // Execute runs all actions in order.
@@ -47,6 +51,8 @@ func (e *Executor) executeOne(a plan.Action) error {
 		return fmt.Errorf("live database migration not yet implemented")
 	case plan.ConfigureKeycloak:
 		return nil // TODO: run realm configuration
+	case plan.CreateRunnerToken:
+		return e.createRunnerToken()
 	default:
 		return fmt.Errorf("unknown action type %d", a.Type)
 	}
@@ -75,6 +81,9 @@ func (e *Executor) createContainer(a plan.Action) error {
 	case "cave":
 		return e.createCave()
 	default:
+		if strings.HasPrefix(a.Service, "runner") {
+			return e.createRunner(a.Service)
+		}
 		return fmt.Errorf("unknown service %q", a.Service)
 	}
 }
@@ -248,4 +257,46 @@ func (e *Executor) waitForHealthy(a plan.Action) error {
 		time.Sleep(time.Second)
 	}
 	return fmt.Errorf("container %q did not become healthy after 30s", name)
+}
+
+func (e *Executor) createRunnerToken() error {
+	// Generate a token matching Cave's format: cavrt_<hex32>
+	b := make([]byte, 16)
+	rand.Read(b)
+	token := "cavrt_" + hex.EncodeToString(b)
+	e.runnerToken = token
+
+	// Insert into DB via psql exec in the postgres container
+	pgName := e.Config.ContainerName("pg")
+	sql := fmt.Sprintf(
+		`INSERT INTO cave_runner_registration_tokens (token, scope, created_at, expires_at) VALUES ('%s', 'instance', NOW(), NOW() + interval '100 years')`,
+		token)
+	_, err := e.Runtime.Exec(pgName, []string{"psql", "-U", "cave", "-d", "cave", "-c", sql})
+	if err != nil {
+		return fmt.Errorf("creating runner token: %w", err)
+	}
+	return nil
+}
+
+func (e *Executor) createRunner(service string) error {
+	if e.runnerToken == "" {
+		return fmt.Errorf("no runner token available — CreateRunnerToken must run first")
+	}
+
+	name := e.Config.ContainerName(service)
+	grpcURL := fmt.Sprintf("grpc://%s:9443", e.Config.ContainerName("cave"))
+
+	return e.Runtime.Run(runtime.RunOptions{
+		Name:    name,
+		Image:   e.Config.Runner.Image,
+		Network: e.Config.Runtime.Network,
+		Detach:  true,
+		Cmd: []string{
+			"cave", "runner",
+			"--url", grpcURL,
+			"--token", e.runnerToken,
+			"--name", name,
+		},
+		Labels: e.managedLabels(),
+	})
 }
