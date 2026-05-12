@@ -152,7 +152,7 @@
                        :entries (mapcar (lambda (e)
                                           (make-instance 'cave::tree-entry
                                                          :mode (or (getf e :mode) "")
-                                                         :type (or (getf e :type) "")
+                                                         :entry-type (or (getf e :type) "")
                                                          :hash (or (getf e :hash) "")
                                                          :size (or (getf e :size) 0)
                                                          :name (or (getf e :name) "")))
@@ -321,9 +321,9 @@
          (disk-path (chamber-repo-path owner repo-name)))
     (with-git-read
       (make-instance 'cave::get-commit-count-response
-                     :count (or (git-commit-count disk-path
-                                  :branch (when (and branch (not (string= branch ""))) branch))
-                                0)))))
+                     :commit-count (or (git-commit-count disk-path
+                                         :branch (when (and branch (not (string= branch ""))) branch))
+                                       0)))))
 
 (defun handle-chamber-find-readme (request ctx)
   (declare (ignore ctx))
@@ -360,7 +360,7 @@
                             :squash squash)
         (make-instance 'cave::merge-branch-response
                        :ok success-p
-                       :error (or err ""))))))
+                       :error-message (or err ""))))))
 
 (defun handle-chamber-delete-branch (request ctx)
   (declare (ignore ctx))
@@ -390,7 +390,7 @@
                                                  auth-token))
         (make-instance 'cave::clone-from-url-response
                        :ok success-p
-                       :error (or err ""))))))
+                       :error-message (or err ""))))))
 
 (defun handle-chamber-push-mirror (request ctx)
   (declare (ignore ctx))
@@ -406,7 +406,7 @@
                              auth-token))
         (make-instance 'cave::push-mirror-response
                        :ok success-p
-                       :error (or err ""))))))
+                       :error-message (or err ""))))))
 
 (defun handle-chamber-pull-mirror (request ctx)
   (declare (ignore ctx))
@@ -423,7 +423,16 @@
                              auth-token))
         (make-instance 'cave::pull-mirror-response
                        :ok success-p
-                       :error (or err ""))))))
+                       :error-message (or err ""))))))
+
+;; --- Cache management ---
+
+(defun handle-chamber-invalidate-cache (request ctx)
+  (declare (ignore ctx))
+  (let ((owner (slot-value request 'cave::owner))
+        (repo-name (slot-value request 'cave::repo-name)))
+    (chamber-invalidate-repo owner repo-name)
+    (make-instance 'cave::invalidate-cache-response :ok t)))
 
 ;;; --- Streaming git protocol handlers ---
 
@@ -612,6 +621,11 @@
   (ag-grpc:server-register-handler *chamber-server*
     "/cave.chamber.Chamber/PullMirror" #'handle-chamber-pull-mirror
     :request-type 'cave::pull-mirror-request :response-type 'cave::pull-mirror-response)
+
+  ;; Cache management
+  (ag-grpc:server-register-handler *chamber-server*
+    "/cave.chamber.Chamber/InvalidateCache" #'handle-chamber-invalidate-cache
+    :request-type 'cave::invalidate-cache-request :response-type 'cave::invalidate-cache-response)
 
   ;; Git protocol streaming (bidirectional)
   (ag-grpc:server-register-handler *chamber-server*

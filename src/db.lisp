@@ -538,7 +538,32 @@ CREATE INDEX idx_workflow_steps_job ON cave_workflow_steps (job_id);")
 ALTER TABLE cave_workflow_steps ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 0;")
 
     (38 . "ALTER TABLE cave_workflow_jobs ADD COLUMN continue_on_error BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE cave_workflow_steps ADD COLUMN continue_on_error BOOLEAN NOT NULL DEFAULT FALSE;"))
+ALTER TABLE cave_workflow_steps ADD COLUMN continue_on_error BOOLEAN NOT NULL DEFAULT FALSE;")
+
+    (39 . "CREATE TABLE cave_chamber_nodes (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(128) NOT NULL UNIQUE,
+  address VARCHAR(256) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'healthy'
+    CHECK (status IN ('healthy', 'suspect', 'dead')),
+  last_seen_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);")
+
+    (40 . "CREATE TABLE cave_repo_assignments (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  node_id BIGINT NOT NULL REFERENCES cave_chamber_nodes(id) ON DELETE CASCADE,
+  role VARCHAR(8) NOT NULL DEFAULT 'primary'
+    CHECK (role IN ('primary', 'secondary')),
+  generation BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, node_id)
+);
+CREATE INDEX idx_repo_assignments_repo ON cave_repo_assignments (repo_id);
+CREATE INDEX idx_repo_assignments_node ON cave_repo_assignments (node_id);
+CREATE UNIQUE INDEX idx_repo_assignments_primary
+  ON cave_repo_assignments (repo_id) WHERE role = 'primary';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

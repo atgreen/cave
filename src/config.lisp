@@ -38,6 +38,8 @@
     :chamber-url nil
     :chamber-max-git-processes 64
     :chamber-cache-size-mb 128
+    :chamber-nodes nil
+    :chamber-health-interval 10
     :zoekt-enabled nil
     :zoekt-web-url "http://cave-prod-zoekt-web:6070"
     :zoekt-index-dir "/data/zoekt-index"))

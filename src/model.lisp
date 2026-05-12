@@ -253,15 +253,23 @@
 
 (defun create-repo (&key org-id owner-id name description (is-private nil))
   "Create a new repo. Must have exactly one of ORG-ID or OWNER-ID."
-  (postmodern:query
-   (:insert-into 'cave-repos
-    :set 'org-id (or org-id :null)
-         'owner-id (or owner-id :null)
-         'name name
-         'description description
-         'is-private is-private
-    :returning '*)
-   :plist))
+  (let ((repo (postmodern:query
+               (:insert-into 'cave-repos
+                :set 'org-id (or org-id :null)
+                     'owner-id (or owner-id :null)
+                     'name name
+                     'description description
+                     'is-private is-private
+                :returning '*)
+               :plist)))
+    ;; Auto-assign to chamber node if multi-chamber is active
+    (let ((nodes (config-value :chamber-nodes)))
+      (when (and repo nodes (> (length nodes) 1))
+        (handler-case (ensure-repo-assigned (getf repo :id))
+          (error (e)
+            (llog:warn "Failed to assign repo to chamber node"
+                       :repo-id (getf repo :id) :error (princ-to-string e))))))
+    repo))
 
 (defun find-repo (owner-name repo-name)
   "Find a repo by owner (org or user) name and repo name."
@@ -1570,3 +1578,143 @@
          (:desc 'cave-events.created-at))
         limit)
        :plists)))
+
+;;; ========================== CHAMBER NODES ==========================
+
+(defun list-chamber-nodes (&key status)
+  "List all chamber nodes, optionally filtered by status."
+  (if status
+      (postmodern:query
+       (:order-by
+        (:select '* :from 'cave-chamber-nodes
+         :where (:= 'status status))
+        'name)
+       :plists)
+      (postmodern:query
+       (:order-by
+        (:select '* :from 'cave-chamber-nodes)
+        'name)
+       :plists)))
+
+(defun find-chamber-node (id)
+  (postmodern:query
+   (:select '* :from 'cave-chamber-nodes :where (:= 'id id))
+   :plist))
+
+(defun find-chamber-node-by-name (name)
+  (postmodern:query
+   (:select '* :from 'cave-chamber-nodes :where (:= 'name name))
+   :plist))
+
+(defun upsert-chamber-node (&key name address)
+  "Insert or update a chamber node by name."
+  (let ((existing (find-chamber-node-by-name name)))
+    (if existing
+        (progn
+          (postmodern:query
+           (:update 'cave-chamber-nodes
+            :set 'address address
+            :where (:= 'id (getf existing :id))))
+          (find-chamber-node-by-name name))
+        (postmodern:query
+         (:insert-into 'cave-chamber-nodes
+          :set 'name name 'address address
+          :returning '*)
+         :plist))))
+
+(defun update-chamber-node-status (node-id status)
+  "Update node health status and last_seen_at."
+  (postmodern:query
+   (:update 'cave-chamber-nodes
+    :set 'status status
+         'last-seen-at (:raw "NOW()")
+    :where (:= 'id node-id))))
+
+;;; ========================== REPO ASSIGNMENTS ==========================
+
+(defun repo-primary-node (repo-id)
+  "Get the primary chamber node for a repo. Returns node plist or NIL."
+  (postmodern:query
+   (:select 'cave-chamber-nodes.*
+    :from 'cave-repo-assignments
+    :inner-join 'cave-chamber-nodes
+    :on (:= 'cave-repo-assignments.node-id 'cave-chamber-nodes.id)
+    :where (:and (:= 'cave-repo-assignments.repo-id repo-id)
+                 (:= 'cave-repo-assignments.role "primary")))
+   :plist))
+
+(defun repo-secondary-nodes (repo-id)
+  "Get secondary chamber nodes for a repo."
+  (postmodern:query
+   (:select 'cave-chamber-nodes.*
+    :from 'cave-repo-assignments
+    :inner-join 'cave-chamber-nodes
+    :on (:= 'cave-repo-assignments.node-id 'cave-chamber-nodes.id)
+    :where (:and (:= 'cave-repo-assignments.repo-id repo-id)
+                 (:= 'cave-repo-assignments.role "secondary")))
+   :plists))
+
+(defun repo-all-nodes (repo-id)
+  "Get all chamber nodes assigned to a repo (primary + secondaries)."
+  (postmodern:query
+   (:select 'cave-chamber-nodes.* 'cave-repo-assignments.role
+    :from 'cave-repo-assignments
+    :inner-join 'cave-chamber-nodes
+    :on (:= 'cave-repo-assignments.node-id 'cave-chamber-nodes.id)
+    :where (:= 'cave-repo-assignments.repo-id repo-id))
+   :plists))
+
+(defun repo-healthy-nodes (repo-id)
+  "Get healthy nodes assigned to a repo."
+  (postmodern:query
+   (:select 'cave-chamber-nodes.*
+    :from 'cave-repo-assignments
+    :inner-join 'cave-chamber-nodes
+    :on (:= 'cave-repo-assignments.node-id 'cave-chamber-nodes.id)
+    :where (:and (:= 'cave-repo-assignments.repo-id repo-id)
+                 (:in 'cave-chamber-nodes.status (:set "healthy" "suspect"))))
+   :plists))
+
+(defun assign-repo-to-node (repo-id node-id role)
+  "Assign a repo to a chamber node with the given role."
+  (postmodern:query
+   (:insert-into 'cave-repo-assignments
+    :set 'repo-id repo-id 'node-id node-id 'role role
+    :returning '*)
+   :plist))
+
+(defun bump-repo-generation (repo-id node-id)
+  "Increment the generation counter for a repo assignment."
+  (postmodern:query
+   (:update 'cave-repo-assignments
+    :set 'generation (:+ 'generation 1)
+    :where (:and (:= 'repo-id repo-id) (:= 'node-id node-id)))))
+
+(defun node-repo-count (node-id)
+  "Count repos assigned to a node as primary."
+  (or (postmodern:query
+       (:select (:count '*)
+        :from 'cave-repo-assignments
+        :where (:and (:= 'node-id node-id)
+                     (:= 'role "primary")))
+       :single)
+      0))
+
+(defun ensure-repo-assigned (repo-id)
+  "Assign repo to least-loaded node if it has no primary assignment.
+   Returns the primary node plist."
+  (or (repo-primary-node repo-id)
+      (let* ((nodes (list-chamber-nodes :status "healthy"))
+             (best (when nodes
+                     (reduce (lambda (a b)
+                               (if (<= (node-repo-count (getf a :id))
+                                       (node-repo-count (getf b :id)))
+                                   a b))
+                             nodes))))
+        (when best
+          (assign-repo-to-node repo-id (getf best :id) "primary")
+          ;; Also assign all other nodes as secondaries
+          (dolist (node nodes)
+            (unless (= (getf node :id) (getf best :id))
+              (assign-repo-to-node repo-id (getf node :id) "secondary")))
+          best))))

@@ -32,10 +32,13 @@
             (ag-grpc:make-channel host-only port :timeout nil))))
   *chamber-channel*)
 
-(defun chamber-call (method request response-type)
-  "Make a unary gRPC call to Chamber."
-  (ag-grpc:grpc-call (ensure-chamber-channel) method request
-                      :response-type response-type))
+(defun chamber-call (method request response-type &key owner repo-name write-p)
+  "Make a unary gRPC call to Chamber. Routes to correct node in multi-chamber mode."
+  (if (multi-chamber-p)
+      (router-call method request response-type
+                   :owner owner :repo-name repo-name :write-p write-p)
+      (ag-grpc:grpc-call (ensure-chamber-channel) method request
+                          :response-type response-type)))
 
 ;;; --- Read operations ---
 
@@ -46,10 +49,11 @@
                                 (make-instance 'cave::get-tree-request
                                                :owner owner :repo-name repo-name
                                                :ref ref :path path)
-                                'cave::get-tree-response)))
+                                'cave::get-tree-response
+                                :owner owner :repo-name repo-name)))
         (mapcar (lambda (e)
                   (list :mode (slot-value e 'cave::mode)
-                        :type (slot-value e 'cave::type)
+                        :type (slot-value e 'cave::entry-type)
                         :hash (slot-value e 'cave::hash)
                         :size (slot-value e 'cave::size)
                         :name (slot-value e 'cave::name)))
@@ -64,7 +68,8 @@
                                 (make-instance 'cave::get-blob-request
                                                :owner owner :repo-name repo-name
                                                :ref ref :path path)
-                                'cave::get-blob-response)))
+                                'cave::get-blob-response
+                                :owner owner :repo-name repo-name)))
         (when (slot-value resp 'cave::found)
           (slot-value resp 'cave::content)))
       (git-blob (repo-disk-path owner repo-name) ref path)))
@@ -76,7 +81,8 @@
                                 (make-instance 'cave::get-blob-bytes-request
                                                :owner owner :repo-name repo-name
                                                :ref ref :path path)
-                                'cave::get-blob-bytes-response)))
+                                'cave::get-blob-bytes-response
+                                :owner owner :repo-name repo-name)))
         (when (slot-value resp 'cave::found)
           (slot-value resp 'cave::content)))
       (git-blob-bytes (repo-disk-path owner repo-name) ref path)))
@@ -88,7 +94,8 @@
                                 (make-instance 'cave::get-blob-info-request
                                                :owner owner :repo-name repo-name
                                                :ref ref :path path)
-                                'cave::get-blob-info-response)))
+                                'cave::get-blob-info-response
+                                :owner owner :repo-name repo-name)))
         (when (slot-value resp 'cave::found)
           (list :hash (slot-value resp 'cave::hash)
                 :size (slot-value resp 'cave::size)
@@ -108,7 +115,8 @@
                                 (make-instance 'cave::get-commit-request
                                                :owner owner :repo-name repo-name
                                                :hash hash)
-                                'cave::get-commit-response)))
+                                'cave::get-commit-response
+                                :owner owner :repo-name repo-name)))
         (when (slot-value resp 'cave::found)
           (let ((c (slot-value resp 'cave::commit)))
             (list :commit (list :hash (slot-value c 'cave::hash)
@@ -133,7 +141,8 @@
                                                :owner owner :repo-name repo-name
                                                :branch (or branch "")
                                                :limit limit)
-                                'cave::get-log-response)))
+                                'cave::get-log-response
+                                :owner owner :repo-name repo-name)))
         (mapcar (lambda (c)
                   (list :hash (slot-value c 'cave::hash)
                         :short-hash (slot-value c 'cave::short-hash)
@@ -148,7 +157,8 @@
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetBranches"
                                 (make-instance 'cave::get-branches-request
                                                :owner owner :repo-name repo-name)
-                                'cave::get-branches-response)))
+                                'cave::get-branches-response
+                                :owner owner :repo-name repo-name)))
         (coerce (slot-value resp 'cave::branches) 'list))
       (git-branches (repo-disk-path owner repo-name))))
 
@@ -157,7 +167,8 @@
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetTags"
                                 (make-instance 'cave::get-tags-request
                                                :owner owner :repo-name repo-name)
-                                'cave::get-tags-response)))
+                                'cave::get-tags-response
+                                :owner owner :repo-name repo-name)))
         (coerce (slot-value resp 'cave::tags) 'list))
       (git-tags (repo-disk-path owner repo-name))))
 
@@ -166,7 +177,8 @@
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetDefaultBranch"
                                 (make-instance 'cave::get-default-branch-request
                                                :owner owner :repo-name repo-name)
-                                'cave::get-default-branch-response)))
+                                'cave::get-default-branch-response
+                                :owner owner :repo-name repo-name)))
         (slot-value resp 'cave::branch))
       (git-default-branch (repo-disk-path owner repo-name))))
 
@@ -175,7 +187,8 @@
       (let ((resp (chamber-call "/cave.chamber.Chamber/IsEmpty"
                                 (make-instance 'cave::is-empty-request
                                                :owner owner :repo-name repo-name)
-                                'cave::is-empty-response)))
+                                'cave::is-empty-response
+                                :owner owner :repo-name repo-name)))
         (slot-value resp 'cave::empty))
       (git-repo-empty-p (repo-disk-path owner repo-name))))
 
@@ -185,7 +198,8 @@
                                 (make-instance 'cave::get-diff-merge-base-request
                                                :owner owner :repo-name repo-name
                                                :target target :source source)
-                                'cave::get-diff-response)))
+                                'cave::get-diff-response
+                                :owner owner :repo-name repo-name)))
         (slot-value resp 'cave::base-ref))
       (git-diff-merge-base (repo-disk-path owner repo-name) target source)))
 
@@ -195,8 +209,9 @@
                                 (make-instance 'cave::get-commit-count-request
                                                :owner owner :repo-name repo-name
                                                :branch (or branch ""))
-                                'cave::get-commit-count-response)))
-        (slot-value resp 'cave::count))
+                                'cave::get-commit-count-response
+                                :owner owner :repo-name repo-name)))
+        (slot-value resp 'cave::commit-count))
       (git-commit-count (repo-disk-path owner repo-name) :branch branch)))
 
 (defun chamber-find-readme (owner repo-name &key (ref "HEAD"))
@@ -206,7 +221,8 @@
                                 (make-instance 'cave::find-readme-request
                                                :owner owner :repo-name repo-name
                                                :ref ref)
-                                'cave::find-readme-response)))
+                                'cave::find-readme-response
+                                :owner owner :repo-name repo-name)))
         (when (slot-value resp 'cave::found)
           (list :name (slot-value resp 'cave::name))))
       (git-readme-path (repo-disk-path owner repo-name) :ref ref)))
@@ -223,9 +239,10 @@
                                                :author (or author "")
                                                :message (or message "")
                                                :squash (if squash t nil))
-                                'cave::merge-branch-response)))
+                                'cave::merge-branch-response
+                                :owner owner :repo-name repo-name :write-p t)))
         (values (slot-value resp 'cave::ok)
-                (slot-value resp 'cave::error)))
+                (slot-value resp 'cave::error-message)))
       (git-merge-branch (repo-disk-path owner repo-name) target source
                          :author author :message message :squash squash)))
 
@@ -235,7 +252,8 @@
                                 (make-instance 'cave::delete-branch-request
                                                :owner owner :repo-name repo-name
                                                :branch branch)
-                                'cave::delete-branch-response)))
+                                'cave::delete-branch-response
+                                :owner owner :repo-name repo-name :write-p t)))
         (slot-value resp 'cave::ok))
       (git-delete-branch (repo-disk-path owner repo-name) branch)))
 
@@ -249,9 +267,10 @@
                                                :owner owner :repo-name repo-name
                                                :url url
                                                :auth-token (or auth-token ""))
-                                'cave::clone-from-url-response)))
+                                'cave::clone-from-url-response
+                                :owner owner :repo-name repo-name :write-p t)))
         (values (slot-value resp 'cave::ok)
-                (slot-value resp 'cave::error)))
+                (slot-value resp 'cave::error-message)))
       (git-clone-bare-from-url url (repo-disk-path owner repo-name)
                                 :auth-token auth-token)))
 
@@ -263,9 +282,10 @@
                                                :owner owner :repo-name repo-name
                                                :url url
                                                :auth-token (or auth-token ""))
-                                'cave::push-mirror-response)))
+                                'cave::push-mirror-response
+                                :owner owner :repo-name repo-name :write-p t)))
         (values (slot-value resp 'cave::ok)
-                (slot-value resp 'cave::error)))
+                (slot-value resp 'cave::error-message)))
       (git-push-mirror (repo-disk-path owner repo-name) url auth-token)))
 
 (defun chamber-pull-mirror (owner repo-name url &optional auth-token)
@@ -276,7 +296,8 @@
                                                :owner owner :repo-name repo-name
                                                :url url
                                                :auth-token (or auth-token ""))
-                                'cave::pull-mirror-response)))
+                                'cave::pull-mirror-response
+                                :owner owner :repo-name repo-name :write-p t)))
         (values (slot-value resp 'cave::ok)
-                (slot-value resp 'cave::error)))
+                (slot-value resp 'cave::error-message)))
       (git-pull-mirror (repo-disk-path owner repo-name) url auth-token)))

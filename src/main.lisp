@@ -194,6 +194,17 @@
                 (llog:warn "Chamber failed to start — using direct git"
                            :error (princ-to-string e))))))
 
+        ;; Start multi-chamber router if configured
+        (let ((nodes (config-value :chamber-nodes)))
+          (when (and nodes (> (length nodes) 1))
+            (handler-case
+                (progn
+                  (init-chamber-router nodes)
+                  (start-chamber-health-checker))
+              (error (e)
+                (llog:warn "Chamber router failed to start"
+                           :error (princ-to-string e))))))
+
         ;; Start HTTP
         (start-server port)
 

@@ -36,6 +36,9 @@ service Chamber {
   rpc PushMirror(PushMirrorRequest) returns (PushMirrorResponse) {}
   rpc PullMirror(PullMirrorRequest) returns (PullMirrorResponse) {}
 
+  // Cache management (for multi-chamber)
+  rpc InvalidateCache(InvalidateCacheRequest) returns (InvalidateCacheResponse) {}
+
   // Bidirectional streaming: proxy git pack protocol through Chamber
   rpc ReceivePack(stream PackData) returns (stream PackData) {}
   rpc UploadPack(stream PackData) returns (stream PackData) {}
@@ -53,7 +56,7 @@ message PackData {
 
 message TreeEntry {
   string mode = 1;
-  string type = 2;
+  string entry_type = 2;
   string hash = 3;
   int64 size = 4;
   string name = 5;
@@ -76,7 +79,7 @@ message InitRepoRequest {
 
 message InitRepoResponse {
   bool ok = 1;
-  string error = 2;
+  string error_message = 2;
 }
 
 message DeleteRepoRequest {
@@ -223,7 +226,7 @@ message GetCommitCountRequest {
 }
 
 message GetCommitCountResponse {
-  int64 count = 1;
+  int64 commit_count = 1;
 }
 
 message FindReadmeRequest {
@@ -251,7 +254,7 @@ message MergeBranchRequest {
 
 message MergeBranchResponse {
   bool ok = 1;
-  string error = 2;
+  string error_message = 2;
 }
 
 message DeleteBranchRequest {
@@ -275,7 +278,7 @@ message CloneFromURLRequest {
 
 message CloneFromURLResponse {
   bool ok = 1;
-  string error = 2;
+  string error_message = 2;
 }
 
 message PushMirrorRequest {
@@ -287,7 +290,7 @@ message PushMirrorRequest {
 
 message PushMirrorResponse {
   bool ok = 1;
-  string error = 2;
+  string error_message = 2;
 }
 
 message PullMirrorRequest {
@@ -299,5 +302,16 @@ message PullMirrorRequest {
 
 message PullMirrorResponse {
   bool ok = 1;
-  string error = 2;
+  string error_message = 2;
+}
+
+// --- Cache management ---
+
+message InvalidateCacheRequest {
+  string owner = 1;
+  string repo_name = 2;
+}
+
+message InvalidateCacheResponse {
+  bool ok = 1;
 }
