@@ -81,6 +81,13 @@ func (e *Executor) createContainer(a plan.Action) error {
 
 func (e *Executor) updateContainer(a plan.Action) error {
 	name := e.Config.ContainerName(a.Service)
+	// Safety: only update containers we manage
+	info, err := e.Runtime.Inspect(name)
+	if err == nil && info.Status != "not-found" {
+		if !isManagedByUs(info) {
+			return fmt.Errorf("container %q exists but was not created by cavectl — refusing to modify", name)
+		}
+	}
 	if err := e.Runtime.Stop(name); err != nil {
 		// Ignore stop errors (container might not be running)
 	}
@@ -88,6 +95,14 @@ func (e *Executor) updateContainer(a plan.Action) error {
 		return fmt.Errorf("removing old container: %w", err)
 	}
 	return e.createContainer(a)
+}
+
+// isManagedByUs checks if a container has the cave.managed-by=cavectl label.
+func isManagedByUs(info *runtime.ContainerInfo) bool {
+	if info.Labels == nil {
+		return false
+	}
+	return info.Labels["cave.managed-by"] == "cavectl"
 }
 
 func (e *Executor) createPostgres() error {
@@ -106,6 +121,7 @@ func (e *Executor) createPostgres() error {
 		},
 		HealthCmd: "pg_isready -U cave",
 		HealthInt: "2s",
+		Labels:    e.managedLabels(),
 	})
 }
 
@@ -123,7 +139,8 @@ func (e *Executor) createKeycloak() error {
 			"KEYCLOAK_ADMIN":      e.Config.Auth.Keycloak.AdminUser,
 			"KEYCLOAK_ADMIN_PASSWORD": e.Config.Auth.Keycloak.AdminPassword,
 		},
-		Cmd: []string{"start-dev"},
+		Cmd:    []string{"start-dev"},
+		Labels: e.managedLabels(),
 	})
 }
 
@@ -137,7 +154,8 @@ func (e *Executor) createZoekt() error {
 			{Source: e.Config.VolumeName("zoekt"), Target: "/data/index"},
 			{Source: e.Config.VolumeName("data"), Target: "/var/lib/cave:ro"},
 		},
-		Cmd: []string{"-rpc", "-listen", ":6070", "-index", "/data/index"},
+		Cmd:    []string{"-rpc", "-listen", ":6070", "-index", "/data/index"},
+		Labels: e.managedLabels(),
 	})
 }
 
@@ -200,6 +218,13 @@ func (e *Executor) createCave() error {
 			"cave.managed-by":  "cavectl",
 		},
 	})
+}
+
+func (e *Executor) managedLabels() map[string]string {
+	return map[string]string{
+		"cave.managed-by": "cavectl",
+		"cave.instance":   e.Config.Runtime.Prefix,
+	}
 }
 
 func (e *Executor) waitForHealthy(a plan.Action) error {
