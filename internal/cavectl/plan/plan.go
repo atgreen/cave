@@ -3,6 +3,7 @@ package plan
 import (
 	"crypto/sha256"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -25,6 +26,7 @@ const (
 	MigrateDatabase
 	ConfigureKeycloak
 	CreateRunnerToken
+	RestoreBackup
 )
 
 // Action represents a single step in the apply plan.
@@ -37,7 +39,7 @@ type Action struct {
 
 func (a Action) Symbol() string {
 	switch a.Type {
-	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, ConfigureKeycloak, CreateRunnerToken:
+	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, ConfigureKeycloak, CreateRunnerToken, RestoreBackup:
 		return "+"
 	case UpdateContainer:
 		return "~"
@@ -53,7 +55,12 @@ func (a Action) Symbol() string {
 }
 
 // Diff compares desired config against current state and returns an ordered action list.
-func Diff(cfg *config.Config, current *state.DeploymentState) []Action {
+// If backupPath is non-empty, a RestoreBackup action is inserted after postgres is healthy.
+func Diff(cfg *config.Config, current *state.DeploymentState, backupPath ...string) []Action {
+	backup := ""
+	if len(backupPath) > 0 {
+		backup = backupPath[0]
+	}
 	var actions []Action
 
 	// 1. Network
@@ -118,6 +125,16 @@ func Diff(cfg *config.Config, current *state.DeploymentState) []Action {
 				Description: fmt.Sprintf("wait for %q healthy", cfg.ContainerName("pg")),
 			})
 		}
+	}
+
+	// 3b. Restore backup (if provided) — after postgres is healthy, before Cave starts
+	if backup != "" {
+		actions = append(actions, Action{
+			Type:        RestoreBackup,
+			Service:     "backup",
+			Description: fmt.Sprintf("restore from backup %s", filepath.Base(backup)),
+			Details:     backup,
+		})
 	}
 
 	// 4. Keycloak
@@ -206,6 +223,7 @@ func Diff(cfg *config.Config, current *state.DeploymentState) []Action {
 
 	// 7. Runners
 	if cfg.Runner.Enabled {
+		needsToken := false
 		for i := 0; i < cfg.Runner.Count; i++ {
 			svc := "runner"
 			if i > 0 {
@@ -213,8 +231,14 @@ func Diff(cfg *config.Config, current *state.DeploymentState) []Action {
 			}
 			rInfo := current.Containers[svc]
 			if rInfo == nil || rInfo.Status == "not-found" {
-				// Need a registration token before creating runners
-				if i == 0 {
+				if !needsToken {
+					needsToken = true
+					// Wait for Cave to finish migrations before inserting token
+					actions = append(actions, Action{
+						Type:        WaitForHealthy,
+						Service:     "cave",
+						Description: fmt.Sprintf("wait for %q ready (migrations)", cfg.ContainerName("cave")),
+					})
 					actions = append(actions, Action{
 						Type:        CreateRunnerToken,
 						Service:     "runner",

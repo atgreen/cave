@@ -44,7 +44,8 @@ func main() {
 	case "backup":
 		err = cmdBackup(args)
 	case "restore":
-		err = cmdRestore(args)
+		fmt.Fprintln(os.Stderr, "Use: cavectl init --from-backup <archive.tar.gz>")
+		os.Exit(1)
 	case "version":
 		fmt.Println("cavectl v0.1.0")
 	case "help", "--help", "-h":
@@ -74,14 +75,14 @@ Commands:
   logs         Tail container logs
   destroy      Tear down all containers
   backup       Back up database and repositories
-  restore      Restore from backup
   version      Print version
 
 Options:
-  -f, --file    Path to cave.yaml (default: cave.yaml)
-  --name        Instance name (default: cave)
-  --dry-run     Show plan without executing
-  --yes         Skip confirmation prompt`)
+  -f, --file        Path to cave.yaml (default: cave.yaml)
+  --name            Instance name (default: cave)
+  --from-backup     Restore from backup archive during init
+  --dry-run         Show plan without executing
+  --yes             Skip confirmation prompt`)
 }
 
 // --- init ---
@@ -90,6 +91,7 @@ func cmdInit(args []string) error {
 	name := ""
 	dir := "."
 	yes := false
+	fromBackup := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--name":
@@ -102,8 +104,20 @@ func cmdInit(args []string) error {
 			if i < len(args) {
 				dir = args[i]
 			}
+		case "--from-backup":
+			i++
+			if i < len(args) {
+				fromBackup = args[i]
+			}
 		case "--yes", "-y":
 			yes = true
+		}
+	}
+
+	// Validate backup archive exists
+	if fromBackup != "" {
+		if _, err := os.Stat(fromBackup); err != nil {
+			return fmt.Errorf("backup archive not found: %s", fromBackup)
 		}
 	}
 
@@ -177,7 +191,11 @@ func cmdInit(args []string) error {
 	fmt.Printf("  Auth:      %s\n", cfg.Auth.Mode)
 	fmt.Printf("  Database:  %s\n", cfg.Database.Mode)
 	fmt.Printf("  Config:    %s\n", file)
-	fmt.Printf("  Runtime:   %s\n\n", rt.Name())
+	fmt.Printf("  Runtime:   %s\n", rt.Name())
+	if fromBackup != "" {
+		fmt.Printf("  Backup:    %s\n", fromBackup)
+	}
+	fmt.Println()
 
 	// Compute plan
 	current, err := state.Read(cfg, rt)
@@ -185,7 +203,7 @@ func cmdInit(args []string) error {
 		return fmt.Errorf("reading state: %w", err)
 	}
 
-	actions := plan.Diff(cfg, current)
+	actions := plan.Diff(cfg, current, fromBackup)
 	plan.PrintPlan(actions)
 
 	if len(actions) == 0 {
@@ -583,51 +601,3 @@ func cmdBackup(args []string) error {
 	return nil
 }
 
-// --- restore ---
-
-func cmdRestore(args []string) error {
-	file := defaultFile
-	yes := false
-	archive := ""
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-f", "--file":
-			i++
-			if i < len(args) {
-				file = args[i]
-			}
-		case "--yes", "-y":
-			yes = true
-		default:
-			if !strings.HasPrefix(args[i], "-") {
-				archive = args[i]
-			}
-		}
-	}
-
-	if archive == "" {
-		return fmt.Errorf("usage: cavectl restore <archive.tar.gz> [-f cave.yaml]")
-	}
-
-	cfg, err := config.Load(file)
-	if err != nil {
-		return err
-	}
-
-	rt, err := runtime.ForEngine(cfg.Runtime.Engine)
-	if err != nil {
-		return err
-	}
-
-	if !yes {
-		fmt.Printf("This will OVERWRITE all data in instance %q.\n\n", cfg.Runtime.Prefix)
-		if !plan.Confirm() {
-			fmt.Println("Aborted.")
-			return nil
-		}
-		fmt.Println()
-	}
-
-	fmt.Printf("Restoring instance %q from %s...\n\n", cfg.Runtime.Prefix, archive)
-	return backup.Restore(cfg, rt, archive)
-}

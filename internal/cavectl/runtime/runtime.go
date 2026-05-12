@@ -111,7 +111,7 @@ func (r *containerRuntime) run(args ...string) (string, error) {
 }
 
 func (r *containerRuntime) Inspect(name string) (*ContainerInfo, error) {
-	out, err := r.run("inspect", "--format", "json", name)
+	out, err := r.run("container", "inspect", "--format", "json", name)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such") || strings.Contains(err.Error(), "not found") {
 			return &ContainerInfo{Name: name, Status: "not-found"}, nil

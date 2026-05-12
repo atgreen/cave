@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,6 +56,9 @@ func (e *Executor) executeOne(a plan.Action) error {
 		return nil // TODO: run realm configuration
 	case plan.CreateRunnerToken:
 		return e.createRunnerToken()
+	case plan.RestoreBackup:
+		path, _ := a.Details.(string)
+		return e.restoreBackup(path)
 	default:
 		return fmt.Errorf("unknown action type %d", a.Type)
 	}
@@ -244,19 +250,105 @@ func (e *Executor) waitForHealthy(a plan.Action) error {
 			return err
 		}
 		if info.Status == "running" {
-			// For postgres, try a connection check
-			if a.Service == "pg" {
+			switch a.Service {
+			case "pg":
 				_, err := e.Runtime.Exec(name, []string{"pg_isready", "-U", "cave"})
 				if err == nil {
 					return nil
 				}
-			} else {
+			case "cave":
+				// Check that all migrations have completed by verifying a late table exists
+				pgName := e.Config.ContainerName("pg")
+				_, err := e.Runtime.Exec(pgName, []string{
+					"psql", "-U", "cave", "-d", "cave", "-Atc",
+					"SELECT 1 FROM cave_runner_registration_tokens LIMIT 0"})
+				if err == nil {
+					return nil
+				}
+			default:
 				return nil
 			}
 		}
 		time.Sleep(time.Second)
 	}
 	return fmt.Errorf("container %q did not become healthy after 30s", name)
+}
+
+func (e *Executor) restoreBackup(archivePath string) error {
+	pgName := e.Config.ContainerName("pg")
+
+	// Extract archive
+	workDir, err := os.MkdirTemp("", "cave-restore-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(workDir)
+
+	cmd := exec.Command("tar", "-xzf", archivePath, "-C", workDir)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("extracting archive: %w", err)
+	}
+
+	entries, _ := os.ReadDir(workDir)
+	if len(entries) == 0 {
+		return fmt.Errorf("archive is empty")
+	}
+	snapshot := filepath.Join(workDir, entries[0].Name())
+
+	// Restore cave database (DB is fresh/empty at this point)
+	caveDump := filepath.Join(snapshot, "cave.pgdump")
+	if _, err := os.Stat(caveDump); err == nil {
+		fmt.Println("    Restoring cave database...")
+		// Drop and recreate to be safe
+		e.Runtime.Exec(pgName, []string{"dropdb", "-U", "cave", "--if-exists", "cave"})
+		e.Runtime.Exec(pgName, []string{"createdb", "-U", "cave", "cave"})
+		if err := e.Runtime.ExecFromFile(pgName,
+			[]string{"pg_restore", "-U", "cave", "-d", "cave", "--no-owner"},
+			caveDump); err != nil {
+			return fmt.Errorf("pg_restore cave: %w", err)
+		}
+	}
+
+	// Restore keycloak database (if present)
+	kcDump := filepath.Join(snapshot, "keycloak.pgdump")
+	if _, err := os.Stat(kcDump); err == nil {
+		fmt.Println("    Restoring keycloak database...")
+		e.Runtime.Exec(pgName, []string{"dropdb", "-U", "cave", "--if-exists", "keycloak"})
+		e.Runtime.Exec(pgName, []string{"createdb", "-U", "cave", "keycloak"})
+		e.Runtime.ExecFromFile(pgName,
+			[]string{"pg_restore", "-U", "cave", "-d", "keycloak", "--no-owner"},
+			kcDump)
+	}
+
+	// Restore git repos — copy into the data volume via a temp container
+	reposDir := filepath.Join(snapshot, "repos")
+	if _, err := os.Stat(reposDir); err == nil {
+		fmt.Println("    Restoring git repositories...")
+		dataVol := e.Config.VolumeName("data")
+		// Use a temp container to copy repos into the volume
+		tempName := e.Config.Runtime.Prefix + "-restore-tmp"
+		e.Runtime.Run(runtime.RunOptions{
+			Name:    tempName,
+			Image:   "docker.io/alpine:3.20",
+			Volumes: []runtime.VolumeMount{{Source: dataVol, Target: "/var/lib/cave"}},
+			Cmd:     []string{"true"},
+			Remove:  true,
+		})
+		// Now copy repos via podman cp into a fresh container
+		e.Runtime.Run(runtime.RunOptions{
+			Name:    tempName,
+			Image:   "docker.io/alpine:3.20",
+			Detach:  true,
+			Volumes: []runtime.VolumeMount{{Source: dataVol, Target: "/var/lib/cave"}},
+			Cmd:     []string{"sleep", "60"},
+		})
+		e.Runtime.Copy(reposDir, tempName+":/var/lib/cave/repos")
+		e.Runtime.Exec(tempName, []string{"chown", "-R", "1000:1000", "/var/lib/cave/repos"})
+		e.Runtime.Stop(tempName)
+		e.Runtime.Remove(tempName)
+	}
+
+	return nil
 }
 
 func (e *Executor) createRunnerToken() error {
