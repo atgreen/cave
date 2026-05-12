@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"moxielogic.com/cave/internal/cavectl/apply"
+	"moxielogic.com/cave/internal/cavectl/backup"
 	"moxielogic.com/cave/internal/cavectl/config"
 	"moxielogic.com/cave/internal/cavectl/instance"
 	"moxielogic.com/cave/internal/cavectl/plan"
@@ -41,11 +42,9 @@ func main() {
 	case "destroy":
 		err = cmdDestroy(args)
 	case "backup":
-		fmt.Fprintln(os.Stderr, "backup: not yet implemented")
-		os.Exit(1)
+		err = cmdBackup(args)
 	case "restore":
-		fmt.Fprintln(os.Stderr, "restore: not yet implemented")
-		os.Exit(1)
+		err = cmdRestore(args)
 	case "version":
 		fmt.Println("cavectl v0.1.0")
 	case "help", "--help", "-h":
@@ -521,4 +520,105 @@ func cmdDestroy(args []string) error {
 
 	fmt.Println("\nAll containers removed. Volumes preserved.")
 	return nil
+}
+
+// --- backup ---
+
+func cmdBackup(args []string) error {
+	file := defaultFile
+	dir := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-f", "--file":
+			i++
+			if i < len(args) {
+				file = args[i]
+			}
+		case "--dir":
+			i++
+			if i < len(args) {
+				dir = args[i]
+			}
+		}
+	}
+
+	cfg, err := config.Load(file)
+	if err != nil {
+		return err
+	}
+
+	rt, err := runtime.ForEngine(cfg.Runtime.Engine)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Backing up instance %q...\n\n", cfg.Runtime.Prefix)
+	archivePath, err := backup.Backup(cfg, rt, dir)
+	if err != nil {
+		return err
+	}
+
+	// Get file size
+	info, _ := os.Stat(archivePath)
+	size := "unknown"
+	if info != nil {
+		mb := float64(info.Size()) / 1024 / 1024
+		if mb >= 1 {
+			size = fmt.Sprintf("%.1f MB", mb)
+		} else {
+			size = fmt.Sprintf("%.0f KB", float64(info.Size())/1024)
+		}
+	}
+
+	fmt.Printf("\nBackup complete: %s (%s)\n", archivePath, size)
+	return nil
+}
+
+// --- restore ---
+
+func cmdRestore(args []string) error {
+	file := defaultFile
+	yes := false
+	archive := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-f", "--file":
+			i++
+			if i < len(args) {
+				file = args[i]
+			}
+		case "--yes", "-y":
+			yes = true
+		default:
+			if !strings.HasPrefix(args[i], "-") {
+				archive = args[i]
+			}
+		}
+	}
+
+	if archive == "" {
+		return fmt.Errorf("usage: cavectl restore <archive.tar.gz> [-f cave.yaml]")
+	}
+
+	cfg, err := config.Load(file)
+	if err != nil {
+		return err
+	}
+
+	rt, err := runtime.ForEngine(cfg.Runtime.Engine)
+	if err != nil {
+		return err
+	}
+
+	if !yes {
+		fmt.Printf("This will OVERWRITE all data in instance %q.\n\n", cfg.Runtime.Prefix)
+		if !plan.Confirm() {
+			fmt.Println("Aborted.")
+			return nil
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("Restoring instance %q from %s...\n\n", cfg.Runtime.Prefix, archive)
+	return backup.Restore(cfg, rt, archive)
 }

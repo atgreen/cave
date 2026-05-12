@@ -15,6 +15,9 @@ type Runtime interface {
 	Stop(name string) error
 	Remove(name string) error
 	Exec(name string, cmd []string) (string, error)
+	ExecToFile(name string, cmd []string, outPath string) error
+	ExecFromFile(name string, cmd []string, inPath string) error
+	Copy(src, dst string) error // "container:/path" or local path
 	Logs(name string, follow bool) error
 	NetworkExists(name string) (bool, error)
 	NetworkCreate(name string) error
@@ -224,6 +227,37 @@ func (r *containerRuntime) Remove(name string) error {
 func (r *containerRuntime) Exec(name string, cmd []string) (string, error) {
 	args := append([]string{"exec", name}, cmd...)
 	return r.run(args...)
+}
+
+func (r *containerRuntime) ExecToFile(name string, cmd []string, outPath string) error {
+	args := append([]string{"exec", name}, cmd...)
+	c := exec.Command(r.bin, args...)
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	c.Stdout = f
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+func (r *containerRuntime) ExecFromFile(name string, cmd []string, inPath string) error {
+	args := append([]string{"exec", "-i", name}, cmd...)
+	c := exec.Command(r.bin, args...)
+	f, err := os.Open(inPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	c.Stdin = f
+	c.Stderr = os.Stderr
+	return c.Run()
+}
+
+func (r *containerRuntime) Copy(src, dst string) error {
+	_, err := r.run("cp", src, dst)
+	return err
 }
 
 func (r *containerRuntime) Logs(name string, follow bool) error {
