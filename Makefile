@@ -13,10 +13,13 @@ QUADLET_DIR = $(HOME)/.config/containers/systemd
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-build: cave cav zoekt-git-index ## Build the Cave server and Go CLI binaries
+build: cave cav cavectl zoekt-git-index ## Build the Cave server and Go CLI binaries
 
 cav: ## Build the Go CLI client
 	go build -o cav ./cli/cav
+
+cavectl: ## Build the cavectl deployment tool
+	go build -o cavectl ./cli/cavectl
 
 zoekt-git-index: ## Build zoekt-git-index from sourcegraph/zoekt source
 	@if [ ! -d _zoekt ]; then git clone --depth 1 https://github.com/sourcegraph/zoekt.git _zoekt; fi

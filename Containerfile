@@ -33,7 +33,7 @@ RUN make
 
 FROM fedora:42
 
-RUN dnf install -y openssh-server git && dnf clean all && \
+RUN dnf install -y openssh-server git pgbouncer && dnf clean all && \
     useradd -m -s /bin/bash cave && \
     mkdir -p /etc/ssh && \
     ssh-keygen -A && \

@@ -1,0 +1,299 @@
+package config
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"net/url"
+	"os"
+	"regexp"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Config struct {
+	APIVersion string          `yaml:"apiVersion"`
+	Cave       CaveConfig      `yaml:"cave"`
+	Ports      PortsConfig     `yaml:"ports"`
+	Database   DatabaseConfig  `yaml:"database"`
+	Auth       AuthConfig      `yaml:"auth"`
+	Zoekt      ZoektConfig     `yaml:"zoekt"`
+	Chamber    ChamberConfig   `yaml:"chamber"`
+	Runtime    RuntimeConfig   `yaml:"runtime"`
+}
+
+type CaveConfig struct {
+	Image     string `yaml:"image"`
+	BaseURL   string `yaml:"base_url"`
+	SecretKey string `yaml:"secret_key"`
+}
+
+type PortsConfig struct {
+	HTTP int `yaml:"http"`
+	SSH  int `yaml:"ssh"`
+}
+
+type DatabaseConfig struct {
+	Mode     string `yaml:"mode"`     // "local" or "external"
+	Image    string `yaml:"image"`    // for local mode
+	Password string `yaml:"password"` // for local mode
+	URL      string `yaml:"url"`      // for external mode
+}
+
+type AuthConfig struct {
+	Mode     string         `yaml:"mode"` // "local", "keycloak", "oidc"
+	Keycloak KeycloakConfig `yaml:"keycloak,omitempty"`
+	OIDC     OIDCConfig     `yaml:"oidc,omitempty"`
+}
+
+type KeycloakConfig struct {
+	Image         string `yaml:"image"`
+	AdminUser     string `yaml:"admin_user"`
+	AdminPassword string `yaml:"admin_password"`
+}
+
+type OIDCConfig struct {
+	Issuer       string `yaml:"issuer"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+}
+
+type ZoektConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Image   string `yaml:"image"`
+}
+
+type ChamberConfig struct {
+	Nodes []ChamberNode `yaml:"nodes"`
+}
+
+type ChamberNode struct {
+	Name    string `yaml:"name"`
+	Address string `yaml:"address"`
+}
+
+type RuntimeConfig struct {
+	Engine  string `yaml:"engine"`  // "auto", "podman", "docker"
+	Network string `yaml:"network"`
+	Prefix  string `yaml:"prefix"`
+}
+
+// Default returns a Config with sensible defaults for a laptop deployment.
+func Default() *Config {
+	return &Config{
+		APIVersion: "v1",
+		Cave: CaveConfig{
+			Image:   "localhost/cave:prod",
+			BaseURL: "http://localhost:9080",
+		},
+		Ports: PortsConfig{
+			HTTP: 9080,
+			SSH:  9222,
+		},
+		Database: DatabaseConfig{
+			Mode:     "local",
+			Image:    "docker.io/postgres:16-alpine",
+			Password: "cave",
+		},
+		Auth: AuthConfig{
+			Mode: "local",
+			Keycloak: KeycloakConfig{
+				Image:         "quay.io/keycloak/keycloak:26.0",
+				AdminUser:     "admin",
+				AdminPassword: "admin",
+			},
+		},
+		Zoekt: ZoektConfig{
+			Enabled: true,
+			Image:   "localhost/cave-zoekt:prod",
+		},
+		Chamber: ChamberConfig{
+			Nodes: []ChamberNode{},
+		},
+		Runtime: RuntimeConfig{
+			Engine:  "auto",
+			Network: "cave-net",
+			Prefix:  "cave",
+		},
+	}
+}
+
+// Load reads and parses a cave.yaml file.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	// Expand ${ENV_VAR} references
+	expanded := expandEnvVars(string(data))
+
+	cfg := Default()
+	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("validating %s: %w", path, err)
+	}
+
+	// Auto-generate secret key if empty
+	if cfg.Cave.SecretKey == "" {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, fmt.Errorf("generating secret key: %w", err)
+		}
+		cfg.Cave.SecretKey = hex.EncodeToString(key)
+	}
+
+	return cfg, nil
+}
+
+// Validate checks the config for errors.
+func (c *Config) Validate() error {
+	if c.APIVersion != "v1" {
+		return fmt.Errorf("unsupported apiVersion: %q (expected \"v1\")", c.APIVersion)
+	}
+	if c.Cave.Image == "" {
+		return fmt.Errorf("cave.image is required")
+	}
+	if c.Ports.HTTP <= 0 {
+		return fmt.Errorf("ports.http must be positive")
+	}
+	if c.Ports.SSH <= 0 {
+		return fmt.Errorf("ports.ssh must be positive")
+	}
+	if c.Database.Mode != "local" && c.Database.Mode != "external" {
+		return fmt.Errorf("database.mode must be \"local\" or \"external\", got %q", c.Database.Mode)
+	}
+	if c.Database.Mode == "external" && c.Database.URL == "" {
+		return fmt.Errorf("database.url is required when database.mode is \"external\"")
+	}
+	if c.Database.Mode == "external" {
+		if _, err := url.Parse(c.Database.URL); err != nil {
+			return fmt.Errorf("database.url is not a valid URL: %w", err)
+		}
+	}
+	switch c.Auth.Mode {
+	case "local", "keycloak", "oidc":
+	default:
+		return fmt.Errorf("auth.mode must be \"local\", \"keycloak\", or \"oidc\", got %q", c.Auth.Mode)
+	}
+	if c.Auth.Mode == "oidc" {
+		if c.Auth.OIDC.Issuer == "" {
+			return fmt.Errorf("auth.oidc.issuer is required when auth.mode is \"oidc\"")
+		}
+		if c.Auth.OIDC.ClientID == "" {
+			return fmt.Errorf("auth.oidc.client_id is required when auth.mode is \"oidc\"")
+		}
+	}
+	if c.Runtime.Prefix == "" {
+		return fmt.Errorf("runtime.prefix is required")
+	}
+	if c.Runtime.Network == "" {
+		return fmt.Errorf("runtime.network is required")
+	}
+	return nil
+}
+
+// Marshal serializes the config to YAML with comments.
+func Marshal(c *Config) ([]byte, error) {
+	return yaml.Marshal(c)
+}
+
+// ContainerName returns the full container name for a service.
+func (c *Config) ContainerName(service string) string {
+	if service == "cave" {
+		return c.Runtime.Prefix
+	}
+	return c.Runtime.Prefix + "-" + service
+}
+
+// VolumeName returns the volume name for a service.
+func (c *Config) VolumeName(suffix string) string {
+	return c.Runtime.Prefix + "-" + suffix
+}
+
+// KeycloakEnabled returns true if a local Keycloak container is needed.
+func (c *Config) KeycloakEnabled() bool {
+	return c.Auth.Mode == "keycloak"
+}
+
+// OIDCEnabled returns true if any OIDC provider is configured.
+func (c *Config) OIDCEnabled() bool {
+	return c.Auth.Mode == "keycloak" || c.Auth.Mode == "oidc"
+}
+
+// DBHost returns the database host for cave.conf generation.
+func (c *Config) DBHost() string {
+	if c.Database.Mode == "external" {
+		u, err := url.Parse(c.Database.URL)
+		if err != nil {
+			return "localhost"
+		}
+		return u.Hostname()
+	}
+	return c.ContainerName("pg")
+}
+
+// DBPort returns the database port.
+func (c *Config) DBPort() string {
+	if c.Database.Mode == "external" {
+		u, err := url.Parse(c.Database.URL)
+		if err != nil || u.Port() == "" {
+			return "5432"
+		}
+		return u.Port()
+	}
+	return "5432"
+}
+
+// DBUser returns the database user.
+func (c *Config) DBUser() string {
+	if c.Database.Mode == "external" {
+		u, err := url.Parse(c.Database.URL)
+		if err != nil || u.User == nil {
+			return "cave"
+		}
+		return u.User.Username()
+	}
+	return "cave"
+}
+
+// DBPassword returns the database password.
+func (c *Config) DBPassword() string {
+	if c.Database.Mode == "external" {
+		u, err := url.Parse(c.Database.URL)
+		if err != nil || u.User == nil {
+			return ""
+		}
+		pw, _ := u.User.Password()
+		return pw
+	}
+	return c.Database.Password
+}
+
+// DBName returns the database name.
+func (c *Config) DBName() string {
+	if c.Database.Mode == "external" {
+		u, err := url.Parse(c.Database.URL)
+		if err != nil {
+			return "cave"
+		}
+		return strings.TrimPrefix(u.Path, "/")
+	}
+	return "cave"
+}
+
+var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+func expandEnvVars(s string) string {
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		varName := match[2 : len(match)-1]
+		if val, ok := os.LookupEnv(varName); ok {
+			return val
+		}
+		return match
+	})
+}
