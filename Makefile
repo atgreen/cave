@@ -79,8 +79,8 @@ podman-up: cave cav ## Build container and start cave + postgres + keycloak via 
 			-e KC_HTTP_ENABLED=true \
 			-e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
 			-e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-			-v $(CURDIR)/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro \
-			-v $(CURDIR)/keycloak/themes/cave:/opt/keycloak/themes/cave:ro \
+			-v $(CURDIR)/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro,z \
+			-v $(CURDIR)/keycloak/themes/cave:/opt/keycloak/themes/cave:ro,z \
 			quay.io/keycloak/keycloak:26.0 start-dev --import-realm
 	$(CURDIR)/keycloak/configure-realm.sh http://localhost:8180
 	podman build -t cave -f Containerfile.local .

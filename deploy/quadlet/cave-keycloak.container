@@ -18,8 +18,8 @@ Environment=KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true
 Environment=KC_HTTP_ENABLED=true
 Environment=KC_BOOTSTRAP_ADMIN_USERNAME=admin
 Environment=KC_BOOTSTRAP_ADMIN_PASSWORD=admin
-Volume=%h/git/cave/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro
-Volume=%h/git/cave/keycloak/themes/cave:/opt/keycloak/themes/cave:ro
+Volume=%h/git/cave/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro,z
+Volume=%h/git/cave/keycloak/themes/cave:/opt/keycloak/themes/cave:ro,z
 Exec=start-dev
 
 [Service]
