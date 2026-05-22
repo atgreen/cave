@@ -196,12 +196,11 @@
       (let ((hash (git-blob-hash disk-path ref path))
             (size (git-blob-size disk-path ref path)))
         (if hash
-            (let ((content (git-blob disk-path ref path)))
-              (make-instance 'cave::get-blob-info-response
-                             :hash hash
-                             :size (or size 0)
-                             :is-binary (if (git-blob-binary-p content) t nil)
-                             :found t))
+            (make-instance 'cave::get-blob-info-response
+                           :hash hash
+                           :size (or size 0)
+                           :is-binary (if (git-blob-binary-check disk-path ref path) t nil)
+                           :found t)
             (make-instance 'cave::get-blob-info-response
                            :hash "" :size 0 :is-binary nil :found nil))))))
 

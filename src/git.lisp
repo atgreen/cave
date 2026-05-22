@@ -460,6 +460,15 @@
   "Check if CONTENT appears to be binary (contains null bytes)."
   (and content (position (code-char 0) content)))
 
+(defun git-blob-binary-check (repo-path ref path)
+  "Check if blob at PATH under REF is binary.
+Reads the blob as text; if UTF-8 decoding fails, it's binary.
+Otherwise checks for null bytes."
+  (handler-case
+      (let ((content (git-blob repo-path ref path)))
+        (git-blob-binary-p content))
+    (error () t)))
+
 (defun git-readme-path (repo-path &key (ref "HEAD"))
   "Find a README file in the root tree. Returns filename or NIL."
   (let ((tree (git-tree repo-path :ref ref)))

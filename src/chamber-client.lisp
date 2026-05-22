@@ -104,9 +104,8 @@
              (hash (git-blob-hash disk-path ref path))
              (size (git-blob-size disk-path ref path)))
         (when hash
-          (let ((content (git-blob disk-path ref path)))
-            (list :hash hash :size (or size 0)
-                  :is-binary (git-blob-binary-p content)))))))
+          (list :hash hash :size (or size 0)
+                :is-binary (git-blob-binary-check disk-path ref path))))))
 
 (defun chamber-get-commit (owner repo-name hash)
   "Get commit details + diff + stat. Returns plist or NIL."
