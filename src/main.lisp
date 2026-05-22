@@ -824,6 +824,8 @@
                                        :ref (third parts))
                                  refs))))
             (error () nil))
+          (when refs
+            (touch-repo-pushed-at (getf repo :id)))
           ;; Schedule post_receive automations for each updated ref
           (dolist (r refs)
             (schedule-automations (getf repo :id) "post_receive"

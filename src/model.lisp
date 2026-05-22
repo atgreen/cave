@@ -397,6 +397,13 @@
     :set 'is-archived archived 'updated-at (:now)
     :where (:= 'id repo-id))))
 
+(defun touch-repo-pushed-at (repo-id)
+  "Bump last_pushed_at on a repo. Called from the post-receive hook."
+  (postmodern:execute
+   (:update 'cave-repos
+    :set 'last-pushed-at (:now)
+    :where (:= 'id repo-id))))
+
 (defun delete-repo (repo-id)
   "Delete a repo from the database. Caller must also remove disk files."
   (postmodern:execute

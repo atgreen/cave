@@ -84,10 +84,42 @@
 
 ;;; ========================== DASHBOARD ==========================
 
+(defun format-relative-time (ts &key (now (get-universal-time)))
+  "Format a timestamp as 'N units ago'. TS may be a universal-time integer or NIL."
+  (when (integerp ts)
+    (let ((delta (max 0 (- now ts))))
+      (cond
+        ((< delta 60) "just now")
+        ((< delta 3600)
+         (let ((m (floor delta 60))) (format nil "~D minute~:P ago" m)))
+        ((< delta 86400)
+         (let ((h (floor delta 3600))) (format nil "~D hour~:P ago" h)))
+        ((< delta (* 86400 30))
+         (let ((d (floor delta 86400))) (format nil "~D day~:P ago" d)))
+        ((< delta (* 86400 365))
+         (let ((mo (floor delta (* 86400 30)))) (format nil "~D month~:P ago" mo)))
+        (t (let ((y (floor delta (* 86400 365)))) (format nil "~D year~:P ago" y)))))))
+
+(defun event-ref-short (event)
+  "Pull a short ref name out of an event's metadata, if present."
+  (let ((md (getf event :metadata)))
+    (when (and md (not (eq md :null)) (stringp md))
+      (let ((m (search "\"ref\":\"" md)))
+        (when m
+          (let* ((start (+ m 7))
+                 (end (position #\" md :start start)))
+            (when end
+              (let ((ref (subseq md start end)))
+                (cond
+                  ((uiop:string-prefix-p "refs/heads/" ref) (subseq ref 11))
+                  ((uiop:string-prefix-p "refs/tags/" ref) (subseq ref 10))
+                  (t ref))))))))))
+
 (defun format-event (event)
-  "Format an event for display. Returns a human-readable string."
+  "Format an event as a short English sentence."
   (let ((type (getf event :event-type))
-        (actor (or (getf event :actor) "someone")))
+        (actor (or (getf event :actor) "someone"))
+        (ref (event-ref-short event)))
     (cond
       ((equal type "issue.created") (format nil "~A opened an issue" actor))
       ((equal type "review.submitted") (format nil "~A submitted a review" actor))
@@ -95,6 +127,9 @@
       ((equal type "repo.created") (format nil "~A created a repository" actor))
       ((equal type "repo.forked") (format nil "~A forked a repository" actor))
       ((equal type "changeset.merged") (format nil "~A merged a changeset" actor))
+      ((equal type "git.push")
+       (if ref (format nil "~A pushed to ~A" actor ref) (format nil "~A pushed" actor)))
+      ((equal type "git.clone") (format nil "~A cloned" actor))
       (t (format nil "~A: ~A" actor type)))))
 
 (defun view-dashboard (&key orgs repos username events)
@@ -109,13 +144,18 @@
      (if repos
          (:ul.repo-list
           (dolist (repo repos)
-            (:li
-             (:a :href (format nil "/~A/~A" username (getf repo :name))
-              (getf repo :name))
-             (when (getf repo :is-private)
-               (:span.badge "private"))
-             (when (getf repo :description)
-               (:span.desc (getf repo :description))))))
+            (let ((pushed (or (getf repo :last-pushed-at)
+                              (getf repo :updated-at))))
+              (:li
+               (:a :href (format nil "/~A/~A" username (getf repo :name))
+                (getf repo :name))
+               (when (getf repo :is-private)
+                 (:span.badge "private"))
+               (when (getf repo :description)
+                 (:span.desc (getf repo :description)))
+               (when (format-relative-time pushed)
+                 (:span.repo-meta :style "margin-left:auto;color:var(--text-muted);font-size:.85rem"
+                  "Updated " (format-relative-time pushed)))))))
          (:p.empty "No personal repositories yet.")))
 
     (:section
@@ -135,9 +175,10 @@
        (:ul.issue-list
         (dolist (ev events)
           (:li
-           (:span :style "color:var(--text-muted);font-size:.8rem;width:12em;flex-shrink:0"
-            (princ-to-string (getf ev :created-at)))
            (:span (format-event ev))
+           (let ((rel (format-relative-time (getf ev :created-at))))
+             (when rel
+               (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:.5rem" rel)))
            (when (and (getf ev :repo-name) (not (eq (getf ev :repo-name) :null)))
              (:span.badge :style "margin-left:auto" (getf ev :repo-name))))))))))
 

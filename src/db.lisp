@@ -563,7 +563,10 @@ ALTER TABLE cave_workflow_steps ADD COLUMN continue_on_error BOOLEAN NOT NULL DE
 CREATE INDEX idx_repo_assignments_repo ON cave_repo_assignments (repo_id);
 CREATE INDEX idx_repo_assignments_node ON cave_repo_assignments (node_id);
 CREATE UNIQUE INDEX idx_repo_assignments_primary
-  ON cave_repo_assignments (repo_id) WHERE role = 'primary';"))
+  ON cave_repo_assignments (repo_id) WHERE role = 'primary';")
+
+    (41 . "ALTER TABLE cave_repos ADD COLUMN last_pushed_at TIMESTAMPTZ;
+UPDATE cave_repos SET last_pushed_at = updated_at WHERE last_pushed_at IS NULL;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
