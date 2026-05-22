@@ -9,6 +9,8 @@ ocicl
 /.codex
 cave.conf
 data/
+# cavectl-generated instance configs (contain secrets)
+/*.yaml
 node_modules/
 package-lock.json
 test-results/
