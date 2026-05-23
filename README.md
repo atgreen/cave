@@ -19,7 +19,7 @@ Cave is built for small teams who want to own their infrastructure without the b
 - **Automation runners** — self-hosted gRPC runners execute checks and automations
 - **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), with repo-scoped and global modes
 - **Repo mirroring** — push to and pull from GitHub/GitLab/Codeberg
-- **User themes** — built-in themes (Terminal Warmth, Nord, Solarized, Dracula, Light) plus custom themes via `cave-themes` repos
+- **User themes** — built-in themes (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
 - **Backup/restore** — one-command backup and restore of all data
 - **Quadlet deployment** — systemd user services for production, with rollback
 
