@@ -173,6 +173,43 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 ;; ----------------------------------------------------------------------------
 ;; Routes: Internal hooks (called by git hooks inside the container)
 
+(defun zero-sha-p (sha)
+  (and sha (every (lambda (c) (char= c #\0)) sha)))
+
+(defun push-commit-count (disk-path old new)
+  "How many commits this push adds. NIL on failure."
+  (multiple-value-bind (out _err exit)
+      (if (zero-sha-p old)
+          (git-run disk-path "rev-list" "--count" new)
+          (git-run disk-path "rev-list" "--count" (format nil "~A..~A" old new)))
+    (declare (ignore _err))
+    (when (zerop exit) (parse-integer out :junk-allowed t))))
+
+(defun push-tip-subject (disk-path new)
+  "First line of NEW commit's message. NIL if NEW is a deletion or unreadable."
+  (unless (zero-sha-p new)
+    (multiple-value-bind (out _err exit)
+        (git-run disk-path "log" "-1" "--format=%s" new)
+      (declare (ignore _err))
+      (when (zerop exit) (string-trim '(#\Space #\Newline #\Tab) out)))))
+
+(defun build-push-metadata (disk-path ref old new)
+  "Hash-table jzon will serialize as a JSON object for the event's metadata column."
+  (let ((md (make-hash-table :test 'equal))
+        (created (zero-sha-p old))
+        (deleted (zero-sha-p new)))
+    (setf (gethash "ref" md) ref
+          (gethash "old" md) old
+          (gethash "new" md) new)
+    (when created (setf (gethash "created" md) t))
+    (when deleted (setf (gethash "deleted" md) t))
+    (unless deleted
+      (let ((count (push-commit-count disk-path old new)))
+        (when count (setf (gethash "count" md) count))))
+    (let ((tip (push-tip-subject disk-path new)))
+      (when tip (setf (gethash "tip" md) tip)))
+    md))
+
 (easy-routes:defroute internal-post-receive
     ("/-/internal/hook/post-receive/:owner/:repo-name" :method :post) ()
   ;; Only accept from localhost
@@ -183,40 +220,52 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
     (unless repo
       (setf (hunchentoot:return-code*) 404)
       (return-from internal-post-receive "Not found"))
-    ;; Parse refs from POST body (one per line: oldsha newsha refname)
-    (let ((body (hunchentoot:raw-post-data :force-text t))
-          (refs nil))
-      (dolist (line (uiop:split-string body :separator '(#\Newline)))
-        (let ((parts (uiop:split-string line :separator '(#\Space))))
-          (when (>= (length parts) 3)
-            (push (list :old (first parts) :new (second parts) :ref (third parts))
-                  refs))))
-      ;; Schedule automations
-      (dolist (r refs)
-        (schedule-automations (getf repo :id) "post_receive"
-                              :commit-sha (getf r :new)
-                              :ref (getf r :ref))
-        ;; Schedule workflow runs from .cave/workflows/
-        (handler-case
-            (parse-and-schedule-workflows (getf repo :id) "post_receive"
-                                          :commit-sha (getf r :new)
-                                          :ref (getf r :ref))
-          (error (e)
-            (llog:error "Workflow scheduling failed" :error (princ-to-string e)))))
-      ;; Invalidate Chamber cache for this repo
-      (chamber-invalidate-repo owner repo-name)
-      (when (multi-chamber-p)
-        (broadcast-invalidate-cache owner repo-name))
-      ;; Trigger Zoekt reindexing
-      (zoekt-index-repo owner repo-name)
-      ;; Fire webhooks
-      (dolist (r refs)
-        (fire-webhooks (getf repo :id) "push"
-                       `(("ref" . ,(getf r :ref))
-                         ("after" . ,(getf r :new))
-                         ("before" . ,(getf r :old))
-                         ("repository" . (("owner" . ,owner)
-                                          ("name" . ,repo-name)))))))
+    (let ((actor (let ((a (hunchentoot:get-parameter "actor")))
+                   (when (and a (plusp (length a)))
+                     (parse-integer a :junk-allowed t)))))
+      ;; Parse refs from POST body (one per line: oldsha newsha refname)
+      (let ((body (hunchentoot:raw-post-data :force-text t))
+            (refs nil))
+        (dolist (line (uiop:split-string body :separator '(#\Newline)))
+          (let ((parts (uiop:split-string line :separator '(#\Space))))
+            (when (>= (length parts) 3)
+              (push (list :old (first parts) :new (second parts) :ref (third parts))
+                    refs))))
+        (when refs
+          (touch-repo-pushed-at (getf repo :id)))
+        ;; Log a rich git.push event per ref + schedule automations
+        (let ((disk-path (repo-disk-path owner repo-name)))
+          (dolist (r refs)
+            (log-event "git.push"
+                       :user-id actor
+                       :repo-id (getf repo :id)
+                       :metadata (build-push-metadata disk-path
+                                                      (getf r :ref)
+                                                      (getf r :old)
+                                                      (getf r :new)))
+            (schedule-automations (getf repo :id) "post_receive"
+                                  :commit-sha (getf r :new)
+                                  :ref (getf r :ref))
+            (handler-case
+                (parse-and-schedule-workflows (getf repo :id) "post_receive"
+                                              :commit-sha (getf r :new)
+                                              :ref (getf r :ref))
+              (error (e)
+                (llog:error "Workflow scheduling failed" :error (princ-to-string e))))))
+        ;; Invalidate Chamber cache for this repo
+        (chamber-invalidate-repo owner repo-name)
+        (when (multi-chamber-p)
+          (broadcast-invalidate-cache owner repo-name))
+        ;; Trigger Zoekt reindexing
+        (zoekt-index-repo owner repo-name)
+        ;; Fire webhooks
+        (dolist (r refs)
+          (fire-webhooks (getf repo :id) "push"
+                         `(("ref" . ,(getf r :ref))
+                           ("after" . ,(getf r :new))
+                           ("before" . ,(getf r :old))
+                           ("repository" . (("owner" . ,owner)
+                                            ("name" . ,repo-name))))))))
     "ok"))
 
 ;; ----------------------------------------------------------------------------
@@ -2013,7 +2062,7 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
   ;; Post-receive hook (calls back into running Cave server)
   (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
     (with-open-file (out hook-path :direction :output :if-exists :supersede)
-      (format out "#!/bin/bash~%# Pipe ref updates to the running Cave server~%tee >(curl -sf -X POST --data-binary @- http://localhost:~A/-/internal/hook/post-receive/~A/~A) >/dev/null~%"
+      (format out "#!/bin/bash~%# Pipe ref updates to the running Cave server~%tee >(curl -sf -X POST --data-binary @- \"http://localhost:~A/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\") >/dev/null~%"
               (config-value :http-port 8080) owner repo-name)
       (format out "cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
               owner repo-name)
@@ -2025,6 +2074,28 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
   ;; Ensure the cave user owns the repo
   (uiop:run-program (list "chown" "-R" "cave:cave" (namestring path))
                      :output :string :error-output :string :ignore-error-status t))
+
+(defun reinstall-all-hooks ()
+  "Rewrite pre-receive/post-receive on every existing repo. Idempotent.
+   Called from server startup so the hook script always matches the current binary."
+  (let ((count 0)
+        (failed 0))
+    (dolist (repo (list-all-repos))
+      (let* ((owner (getf repo :owner-name))
+             (name (getf repo :name))
+             (path (repo-disk-path owner name)))
+        (cond
+          ((not (probe-file path))
+           (llog:warn "Skipping hook reinstall: repo missing on disk"
+                      :owner owner :repo name))
+          (t
+           (handler-case
+               (progn (install-repo-hooks path owner name) (incf count))
+             (error (e)
+               (incf failed)
+               (llog:warn "Hook reinstall failed"
+                          :owner owner :repo name :error (princ-to-string e))))))))
+    (llog:info "Reinstalled repo hooks" :ok count :failed failed)))
 
 (defun init-bare-repo (owner repo-name)
   "Initialize a bare git repository on disk with HEAD pointing to main.

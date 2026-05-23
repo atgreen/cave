@@ -208,6 +208,12 @@
         ;; Start HTTP
         (start-server port)
 
+        ;; Refresh hooks on disk so the script matches the current binary
+        ;; (carries any new query params, new event types, etc.)
+        (handler-case (reinstall-all-hooks)
+          (error (e)
+            (llog:warn "Hook sweep failed" :error (princ-to-string e))))
+
         ;; Start gRPC runner service
         (let ((grpc-port (config-value :grpc-port 9443)))
           (handler-case

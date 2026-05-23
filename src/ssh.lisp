@@ -5,8 +5,12 @@
 ;;; Architecture:
 ;;;   1. authorized_keys has: command="cave-shell.sh /etc/cave.conf 7" ...
 ;;;   2. cave-shell.sh reads SSH_ORIGINAL_COMMAND, calls cave git-shell for auth
-;;;   3. cave git-shell checks key->user->permissions, prints repo disk path
-;;;   4. cave-shell.sh execs git-upload-pack or git-receive-pack
+;;;   3. cave git-shell checks key->user->permissions, prints two lines to stdout:
+;;;      user-id, then repo disk path
+;;;   4. cave-shell.sh exports CAVE_PUSH_USER_ID and execs git-upload-pack or
+;;;      git-receive-pack — the post-receive hook then forwards the actor id to
+;;;      the internal post-receive HTTP endpoint, which is where rich git.push
+;;;      events are recorded
 
 (in-package #:cave)
 
@@ -89,14 +93,19 @@
                   (when (and is-push (not role))
                     (git-shell-fail "permission denied"))
 
-                  (log-event (if is-push "git.push" "git.clone")
-                             :user-id user-id
-                             :repo-id (getf repo :id))
+                  ;; Push events are logged by the post-receive endpoint with
+                  ;; ref/count/tip metadata; SSH-time only logs clones.
+                  (unless is-push
+                    (log-event "git.clone"
+                               :user-id user-id
+                               :repo-id (getf repo :id)))
                   (disconnect-db)
 
-                  ;; Write repo path to the REAL stdout (not the redirected one)
-                  (write-string (namestring (repo-disk-path owner-name repo-name))
-                                saved-stdout)
+                  ;; Write two lines to the REAL stdout (not the redirected one):
+                  ;; user-id, then disk path. cave-shell.sh parses both.
+                  (format saved-stdout "~D~%~A~%"
+                          user-id
+                          (namestring (repo-disk-path owner-name repo-name)))
                   (finish-output saved-stdout)
                   (uiop:quit 0))))))))))
 

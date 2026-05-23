@@ -328,6 +328,18 @@
         'name)
        :plists)))
 
+(defun list-all-repos ()
+  "Every repo in the system, plist form. Used by startup sweeps."
+  (postmodern:query
+   (:order-by
+    (:select 'cave-repos.*
+             (:as (:coalesce 'cave-orgs.name 'cave-users.username) 'owner-name)
+     :from 'cave-repos
+     :left-join 'cave-orgs :on (:= 'cave-repos.org-id 'cave-orgs.id)
+     :left-join 'cave-users :on (:= 'cave-repos.owner-id 'cave-users.id))
+    'cave-repos.id)
+   :plists))
+
 (defun list-user-repos (user-id &key include-private)
   "List repos owned by a user."
   (if include-private

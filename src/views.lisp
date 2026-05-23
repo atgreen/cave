@@ -100,26 +100,54 @@
          (let ((mo (floor delta (* 86400 30)))) (format nil "~D month~:P ago" mo)))
         (t (let ((y (floor delta (* 86400 365)))) (format nil "~D year~:P ago" y)))))))
 
-(defun event-ref-short (event)
-  "Pull a short ref name out of an event's metadata, if present."
+(defun event-metadata (event)
+  "Parse the JSON metadata column into a hash table, or NIL."
   (let ((md (getf event :metadata)))
-    (when (and md (not (eq md :null)) (stringp md))
-      (let ((m (search "\"ref\":\"" md)))
-        (when m
-          (let* ((start (+ m 7))
-                 (end (position #\" md :start start)))
-            (when end
-              (let ((ref (subseq md start end)))
-                (cond
-                  ((uiop:string-prefix-p "refs/heads/" ref) (subseq ref 11))
-                  ((uiop:string-prefix-p "refs/tags/" ref) (subseq ref 10))
-                  (t ref))))))))))
+    (when (and md (not (eq md :null)) (stringp md) (plusp (length md)))
+      (handler-case (com.inuoe.jzon:parse md) (error () nil)))))
+
+(defun metadata-get (md key)
+  "Lookup KEY (string) in a parsed-jzon hash table; return NIL if absent/null."
+  (when (hash-table-p md)
+    (let ((v (gethash key md)))
+      (unless (eq v 'null) v))))
+
+(defun short-ref (ref)
+  "Strip refs/heads/ or refs/tags/ from REF."
+  (cond
+    ((null ref) nil)
+    ((uiop:string-prefix-p "refs/heads/" ref) (subseq ref 11))
+    ((uiop:string-prefix-p "refs/tags/" ref) (subseq ref 10))
+    (t ref)))
+
+(defun format-push-event (actor md)
+  "Render a git.push event from its parsed metadata."
+  (let* ((ref (short-ref (metadata-get md "ref")))
+         (count (metadata-get md "count"))
+         (tip (metadata-get md "tip"))
+         (created (metadata-get md "created"))
+         (deleted (metadata-get md "deleted")))
+    (cond
+      ((not ref)
+       (format nil "~A pushed" actor))
+      (deleted
+       (format nil "~A deleted ~A" actor ref))
+      (created
+       (if (and count (numberp count))
+           (format nil "~A created ~A (~D commit~:P)" actor ref count)
+           (format nil "~A created ~A" actor ref)))
+      ((and count (numberp count) tip)
+       (format nil "~A pushed ~D commit~:P to ~A: ~A" actor count ref tip))
+      ((and count (numberp count))
+       (format nil "~A pushed ~D commit~:P to ~A" actor count ref))
+      (t
+       (format nil "~A pushed to ~A" actor ref)))))
 
 (defun format-event (event)
   "Format an event as a short English sentence."
   (let ((type (getf event :event-type))
         (actor (or (getf event :actor) "someone"))
-        (ref (event-ref-short event)))
+        (md (event-metadata event)))
     (cond
       ((equal type "issue.created") (format nil "~A opened an issue" actor))
       ((equal type "review.submitted") (format nil "~A submitted a review" actor))
@@ -127,8 +155,7 @@
       ((equal type "repo.created") (format nil "~A created a repository" actor))
       ((equal type "repo.forked") (format nil "~A forked a repository" actor))
       ((equal type "changeset.merged") (format nil "~A merged a changeset" actor))
-      ((equal type "git.push")
-       (if ref (format nil "~A pushed to ~A" actor ref) (format nil "~A pushed" actor)))
+      ((equal type "git.push") (format-push-event actor md))
       ((equal type "git.clone") (format nil "~A cloned" actor))
       (t (format nil "~A: ~A" actor type)))))
 

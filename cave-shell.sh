@@ -38,13 +38,17 @@ if [ $EXIT -ne 0 ]; then
     exit 1
 fi
 
-# Extract the disk path — last line containing a slash
-DISK_PATH=$(echo "$OUTPUT" | grep '/' | tail -1)
+# Parse two lines from cave git-shell: <user-id> then <disk-path>.
+USER_ID=$(echo "$OUTPUT" | sed -n '1p')
+DISK_PATH=$(echo "$OUTPUT" | sed -n '2p')
 
 if [ -z "$DISK_PATH" ]; then
     echo "cave: could not determine repository path" >&2
     exit 1
 fi
+
+# Exported so the post-receive hook can forward the actor to the HTTP endpoint.
+export CAVE_PUSH_USER_ID="$USER_ID"
 
 # For pushes, bracket with Chamber write lock acquire/release.
 # For fetches, exec directly — reads don't need write locks.
