@@ -138,7 +138,7 @@ cave serve     — Start the web server
 cave init      — Initialize the database
 cave migrate   — Run pending migrations
 cave runner    — Start an automation runner agent
-cave run-checks — Run pre-receive checks (called by git hook)
+cave run-checks   — Run pre-receive checks (called by git hook)
 cave sync-mirrors — Sync repo mirrors
 cave sync-themes  — Sync user themes from cave-themes repo
 cave update-keys  — Regenerate SSH authorized_keys
