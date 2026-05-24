@@ -141,22 +141,42 @@ func (e *Executor) createPostgres() error {
 }
 
 func (e *Executor) createKeycloak() error {
-	return e.Runtime.Run(runtime.RunOptions{
+	env := map[string]string{
+		"KC_DB":                   "postgres",
+		"KC_DB_URL":               fmt.Sprintf("jdbc:postgresql://%s:5432/keycloak", e.Config.ContainerName("pg")),
+		"KC_DB_USERNAME":          "cave",
+		"KC_DB_PASSWORD":          e.Config.Database.Password,
+		"KEYCLOAK_ADMIN":          e.Config.Auth.Keycloak.AdminUser,
+		"KEYCLOAK_ADMIN_PASSWORD": e.Config.Auth.Keycloak.AdminPassword,
+		"KC_HTTP_ENABLED":         "true",
+		"KC_HOSTNAME_STRICT":      "false",
+	}
+
+	// When a public URL is configured, run in production mode behind a reverse
+	// proxy that terminates TLS. Otherwise fall back to start-dev for laptop use.
+	cmd := []string{"start-dev", "--import-realm"}
+	if url := e.Config.Auth.Keycloak.PublicURL; url != "" {
+		env["KC_HOSTNAME"] = url
+		env["KC_HOSTNAME_BACKCHANNEL_DYNAMIC"] = "true"
+		env["KC_PROXY_HEADERS"] = "xforwarded"
+		cmd = []string{"start", "--optimized", "--import-realm"}
+	}
+
+	opts := runtime.RunOptions{
 		Name:    e.Config.ContainerName("keycloak"),
 		Image:   e.Config.Auth.Keycloak.Image,
 		Network: e.Config.Runtime.Network,
 		Detach:  true,
-		Env: map[string]string{
-			"KC_DB":                "postgres",
-			"KC_DB_URL":           fmt.Sprintf("jdbc:postgresql://%s:5432/keycloak", e.Config.ContainerName("pg")),
-			"KC_DB_USERNAME":      "cave",
-			"KC_DB_PASSWORD":      e.Config.Database.Password,
-			"KEYCLOAK_ADMIN":      e.Config.Auth.Keycloak.AdminUser,
-			"KEYCLOAK_ADMIN_PASSWORD": e.Config.Auth.Keycloak.AdminPassword,
-		},
-		Cmd:    []string{"start-dev"},
-		Labels: e.managedLabels(),
-	})
+		Env:     env,
+		Cmd:     cmd,
+		Labels:  e.managedLabels(),
+	}
+	if e.Config.Ports.Keycloak > 0 {
+		opts.Ports = []runtime.PortMapping{
+			{HostIP: "127.0.0.1", HostPort: e.Config.Ports.Keycloak, Port: 8080},
+		}
+	}
+	return e.Runtime.Run(opts)
 }
 
 func (e *Executor) createZoekt() error {
@@ -190,9 +210,17 @@ func (e *Executor) createCave() error {
 	if e.Config.OIDCEnabled() {
 		switch e.Config.Auth.Mode {
 		case "keycloak":
-			env["CAVE_OIDC_ISSUER"] = fmt.Sprintf("http://localhost:%d/realms/cave", e.Config.Ports.HTTP)
+			// Local cave-keycloak: browser-facing URL prefers the operator-set
+			// public_url (when running behind a reverse proxy), otherwise
+			// falls back to the published keycloak port on localhost.
+			browserIssuer := e.Config.Auth.Keycloak.PublicURL
+			if browserIssuer == "" {
+				browserIssuer = fmt.Sprintf("http://localhost:%d", e.Config.Ports.Keycloak)
+			}
+			env["CAVE_OIDC_ISSUER"] = browserIssuer + "/realms/cave"
 			env["CAVE_OIDC_ISSUER_INTERNAL"] = fmt.Sprintf("http://%s:8080/realms/cave", e.Config.ContainerName("keycloak"))
 			env["CAVE_OIDC_CLIENT_ID"] = "cave"
+			env["CAVE_OIDC_CLIENT_SECRET"] = "cave-dev-secret" // matches cave-realm.json
 		case "oidc":
 			env["CAVE_OIDC_ISSUER"] = e.Config.Auth.OIDC.Issuer
 			env["CAVE_OIDC_ISSUER_INTERNAL"] = e.Config.Auth.OIDC.Issuer

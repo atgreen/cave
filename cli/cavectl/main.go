@@ -154,6 +154,8 @@ func cmdInit(args []string) error {
 	httpPort := findFreePort(9080, usedPorts)
 	usedPorts[httpPort] = true
 	sshPort := findFreePort(9222, usedPorts)
+	usedPorts[sshPort] = true
+	keycloakPort := findFreePort(9180, usedPorts)
 
 	// Generate config with random passwords
 	cfg := config.Default()
@@ -161,6 +163,7 @@ func cmdInit(args []string) error {
 	cfg.Runtime.Network = name + "-net"
 	cfg.Ports.HTTP = httpPort
 	cfg.Ports.SSH = sshPort
+	cfg.Ports.Keycloak = keycloakPort
 	cfg.Cave.BaseURL = fmt.Sprintf("http://localhost:%d", httpPort)
 	cfg.Cave.SecretKey = instance.RandomSecretKey()
 	cfg.Database.Password = instance.RandomPassword(24)

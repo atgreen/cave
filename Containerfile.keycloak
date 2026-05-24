@@ -1,0 +1,16 @@
+## Cave Keycloak — Keycloak 26 with the cave login theme and realm baked in.
+##
+## Build: podman build -t cave-keycloak -f Containerfile.keycloak .
+## Run:   see deploy/quadlet/cave-keycloak.container, or use cavectl.
+##
+## Notes:
+##  - The realm import in /opt/keycloak/data/import/cave-realm.json runs on
+##    first start when the container is launched with --import-realm.
+##  - The login theme references parent=keycloak.v2 (shipped in keycloak 26),
+##    so no patching of the base image is required.
+##  - KC_HOSTNAME / KEYCLOAK_ADMIN* must be set at runtime, not baked in.
+
+FROM quay.io/keycloak/keycloak:26.0
+
+COPY keycloak/themes/cave /opt/keycloak/themes/cave
+COPY keycloak/cave-realm.json /opt/keycloak/data/import/cave-realm.json

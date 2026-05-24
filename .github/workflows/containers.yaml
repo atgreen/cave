@@ -21,6 +21,8 @@ jobs:
             dockerfile: Containerfile.runner
           - name: cave-zoekt
             dockerfile: Containerfile.zoekt
+          - name: cave-keycloak
+            dockerfile: Containerfile.keycloak
     steps:
       - uses: actions/checkout@v4
 

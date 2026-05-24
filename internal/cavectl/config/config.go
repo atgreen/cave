@@ -31,8 +31,9 @@ type CaveConfig struct {
 }
 
 type PortsConfig struct {
-	HTTP int `yaml:"http"`
-	SSH  int `yaml:"ssh"`
+	HTTP     int `yaml:"http"`
+	SSH      int `yaml:"ssh"`
+	Keycloak int `yaml:"keycloak,omitempty"`
 }
 
 type DatabaseConfig struct {
@@ -52,6 +53,11 @@ type KeycloakConfig struct {
 	Image         string `yaml:"image"`
 	AdminUser     string `yaml:"admin_user"`
 	AdminPassword string `yaml:"admin_password"`
+	// PublicURL is the externally-reachable URL of Keycloak, e.g.
+	// "https://auth.cave.example.com". When set, cavectl configures
+	// Keycloak to issue tokens and redirects against this URL and
+	// derives cave's OIDC issuer from it automatically.
+	PublicURL string `yaml:"public_url,omitempty"`
 }
 
 type OIDCConfig struct {
@@ -91,12 +97,13 @@ func Default() *Config {
 	return &Config{
 		APIVersion: "v1",
 		Cave: CaveConfig{
-			Image:   "localhost/cave:prod",
+			Image:   "ghcr.io/atgreen/cave:main",
 			BaseURL: "http://localhost:9080",
 		},
 		Ports: PortsConfig{
-			HTTP: 9080,
-			SSH:  9222,
+			HTTP:     9080,
+			SSH:      9222,
+			Keycloak: 9180,
 		},
 		Database: DatabaseConfig{
 			Mode:     "local",
@@ -106,19 +113,19 @@ func Default() *Config {
 		Auth: AuthConfig{
 			Mode: "local",
 			Keycloak: KeycloakConfig{
-				Image:         "quay.io/keycloak/keycloak:26.0",
+				Image:         "ghcr.io/atgreen/cave-keycloak:main",
 				AdminUser:     "admin",
 				AdminPassword: "admin",
 			},
 		},
 		Runner: RunnerConfig{
 			Enabled: true,
-			Image:   "localhost/cave-runner:latest",
+			Image:   "ghcr.io/atgreen/cave-runner:main",
 			Count:   1,
 		},
 		Zoekt: ZoektConfig{
 			Enabled: true,
-			Image:   "localhost/cave-zoekt:prod",
+			Image:   "ghcr.io/atgreen/cave-zoekt:main",
 		},
 		Chamber: ChamberConfig{
 			Nodes: []ChamberNode{},
