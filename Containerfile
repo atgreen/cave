@@ -26,8 +26,8 @@ COPY src/ src/
 COPY cli/ cli/
 COPY ocicl/ ocicl/
 
-# Build
-RUN make
+# Build — `make` alone runs the `help` target; we want the real binaries.
+RUN make cave cav
 
 ## --- Runtime image ---
 
