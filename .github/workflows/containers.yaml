@@ -1,0 +1,54 @@
+name: Publish container images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cave
+            dockerfile: Containerfile
+          - name: cave-runner
+            dockerfile: Containerfile.runner
+          - name: cave-zoekt
+            dockerfile: Containerfile.zoekt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          IMG=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          TAGS="$IMG:sha-${GITHUB_SHA::7}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            TAGS="$TAGS,$IMG:main"
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAGS="$TAGS,$IMG:$VERSION,$IMG:prod,$IMG:latest"
+          fi
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
