@@ -61,6 +61,8 @@ func (e *Executor) executeOne(a plan.Action) error {
 		return fmt.Errorf("live database migration not yet implemented")
 	case plan.ConfigureKeycloak:
 		return nil // TODO: run realm configuration
+	case plan.CreateKeycloakDB:
+		return e.createKeycloakDB()
 	case plan.CreateRunnerToken:
 		return e.createRunnerToken()
 	case plan.RestoreBackup:
@@ -145,6 +147,17 @@ func (e *Executor) createPostgres() error {
 		HealthInt: "2s",
 		Labels:    e.managedLabels(),
 	})
+}
+
+func (e *Executor) createKeycloakDB() error {
+	// postgres only creates the one DB named by POSTGRES_DB. Keycloak needs
+	// its own. Idempotent SELECT-then-CREATE via psql inside cave-pg.
+	pg := e.Config.ContainerName("pg")
+	cmd := []string{"sh", "-c",
+		`psql -U cave -tc "SELECT 1 FROM pg_database WHERE datname='keycloak'" | grep -q 1 || psql -U cave -c "CREATE DATABASE keycloak"`,
+	}
+	_, err := e.Runtime.Exec(pg, cmd)
+	return err
 }
 
 func (e *Executor) createKeycloak() error {

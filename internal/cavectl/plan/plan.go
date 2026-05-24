@@ -25,6 +25,7 @@ const (
 	GenerateConfig
 	MigrateDatabase
 	ConfigureKeycloak
+	CreateKeycloakDB
 	CreateRunnerToken
 	RestoreBackup
 )
@@ -39,7 +40,7 @@ type Action struct {
 
 func (a Action) Symbol() string {
 	switch a.Type {
-	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, ConfigureKeycloak, CreateRunnerToken, RestoreBackup:
+	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, ConfigureKeycloak, CreateKeycloakDB, CreateRunnerToken, RestoreBackup:
 		return "+"
 	case UpdateContainer:
 		return "~"
@@ -141,6 +142,12 @@ func Diff(cfg *config.Config, current *state.DeploymentState, backupPath ...stri
 	kcInfo := current.Containers["keycloak"]
 	if cfg.KeycloakEnabled() {
 		if kcInfo == nil || kcInfo.Status == "not-found" {
+			// keycloak needs its own DB; postgres only created "cave"
+			actions = append(actions, Action{
+				Type:        CreateKeycloakDB,
+				Service:     "keycloak",
+				Description: "ensure keycloak database exists",
+			})
 			actions = append(actions, Action{
 				Type:        CreateContainer,
 				Service:     "keycloak",
