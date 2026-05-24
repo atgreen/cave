@@ -89,6 +89,8 @@ func (e *Executor) createContainer(a plan.Action) error {
 	switch a.Service {
 	case "pg":
 		return e.createPostgres()
+	case "mailpit":
+		return e.createMailpit()
 	case "keycloak":
 		return e.createKeycloak()
 	case "zoekt-web":
@@ -101,6 +103,22 @@ func (e *Executor) createContainer(a plan.Action) error {
 		}
 		return fmt.Errorf("unknown service %q", a.Service)
 	}
+}
+
+func (e *Executor) createMailpit() error {
+	opts := runtime.RunOptions{
+		Name:    e.Config.ContainerName("mailpit"),
+		Image:   e.Config.SMTP.Image,
+		Network: e.Config.Runtime.Network,
+		Detach:  true,
+		Labels:  e.managedLabels(),
+	}
+	if e.Config.Ports.Mailpit > 0 {
+		opts.Ports = []runtime.PortMapping{
+			{HostIP: "127.0.0.1", HostPort: e.Config.Ports.Mailpit, Port: 8025},
+		}
+	}
+	return e.Runtime.Run(opts)
 }
 
 func (e *Executor) updateContainer(a plan.Action) error {
@@ -174,6 +192,37 @@ func (e *Executor) createKeycloak() error {
 		// the baked realm.json before --import-realm runs.
 		"CAVE_OIDC_CLIENT_SECRET": e.Config.Auth.Keycloak.ClientSecret,
 		"CAVE_BASE_URL":           e.Config.Cave.BaseURL,
+	}
+
+	// SMTP — either mailpit (default) or operator-provided external server.
+	smtpHost := e.Config.SMTP.Host
+	smtpPort := e.Config.SMTP.Port
+	if e.Config.MailpitEnabled() {
+		smtpHost = e.Config.ContainerName("mailpit")
+		smtpPort = 1025
+	}
+	if smtpHost != "" {
+		env["SMTP_HOST"] = smtpHost
+	}
+	if smtpPort > 0 {
+		env["SMTP_PORT"] = fmt.Sprintf("%d", smtpPort)
+	}
+	if e.Config.SMTP.From != "" {
+		env["SMTP_FROM"] = e.Config.SMTP.From
+	}
+	if e.Config.SMTP.FromDisplayName != "" {
+		env["SMTP_FROM_DISPLAY"] = e.Config.SMTP.FromDisplayName
+	}
+	if e.Config.SMTP.SSL {
+		env["SMTP_SSL"] = "true"
+	}
+	if e.Config.SMTP.StartTLS {
+		env["SMTP_STARTTLS"] = "true"
+	}
+	if e.Config.SMTP.User != "" || e.Config.SMTP.Password != "" {
+		env["SMTP_AUTH"] = "true"
+		env["SMTP_USER"] = e.Config.SMTP.User
+		env["SMTP_PASSWORD"] = e.Config.SMTP.Password
 	}
 
 	// When a public URL is configured, run in production mode behind a reverse

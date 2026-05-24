@@ -9,13 +9,15 @@
   "loginTheme": "cave",
   "emailTheme": "cave",
   "smtpServer": {
-    "host": "mailpit",
-    "port": "1025",
-    "from": "cave@localhost",
-    "fromDisplayName": "Cave",
-    "ssl": "false",
-    "starttls": "false",
-    "auth": "false"
+    "host": "__SMTP_HOST__",
+    "port": "__SMTP_PORT__",
+    "from": "__SMTP_FROM__",
+    "fromDisplayName": "__SMTP_FROM_DISPLAY__",
+    "ssl": "__SMTP_SSL__",
+    "starttls": "__SMTP_STARTTLS__",
+    "auth": "__SMTP_AUTH__",
+    "user": "__SMTP_USER__",
+    "password": "__SMTP_PASSWORD__"
   },
   "roles": {
     "realm": [

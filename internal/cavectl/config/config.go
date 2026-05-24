@@ -21,6 +21,7 @@ type Config struct {
 	Runner     RunnerConfig    `yaml:"runner"`
 	Zoekt      ZoektConfig     `yaml:"zoekt"`
 	Chamber    ChamberConfig   `yaml:"chamber"`
+	SMTP       SMTPConfig      `yaml:"smtp,omitempty"`
 	Runtime    RuntimeConfig   `yaml:"runtime"`
 }
 
@@ -34,6 +35,23 @@ type PortsConfig struct {
 	HTTP     int `yaml:"http"`
 	SSH      int `yaml:"ssh"`
 	Keycloak int `yaml:"keycloak,omitempty"`
+	Mailpit  int `yaml:"mailpit,omitempty"`
+}
+
+type SMTPConfig struct {
+	// Mode is "mailpit" (spawn a local mailpit container; emails captured,
+	// not really sent — fine for dev/testing) or "external" (use the
+	// host/port/user/password fields to point at a real SMTP server).
+	Mode            string `yaml:"mode"`
+	Image           string `yaml:"image,omitempty"` // mailpit image
+	Host            string `yaml:"host,omitempty"`
+	Port            int    `yaml:"port,omitempty"`
+	User            string `yaml:"user,omitempty"`
+	Password        string `yaml:"password,omitempty"`
+	From            string `yaml:"from,omitempty"`
+	FromDisplayName string `yaml:"from_display_name,omitempty"`
+	StartTLS        bool   `yaml:"starttls,omitempty"`
+	SSL             bool   `yaml:"ssl,omitempty"`
 }
 
 type DatabaseConfig struct {
@@ -108,6 +126,7 @@ func Default() *Config {
 			HTTP:     9080,
 			SSH:      9222,
 			Keycloak: 9180,
+			Mailpit:  9025,
 		},
 		Database: DatabaseConfig{
 			Mode:     "local",
@@ -133,6 +152,12 @@ func Default() *Config {
 		},
 		Chamber: ChamberConfig{
 			Nodes: []ChamberNode{},
+		},
+		SMTP: SMTPConfig{
+			Mode:            "mailpit",
+			Image:           "docker.io/axllent/mailpit:latest",
+			From:            "cave@localhost",
+			FromDisplayName: "Cave",
 		},
 		Runtime: RuntimeConfig{
 			Engine:  "auto",
@@ -241,6 +266,12 @@ func (c *Config) VolumeName(suffix string) string {
 // KeycloakEnabled returns true if a local Keycloak container is needed.
 func (c *Config) KeycloakEnabled() bool {
 	return c.Auth.Mode == "keycloak"
+}
+
+// MailpitEnabled returns true when SMTP mode is "mailpit" (the default) and we
+// should spawn a mailpit catcher container alongside cave.
+func (c *Config) MailpitEnabled() bool {
+	return c.SMTP.Mode == "" || c.SMTP.Mode == "mailpit"
 }
 
 // OIDCEnabled returns true if any OIDC provider is configured.

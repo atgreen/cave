@@ -138,6 +138,30 @@ func Diff(cfg *config.Config, current *state.DeploymentState, backupPath ...stri
 		})
 	}
 
+	// 3c. Mailpit (must be up before keycloak so DNS resolves for SMTP send)
+	mpInfo := current.Containers["mailpit"]
+	if cfg.MailpitEnabled() {
+		if mpInfo == nil || mpInfo.Status == "not-found" {
+			actions = append(actions, Action{
+				Type:        CreateContainer,
+				Service:     "mailpit",
+				Description: fmt.Sprintf("create container %q (%s)", cfg.ContainerName("mailpit"), cfg.SMTP.Image),
+			})
+		} else if needsUpdate(mpInfo, cfg.SMTP.Image) {
+			actions = append(actions, Action{
+				Type:        UpdateContainer,
+				Service:     "mailpit",
+				Description: fmt.Sprintf("update container %q", cfg.ContainerName("mailpit")),
+			})
+		}
+	} else if mpInfo != nil && mpInfo.Status != "not-found" {
+		actions = append(actions, Action{
+			Type:        RemoveContainer,
+			Service:     "mailpit",
+			Description: fmt.Sprintf("remove container %q (mailpit disabled)", cfg.ContainerName("mailpit")),
+		})
+	}
+
 	// 4. Keycloak
 	kcInfo := current.Containers["keycloak"]
 	if cfg.KeycloakEnabled() {
