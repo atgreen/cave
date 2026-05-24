@@ -1269,6 +1269,17 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                 :runs (list-automation-runs (getf repo :id))
                 :workflow-runs (list-workflow-runs (getf repo :id))))))
 
+(easy-routes:defroute pulse-page ("/:owner/:repo-name/pulse" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from pulse-page repo))
+    (let ((repo-id (getf repo :id))
+          (days 14))
+      (html-response
+       (view-pulse :owner-name owner :repo repo
+                   :days days
+                   :event-counts (repo-event-counts-by-day repo-id :days days)
+                   :contributors (repo-top-contributors repo-id :days days :limit 5))))))
+
 (easy-routes:defroute workflow-run-detail-page
     ("/:owner/:repo-name/runs/w/:run-id" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
@@ -2031,6 +2042,8 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
         ;; POST /owner/repo.git/git-upload-pack
         ((and (search "/git-upload-pack" uri)
               (equal (hunchentoot:request-method*) :post))
+         ;; Counted as a clone for Pulse stats. Anon HTTP clones have no user-id.
+         (log-event "git.clone" :user-id *current-user-id* :repo-id (getf repo :id))
          (let* ((request-body (hunchentoot:raw-post-data :force-binary t))
                 (in-path (format nil "/tmp/cave-git-in-~A"
                                  (ironclad:byte-array-to-hex-string (ironclad:random-data 8))))

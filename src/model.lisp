@@ -1628,6 +1628,33 @@
         limit)
        :plists)))
 
+(defun repo-event-counts-by-day (repo-id &key (days 14))
+  "Return list of plists (:day yyyy-mm-dd :type event-type :count n) over
+the trailing DAYS days for a single repo. Used to render the Pulse chart."
+  (postmodern:query
+   (format nil "SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day, ~
+                       event_type AS type, ~
+                       COUNT(*)::int AS count ~
+                FROM cave_events ~
+                WHERE repo_id = $1 ~
+                  AND created_at >= NOW() - INTERVAL '~D days' ~
+                GROUP BY day, event_type ~
+                ORDER BY day ASC" days)
+   repo-id :plists))
+
+(defun repo-top-contributors (repo-id &key (days 14) (limit 5))
+  "Top contributors to a repo in the last DAYS days, ordered by event count."
+  (postmodern:query
+   (format nil "SELECT u.username, COUNT(*)::int AS count ~
+                FROM cave_events e ~
+                JOIN cave_users u ON u.id = e.user_id ~
+                WHERE e.repo_id = $1 ~
+                  AND e.created_at >= NOW() - INTERVAL '~D days' ~
+                GROUP BY u.username ~
+                ORDER BY count DESC ~
+                LIMIT $2" days)
+   repo-id limit :plists))
+
 ;;; ========================== CHAMBER NODES ==========================
 
 (defun list-chamber-nodes (&key status)

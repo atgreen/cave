@@ -447,6 +447,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
       :href (format nil "/~A/~A/pulls" owner-name repo-name) "Pull requests")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :runs))
       :href (format nil "/~A/~A/runs" owner-name repo-name) "Runs")
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
+      :href (format nil "/~A/~A/pulse" owner-name repo-name) "Pulse")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
       :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings"))))
 
@@ -1303,6 +1305,101 @@ function caveShowCommentForm(td) {
     (spinneret:with-html
       (:code :style "font-size:.75rem;color:var(--text-muted)"
        (subseq sha 0 (min 7 (length sha)))))))
+
+(defun render-pulse-chart (days event-counts)
+  "Stacked bar chart, one column per day, colored per event type. Pure HTML+CSS."
+  (let* ((today (multiple-value-bind (s m h d mo y) (decode-universal-time (get-universal-time))
+                  (declare (ignore s m h))
+                  (encode-universal-time 0 0 12 d mo y)))
+         (day-secs 86400)
+         (day-labels
+          (loop for i from (1- days) downto 0
+                collect (multiple-value-bind (s m h d mo y)
+                            (decode-universal-time (- today (* i day-secs)))
+                          (declare (ignore s m h))
+                          (format nil "~4,'0D-~2,'0D-~2,'0D" y mo d))))
+         ;; bucket: key = (day type), value = count
+         (bucket (let ((h (make-hash-table :test 'equal)))
+                   (dolist (row event-counts)
+                     (setf (gethash (cons (getf row :day) (getf row :type)) h)
+                           (getf row :count)))
+                   h))
+         (types '(("git.push" "push" "#7c9a5e")
+                  ("git.clone" "clone" "#e8a84c")
+                  ("repo.forked" "fork" "#9e9a8f")
+                  ("issue.created" "issue" "#c9a03e")
+                  ("pr.merged" "merge" "#c25450")
+                  ("changeset.merged" "merge" "#c25450")))
+         (per-day-totals (mapcar (lambda (day)
+                                   (let ((sum 0))
+                                     (dolist (tspec types)
+                                       (incf sum (or (gethash (cons day (first tspec)) bucket) 0)))
+                                     sum))
+                                 day-labels))
+         (max-total (max 1 (reduce #'max per-day-totals)))
+         (col-width 28)
+         (chart-h 120))
+    (spinneret:with-html
+      (:div.pulse-chart
+       :style (format nil "display:flex;align-items:flex-end;gap:2px;height:~Apx;border-bottom:1px solid var(--border);padding:0 .5rem"
+                      chart-h)
+       (dolist (day day-labels)
+         (let ((day-total (or (gethash (cons day "_") bucket) 0)))
+           (declare (ignore day-total))
+           (:div :style (format nil "display:flex;flex-direction:column-reverse;width:~Apx;align-items:stretch" col-width)
+            :title day
+            (dolist (tspec types)
+              (let* ((type (first tspec))
+                     (color (third tspec))
+                     (n (or (gethash (cons day type) bucket) 0))
+                     (height (if (zerop n) 0
+                                 (max 1 (round (* (/ n max-total) chart-h))))))
+                (when (plusp n)
+                  (:div :style (format nil "background:~A;height:~Apx" color height)
+                   :title (format nil "~A: ~A ~A" day n type)))))))))
+      ;; X-axis labels (every 2 days)
+      (:div :style (format nil "display:flex;gap:2px;padding:.25rem .5rem;font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted)")
+       (loop for day in day-labels for i from 0
+             do (:div :style (format nil "width:~Apx;text-align:center" col-width)
+                 (when (zerop (mod i 2)) (subseq day 5)))))
+      ;; Legend
+      (:div :style "display:flex;gap:1rem;flex-wrap:wrap;margin-top:.5rem;font-family:var(--font-mono);font-size:.8rem;color:var(--text-muted)"
+       (dolist (tspec (remove-duplicates types :test #'string= :key #'second))
+         (:span :style "display:inline-flex;align-items:center;gap:.3rem"
+          (:span :style (format nil "display:inline-block;width:10px;height:10px;background:~A;border-radius:2px"
+                                (third tspec)))
+          (second tspec)))))))
+
+(defun view-pulse (&key owner-name repo days event-counts contributors)
+  "Repo Pulse — 14-day activity chart + top contributors."
+  (let* ((repo-name (getf repo :name))
+         (total (reduce #'+ event-counts :key (lambda (r) (or (getf r :count) 0)) :initial-value 0))
+         (by-type (let ((h (make-hash-table :test 'equal)))
+                    (dolist (row event-counts) (incf (gethash (getf row :type) h 0)
+                                                     (or (getf row :count) 0)))
+                    h)))
+    (page (:title (format nil "Pulse — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :pulse :repo repo)
+      (:section
+       (:h2 (format nil "Activity in the last ~D days" days))
+       (:p :style "color:var(--text-muted);font-size:.9rem;margin-bottom:var(--sp-3)"
+        (format nil "~D event~:P total — ~D push~:P, ~D clone~:P, ~D issue~:P, ~D merge~:P."
+                total
+                (gethash "git.push" by-type 0)
+                (gethash "git.clone" by-type 0)
+                (gethash "issue.created" by-type 0)
+                (+ (gethash "pr.merged" by-type 0) (gethash "changeset.merged" by-type 0))))
+       (render-pulse-chart days event-counts))
+      (:section
+       (:h2 "Top contributors")
+       (if contributors
+           (:table.file-tree
+            (:tbody
+             (dolist (c contributors)
+               (:tr
+                (:td (:a :href (format nil "/~A" (getf c :username)) (getf c :username)))
+                (:td.file-size (format nil "~D event~:P" (getf c :count)))))))
+           (:p.empty "No activity yet."))))))
 
 (defun view-runs (&key owner-name repo runs workflow-runs)
   "Render the runs list — both automations and workflows."
