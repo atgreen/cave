@@ -36,6 +36,10 @@ type PortsConfig struct {
 	SSH      int `yaml:"ssh"`
 	Keycloak int `yaml:"keycloak,omitempty"`
 	Mailpit  int `yaml:"mailpit,omitempty"`
+	// SSHBind is the host IP that cave's SSH (git-shell) port is published
+	// on. Default "127.0.0.1" — fine for laptop. For a public VPS where
+	// users push from outside, set to "0.0.0.0" (and open the firewall).
+	SSHBind string `yaml:"ssh_bind,omitempty"`
 }
 
 type SMTPConfig struct {
@@ -127,6 +131,7 @@ func Default() *Config {
 			SSH:      9222,
 			Keycloak: 9180,
 			Mailpit:  9025,
+			SSHBind:  "127.0.0.1",
 		},
 		Database: DatabaseConfig{
 			Mode:     "local",

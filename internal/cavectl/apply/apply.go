@@ -105,6 +105,13 @@ func (e *Executor) createContainer(a plan.Action) error {
 	}
 }
 
+func caveSSHBind(cfg *config.Config) string {
+	if cfg.Ports.SSHBind != "" {
+		return cfg.Ports.SSHBind
+	}
+	return "127.0.0.1"
+}
+
 func (e *Executor) createMailpit() error {
 	opts := runtime.RunOptions{
 		Name:    e.Config.ContainerName("mailpit"),
@@ -325,7 +332,7 @@ func (e *Executor) createCave() error {
 		Detach:  true,
 		Ports: []runtime.PortMapping{
 			{HostIP: "127.0.0.1", HostPort: e.Config.Ports.HTTP, Port: 8080},
-			{HostIP: "127.0.0.1", HostPort: e.Config.Ports.SSH, Port: 22},
+			{HostIP: caveSSHBind(e.Config), HostPort: e.Config.Ports.SSH, Port: 22},
 		},
 		Env:     env,
 		Volumes: volumes,
