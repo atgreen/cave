@@ -115,6 +115,11 @@
         (format nil "~A@~A:~A/~A.git" user host owner-name repo-name)
         (format nil "ssh://~A@~A:~A/~A/~A.git" user host port owner-name repo-name))))
 
+(defun https-clone-url (owner-name repo-name)
+  "Return the HTTP(S) clone URL — same scheme + host as :base-url, suffixed with .git."
+  (format nil "~A/~A/~A.git" (string-right-trim "/" (config-value :base-url))
+          owner-name repo-name))
+
 (defun repos-dir ()
   "Return the directory where bare git repos are stored."
   (data-dir "repos"))

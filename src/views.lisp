@@ -490,6 +490,55 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                   ((>= size 1024) (format nil "~,1f KB" (/ size 1024.0)))
                   (t (format nil "~A B" size)))))))))))))
 
+(defun render-clone-widget (owner-name repo-name)
+  "SSH/HTTPS toggle with a copy-to-clipboard button."
+  (let ((ssh-url (ssh-clone-url owner-name repo-name))
+        (https-url (https-clone-url owner-name repo-name)))
+    (spinneret:with-html
+      (:div.clone-widget
+       :style "display:flex;align-items:stretch;gap:0;margin:var(--sp-3) 0;max-width:640px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;font-family:var(--font-mono);font-size:.85rem"
+       (:button.clone-tab.clone-tab-active :type "button" :data-scheme "ssh"
+        :style "padding:.4rem .75rem;background:var(--surface);border:none;border-right:1px solid var(--border);color:var(--text);cursor:pointer;font-family:inherit;font-size:inherit"
+        "SSH")
+       (:button.clone-tab :type "button" :data-scheme "https"
+        :style "padding:.4rem .75rem;background:transparent;border:none;border-right:1px solid var(--border);color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:inherit"
+        "HTTPS")
+       (:input.clone-url-input :type "text" :readonly t
+        :data-ssh ssh-url :data-https https-url :value ssh-url
+        :style "flex:1;padding:.4rem .6rem;background:var(--bg);border:none;color:var(--text);font-family:inherit;font-size:inherit;outline:none")
+       (:button.clone-copy :type "button" :title "Copy URL"
+        :style "padding:.4rem .75rem;background:var(--surface);border:none;border-left:1px solid var(--border);color:var(--text);cursor:pointer;font-family:inherit;font-size:inherit"
+        "Copy"))
+      (:script (:raw "
+(function(){
+  var root = document.currentScript.previousElementSibling;
+  if (!root || !root.classList.contains('clone-widget')) return;
+  var input = root.querySelector('.clone-url-input');
+  var copyBtn = root.querySelector('.clone-copy');
+  root.querySelectorAll('.clone-tab,.clone-tab-active').forEach(function(t){
+    t.addEventListener('click', function(){
+      root.querySelectorAll('.clone-tab,.clone-tab-active').forEach(function(x){
+        x.className = 'clone-tab';
+        x.style.background = 'transparent';
+        x.style.color = 'var(--text-muted)';
+      });
+      t.className = 'clone-tab-active';
+      t.style.background = 'var(--surface)';
+      t.style.color = 'var(--text)';
+      input.value = input.dataset[t.dataset.scheme];
+    });
+  });
+  copyBtn.addEventListener('click', function(){
+    input.select();
+    navigator.clipboard.writeText(input.value).then(function(){
+      var orig = copyBtn.textContent;
+      copyBtn.textContent = 'Copied';
+      setTimeout(function(){ copyBtn.textContent = orig; }, 1200);
+    });
+  });
+})();
+")))))
+
 (defun view-repo (&key owner-name repo empty default-branch
                        readme-html readme-filename)
   "Render the repo overview page (README + clone URL)."
@@ -498,6 +547,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
     (page (:title (format nil "~A/~A — Cave" org-name repo-name))
       (render-repo-tabs org-name repo-name :overview :repo repo)
       (when (getf repo :description) (:p (getf repo :description)))
+      ;; Clone widget — SSH/HTTPS toggle with copy button
+      (render-clone-widget org-name repo-name)
       ;; Fork button (don't show on own repos)
       (when (and *current-user*
                  (not (equal (getf *current-user* :username) org-name)))
@@ -512,17 +563,11 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
            (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);font-size:.85rem;overflow-x:auto"
             (format nil "git remote add origin ~A~%git push -u origin main"
                     (ssh-clone-url org-name repo-name))))
-          (progn
-            ;; README
-            (when readme-html
-              (:section
-               (:h2 (or readme-filename "README"))
-               (:div.readme-content (:raw readme-html))))
-
-            ;; Clone URL
+          ;; README
+          (when readme-html
             (:section
-             (:h2 "Clone")
-             (:code.clone-url (ssh-clone-url org-name repo-name))))))))
+             (:h2 (or readme-filename "README"))
+             (:div.readme-content (:raw readme-html))))))))
 
 (defun view-code (&key owner-name repo branches tags default-branch
                        commit-count recent-commits file-tree)
