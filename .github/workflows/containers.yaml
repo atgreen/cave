@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - name: cave
-            dockerfile: Containerfile
+            dockerfile: Containerfile.local
           - name: cave-runner
             dockerfile: Containerfile.runner
           - name: cave-zoekt
@@ -41,6 +41,13 @@ jobs:
       - name: Fetch Lisp dependencies
         if: matrix.name == 'cave' || matrix.name == 'cave-runner'
         run: ocicl install
+
+      # Containerfile.local (used by the cave image) needs cave, cav, and
+      # zoekt-git-index pre-built and present in the build context.
+      # Containerfile.runner only needs cave.
+      - name: Pre-build cave binaries
+        if: matrix.name == 'cave'
+        run: make cave cav zoekt-git-index
 
       - name: Pre-build cave binary
         if: matrix.name == 'cave-runner'
