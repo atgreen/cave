@@ -167,6 +167,7 @@ func cmdInit(args []string) error {
 	cfg.Cave.BaseURL = fmt.Sprintf("http://localhost:%d", httpPort)
 	cfg.Cave.SecretKey = instance.RandomSecretKey()
 	cfg.Database.Password = instance.RandomPassword(24)
+	cfg.Auth.Keycloak.ClientSecret = instance.RandomPassword(32)
 
 	// Pre-flight: check for existing containers/volumes that aren't ours
 	if err := checkForCollisions(cfg, rt); err != nil {

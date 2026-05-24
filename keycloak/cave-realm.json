@@ -32,7 +32,7 @@
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
-      "secret": "cave-dev-secret",
+      "secret": "__CAVE_OIDC_CLIENT_SECRET__",
       "redirectUris": [
         "http://localhost:8080/-/auth/callback",
         "http://localhost:8080/*",

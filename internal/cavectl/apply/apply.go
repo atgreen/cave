@@ -142,14 +142,17 @@ func (e *Executor) createPostgres() error {
 
 func (e *Executor) createKeycloak() error {
 	env := map[string]string{
-		"KC_DB":                   "postgres",
-		"KC_DB_URL":               fmt.Sprintf("jdbc:postgresql://%s:5432/keycloak", e.Config.ContainerName("pg")),
-		"KC_DB_USERNAME":          "cave",
-		"KC_DB_PASSWORD":          e.Config.Database.Password,
-		"KEYCLOAK_ADMIN":          e.Config.Auth.Keycloak.AdminUser,
-		"KEYCLOAK_ADMIN_PASSWORD": e.Config.Auth.Keycloak.AdminPassword,
-		"KC_HTTP_ENABLED":         "true",
-		"KC_HOSTNAME_STRICT":      "false",
+		"KC_DB":                    "postgres",
+		"KC_DB_URL":                fmt.Sprintf("jdbc:postgresql://%s:5432/keycloak", e.Config.ContainerName("pg")),
+		"KC_DB_USERNAME":           "cave",
+		"KC_DB_PASSWORD":           e.Config.Database.Password,
+		"KEYCLOAK_ADMIN":           e.Config.Auth.Keycloak.AdminUser,
+		"KEYCLOAK_ADMIN_PASSWORD":  e.Config.Auth.Keycloak.AdminPassword,
+		"KC_HTTP_ENABLED":          "true",
+		"KC_HOSTNAME_STRICT":       "false",
+		// Picked up by the cave-keycloak entrypoint and substituted into
+		// the baked realm.json before --import-realm runs.
+		"CAVE_OIDC_CLIENT_SECRET": e.Config.Auth.Keycloak.ClientSecret,
 	}
 
 	// When a public URL is configured, run in production mode behind a reverse
@@ -220,7 +223,7 @@ func (e *Executor) createCave() error {
 			env["CAVE_OIDC_ISSUER"] = browserIssuer + "/realms/cave"
 			env["CAVE_OIDC_ISSUER_INTERNAL"] = fmt.Sprintf("http://%s:8080/realms/cave", e.Config.ContainerName("keycloak"))
 			env["CAVE_OIDC_CLIENT_ID"] = "cave"
-			env["CAVE_OIDC_CLIENT_SECRET"] = "cave-dev-secret" // matches cave-realm.json
+			env["CAVE_OIDC_CLIENT_SECRET"] = e.Config.Auth.Keycloak.ClientSecret
 		case "oidc":
 			env["CAVE_OIDC_ISSUER"] = e.Config.Auth.OIDC.Issuer
 			env["CAVE_OIDC_ISSUER_INTERNAL"] = e.Config.Auth.OIDC.Issuer
