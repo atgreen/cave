@@ -173,6 +173,7 @@ func (e *Executor) createKeycloak() error {
 		// Picked up by the cave-keycloak entrypoint and substituted into
 		// the baked realm.json before --import-realm runs.
 		"CAVE_OIDC_CLIENT_SECRET": e.Config.Auth.Keycloak.ClientSecret,
+		"CAVE_BASE_URL":           e.Config.Cave.BaseURL,
 	}
 
 	// When a public URL is configured, run in production mode behind a reverse

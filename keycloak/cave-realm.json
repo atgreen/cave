@@ -37,11 +37,14 @@
         "http://localhost:8080/-/auth/callback",
         "http://localhost:8080/*",
         "http://localhost:9080/-/auth/callback",
-        "http://localhost:9080/*"
+        "http://localhost:9080/*",
+        "__CAVE_BASE_URL__/-/auth/callback",
+        "__CAVE_BASE_URL__/*"
       ],
       "webOrigins": [
         "http://localhost:8080",
-        "http://localhost:9080"
+        "http://localhost:9080",
+        "__CAVE_BASE_URL__"
       ],
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,

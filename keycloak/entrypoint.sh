@@ -5,13 +5,18 @@
 set -e
 
 TPL=/opt/keycloak/data/import/cave-realm.json
-if [ -n "$CAVE_OIDC_CLIENT_SECRET" ] && [ -f "$TPL" ]; then
-    if grep -q __CAVE_OIDC_CLIENT_SECRET__ "$TPL"; then
-        TMP=$(mktemp)
-        sed "s|__CAVE_OIDC_CLIENT_SECRET__|$CAVE_OIDC_CLIENT_SECRET|g" "$TPL" > "$TMP"
-        cat "$TMP" > "$TPL"
-        rm -f "$TMP"
+if [ -f "$TPL" ]; then
+    TMP=$(mktemp)
+    cp "$TPL" "$TMP"
+    if [ -n "$CAVE_OIDC_CLIENT_SECRET" ]; then
+        sed -i "s|__CAVE_OIDC_CLIENT_SECRET__|$CAVE_OIDC_CLIENT_SECRET|g" "$TMP"
     fi
+    if [ -n "$CAVE_BASE_URL" ]; then
+        # base URL may contain slashes; use pipe as sed delimiter (already done)
+        sed -i "s|__CAVE_BASE_URL__|$CAVE_BASE_URL|g" "$TMP"
+    fi
+    cat "$TMP" > "$TPL"
+    rm -f "$TMP"
 fi
 
 exec /opt/keycloak/bin/kc.sh "$@"
