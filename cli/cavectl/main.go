@@ -9,6 +9,7 @@ import (
 	"moxielogic.com/cave/internal/cavectl/apply"
 	"moxielogic.com/cave/internal/cavectl/backup"
 	"moxielogic.com/cave/internal/cavectl/config"
+	"moxielogic.com/cave/internal/cavectl/doctor"
 	"moxielogic.com/cave/internal/cavectl/instance"
 	"moxielogic.com/cave/internal/cavectl/plan"
 	"moxielogic.com/cave/internal/cavectl/quadlet"
@@ -43,6 +44,8 @@ func main() {
 		err = cmdDestroy(args)
 	case "backup":
 		err = cmdBackup(args)
+	case "doctor":
+		err = cmdDoctor(args)
 	case "restore":
 		fmt.Fprintln(os.Stderr, "Use: cavectl init --from-backup <archive.tar.gz>")
 		os.Exit(1)
@@ -75,6 +78,7 @@ Commands:
   logs         Tail container logs
   destroy      Tear down all containers
   backup       Back up database and repositories
+  doctor       Run sanity checks on host + deployment
   version      Print version
 
 Options:
@@ -608,3 +612,52 @@ func cmdBackup(args []string) error {
 	return nil
 }
 
+
+// --- doctor ---
+
+func cmdDoctor(args []string) error {
+	file := defaultFile
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-f", "--file":
+			i++
+			if i < len(args) {
+				file = args[i]
+			}
+		}
+	}
+
+	cfg, err := config.Load(file)
+	if err != nil {
+		return fmt.Errorf("load %s: %w", file, err)
+	}
+
+	rt, _ := runtime.Detect() // tolerate missing runtime; doctor will flag it
+
+	fmt.Printf("Doctor: %s\n\n", cfg.Runtime.Prefix)
+	results := doctor.Run(cfg, rt)
+	for _, r := range results {
+		r.Print()
+	}
+
+	var fails, warns int
+	for _, r := range results {
+		switch r.Status {
+		case doctor.Fail:
+			fails++
+		case doctor.Warn:
+			warns++
+		}
+	}
+	fmt.Println()
+	switch {
+	case fails > 0:
+		fmt.Printf("\033[31m%d failed\033[0m, %d warnings\n", fails, warns)
+		os.Exit(1)
+	case warns > 0:
+		fmt.Printf("\033[33m%d warnings\033[0m, no failures\n", warns)
+	default:
+		fmt.Println("\033[32mall checks passed\033[0m")
+	}
+	return nil
+}
