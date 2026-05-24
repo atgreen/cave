@@ -24,6 +24,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # cave and cave-runner both need the Lisp toolchain in the build context:
+      # cave's Containerfile COPYs the ocicl/ deps dir; cave-runner's Containerfile
+      # COPYs a pre-built cave binary. Skip for cave-zoekt (fully self-contained).
+      - name: Install SBCL and ocicl
+        if: matrix.name == 'cave' || matrix.name == 'cave-runner'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sbcl
+          gh release download --repo ocicl/ocicl --pattern '*_amd64.deb' --dir /tmp
+          sudo dpkg -i /tmp/ocicl_*_amd64.deb
+          ocicl setup > ~/.sbclrc
+
+      - name: Fetch Lisp dependencies
+        if: matrix.name == 'cave' || matrix.name == 'cave-runner'
+        run: ocicl install
+
+      - name: Pre-build cave binary
+        if: matrix.name == 'cave-runner'
+        run: make
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
