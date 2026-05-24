@@ -40,8 +40,11 @@
                         (target (if (and qs (plusp (length qs)))
                                     (format nil "~A?~A" trimmed qs)
                                     trimmed)))
-                   (hunchentoot:redirect target :code 301)
-                   (return-from hunchentoot:acceptor-dispatch-request nil)))
+                   ;; Path-only Location so the browser preserves the original
+                   ;; scheme — avoids an http→https extra hop behind Caddy.
+                   (setf (hunchentoot:header-out :location) target
+                         (hunchentoot:return-code*) 301)
+                   (return-from hunchentoot:acceptor-dispatch-request "")))
                ;; Intercept git smart HTTP before easy-routes dispatch
                (when (and (search ".git/" uri)
                           (or (search "/info/refs" uri)
