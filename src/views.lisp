@@ -576,6 +576,7 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
         (repo-name (getf repo :name)))
     (page (:title (format nil "Code — ~A/~A" org-name repo-name))
       (render-repo-tabs org-name repo-name :code :repo repo)
+      (render-clone-widget org-name repo-name)
 
       ;; Branch/tag bar + last commit
       (:div.repo-info-bar
