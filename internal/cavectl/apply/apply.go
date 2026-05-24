@@ -37,6 +37,13 @@ func (e *Executor) Execute(actions []plan.Action) error {
 func (e *Executor) executeOne(a plan.Action) error {
 	switch a.Type {
 	case plan.CreateNetwork:
+		exists, err := e.Runtime.NetworkExists(e.Config.Runtime.Network)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
 		return e.Runtime.NetworkCreate(e.Config.Runtime.Network)
 	case plan.CreateVolume:
 		return e.createVolume(a)
