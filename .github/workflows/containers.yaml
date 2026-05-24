@@ -44,7 +44,7 @@ jobs:
 
       - name: Pre-build cave binary
         if: matrix.name == 'cave-runner'
-        run: make
+        run: make cave
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
