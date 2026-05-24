@@ -26,8 +26,23 @@
            (let ((*current-user* nil)
                  (*current-user-id* nil))
              (authenticate-request)
-             ;; Intercept git smart HTTP before easy-routes dispatch
+             ;; Normalize trailing slashes — easy-routes doesn't match "/foo/" to "/foo".
+             ;; Skip git smart-HTTP paths and static files which can carry meaningful
+             ;; trailing characters.
              (let ((uri (hunchentoot:script-name request)))
+               (when (and (eq method :get)
+                          (> (length uri) 1)
+                          (char= (char uri (1- (length uri))) #\/)
+                          (not (search ".git/" uri))
+                          (not (uiop:string-prefix-p "/static/" uri)))
+                 (let* ((trimmed (string-right-trim "/" uri))
+                        (qs (hunchentoot:query-string request))
+                        (target (if (and qs (plusp (length qs)))
+                                    (format nil "~A?~A" trimmed qs)
+                                    trimmed)))
+                   (hunchentoot:redirect target :code 301)
+                   (return-from hunchentoot:acceptor-dispatch-request nil)))
+               ;; Intercept git smart HTTP before easy-routes dispatch
                (when (and (search ".git/" uri)
                           (or (search "/info/refs" uri)
                               (search "/git-upload-pack" uri)))
