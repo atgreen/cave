@@ -267,3 +267,101 @@ hr {
 .pf-c-brand {
   color: var(--cave-accent) !important;
 }
+
+/* ── Keycloak 26 / keycloak.v2 / PatternFly v5 ── */
+/* The v2 login template wraps everything in pf-v5-c-login containers.
+   Without these overrides the inner card stays white. */
+#keycloak-bg,
+.pf-v5-c-login,
+.pf-v5-c-login__container {
+  background: var(--cave-bg) !important;
+  background-image: none !important;
+}
+
+.pf-v5-c-login__main,
+.pf-v5-c-login__main-header,
+.pf-v5-c-login__main-body,
+.pf-v5-c-login__main-footer,
+.pf-v5-c-login__main-footer-band {
+  background: var(--cave-surface) !important;
+  color: var(--cave-text) !important;
+  border-color: var(--cave-border) !important;
+}
+
+.pf-v5-c-login__main {
+  border: 1px solid var(--cave-border) !important;
+  border-radius: 3px !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
+}
+
+.pf-v5-c-login__main-footer-band {
+  border-top: 1px solid var(--cave-border) !important;
+}
+
+/* Brand block — sits above the card in v2. Center it and use the cave look. */
+.pf-v5-c-login__header,
+.pf-v5-c-brand {
+  color: var(--cave-accent) !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  text-align: center !important;
+}
+
+/* Page title ("Sign in to your account") */
+.pf-v5-c-title,
+.pf-v5-c-login__main-header .pf-v5-c-title {
+  color: var(--cave-text) !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+
+/* v5 form controls */
+.pf-v5-c-form-control,
+.pf-v5-c-form-control > input,
+.pf-v5-c-form-control input {
+  background: var(--cave-bg) !important;
+  border: 1px solid var(--cave-border) !important;
+  color: var(--cave-text) !important;
+}
+
+.pf-v5-c-form__label,
+.pf-v5-c-form__label-text {
+  color: var(--cave-text-secondary) !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+
+/* Primary submit button */
+.pf-v5-c-button.pf-m-primary {
+  background: var(--cave-accent-dim) !important;
+  color: var(--cave-bg) !important;
+  border: none !important;
+}
+
+.pf-v5-c-button.pf-m-primary:hover {
+  background: var(--cave-accent) !important;
+}
+
+/* Password-visibility toggle (the little eye icon) */
+.pf-v5-c-button.pf-m-control,
+.pf-v5-c-input-group__item .pf-v5-c-button {
+  background: var(--cave-surface) !important;
+  border: 1px solid var(--cave-border) !important;
+  color: var(--cave-text-muted) !important;
+}
+
+/* Helper / required-field text */
+.pf-v5-c-helper-text__item-text,
+.pf-v5-c-form__helper-text {
+  color: var(--cave-text-muted) !important;
+}
+
+/* Alerts */
+.pf-v5-c-alert {
+  background: var(--cave-surface) !important;
+  color: var(--cave-text) !important;
+  border-left: 3px solid var(--cave-yellow) !important;
+}
+
+.pf-v5-c-alert.pf-m-danger { border-left-color: var(--cave-red) !important; }
+.pf-v5-c-alert.pf-m-success { border-left-color: var(--cave-green) !important; }
