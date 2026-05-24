@@ -328,6 +328,36 @@
         'name)
        :plists)))
 
+(defun list-public-repos (&key (limit 50))
+  "Public repos across the whole instance, newest first. For the anon landing."
+  (postmodern:query
+   (:limit
+    (:order-by
+     (:select 'cave-repos.*
+              (:as (:coalesce 'cave-orgs.name 'cave-users.username) 'owner-name)
+      :from 'cave-repos
+      :left-join 'cave-orgs :on (:= 'cave-repos.org-id 'cave-orgs.id)
+      :left-join 'cave-users :on (:= 'cave-repos.owner-id 'cave-users.id)
+      :where (:= 'cave-repos.is-private nil))
+     (:desc (:coalesce 'cave-repos.last-pushed-at 'cave-repos.updated-at)))
+    limit)
+   :plists))
+
+(defun list-recent-public-events (&key (limit 20))
+  "Recent events on public repos. For the anon landing's activity feed."
+  (postmodern:query
+   (:limit
+    (:order-by
+     (:select 'cave-events.* (:as 'cave-users.username 'actor)
+              (:as 'cave-repos.name 'repo-name)
+      :from 'cave-events
+      :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
+      :inner-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id)
+      :where (:= 'cave-repos.is-private nil))
+     (:desc 'cave-events.created-at))
+    limit)
+   :plists))
+
 (defun list-all-repos ()
   "Every repo in the system, plist form. Used by startup sweeps."
   (postmodern:query

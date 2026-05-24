@@ -477,7 +477,9 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                        :repos (list-user-repos *current-user-id* :include-private t)
                        :username (getf *current-user* :username)
                        :events (list-recent-events :limit 20)))
-      (hunchentoot:redirect "/login")))
+      (html-response
+       (view-public-landing :repos (list-public-repos :limit 50)
+                            :events (list-recent-public-events :limit 20)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Org creation

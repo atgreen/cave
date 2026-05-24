@@ -159,6 +159,46 @@
       ((equal type "git.clone") (format nil "~A cloned" actor))
       (t (format nil "~A: ~A" actor type)))))
 
+(defun view-public-landing (&key repos events)
+  "Anonymous landing — list public repos so visitors can browse without an account."
+  (page (:title "Cave")
+    (:section
+     (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-3)"
+      (:h2 "Public repositories")
+      (:span
+       (:a.btn :href "/-/auth/login" "Log in")
+       " "
+       (:a.btn.btn-primary :href "/-/auth/login" "Register")))
+     (:p :style "color:var(--text-muted);margin-bottom:var(--sp-4)"
+      "Browse public projects below. To create your own, log in or register.")
+     (if repos
+         (:ul.repo-list
+          (dolist (repo repos)
+            (let ((pushed (or (getf repo :last-pushed-at)
+                              (getf repo :updated-at)))
+                  (owner (getf repo :owner-name)))
+              (:li
+               (:a :href (format nil "/~A/~A" owner (getf repo :name))
+                (format nil "~A/~A" owner (getf repo :name)))
+               (when (getf repo :description)
+                 (:span.desc (getf repo :description)))
+               (when (format-relative-time pushed)
+                 (:span.repo-meta :style "margin-left:auto;color:var(--text-muted);font-size:.85rem"
+                  "Updated " (format-relative-time pushed)))))))
+         (:p.empty "No public repositories yet.")))
+    (when events
+      (:section
+       (:h2 "Recent activity")
+       (:ul.issue-list
+        (dolist (ev events)
+          (:li
+           (:span (format-event ev))
+           (let ((rel (format-relative-time (getf ev :created-at))))
+             (when rel
+               (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:.5rem" rel)))
+           (when (and (getf ev :repo-name) (not (eq (getf ev :repo-name) :null)))
+             (:span.badge :style "margin-left:auto" (getf ev :repo-name))))))))))
+
 (defun view-dashboard (&key orgs repos username events)
   "Render the dashboard."
   (page (:title "Dashboard — Cave")
