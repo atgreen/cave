@@ -628,7 +628,10 @@
                     (multiple-value-bind (_out err exit)
                         (uiop:run-program
                          (list "podman" "create" "--name" container-name
-                               "-v" (format nil "~A:/workspace" workdir)
+                               ;; :Z relabels the bind mount with a private
+                               ;; SELinux label so the container can write to it
+                               ;; on enforcing hosts (Fedora/RHEL).
+                               "-v" (format nil "~A:/workspace:Z" workdir)
                                "-w" "/workspace"
                                image "sleep" "infinity")
                          :output '(:string :stripped t)
