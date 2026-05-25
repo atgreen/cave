@@ -46,6 +46,16 @@ func Install(cfg *config.Config) error {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
 
+	// Without linger, the user systemd manager (and every --user quadlet
+	// container under it) stops when the last login session ends. The
+	// deployment would silently die whenever the deploying user logged out.
+	// Best-effort: polkit usually lets a user enable their own linger; if
+	// it's denied, warn but don't fail the whole install.
+	if out, err := exec.Command("loginctl", "enable-linger").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: loginctl enable-linger failed (%v): %s\n", err, strings.TrimSpace(string(out)))
+		fmt.Fprintln(os.Stderr, "  Deployment will stop when this user logs out. Fix with: sudo loginctl enable-linger $USER")
+	}
+
 	return nil
 }
 
@@ -147,6 +157,12 @@ WantedBy=default.target
 
 	// Keycloak
 	if cfg.KeycloakEnabled() {
+		var kcHostnameLines strings.Builder
+		if cfg.Auth.Keycloak.PublicURL != "" {
+			kcHostnameLines.WriteString(fmt.Sprintf("Environment=KC_HOSTNAME=%s\n", cfg.Auth.Keycloak.PublicURL))
+			kcHostnameLines.WriteString("Environment=KC_PROXY_HEADERS=xforwarded\n")
+			kcHostnameLines.WriteString("Environment=KC_HTTP_ENABLED=true\n")
+		}
 		units[prefix+"-keycloak.container"] = fmt.Sprintf(`[Unit]
 Description=Cave Keycloak (%s)
 After=%s-pg.service
@@ -156,11 +172,12 @@ Requires=%s-pg.service
 ContainerName=%s
 Image=%s
 Network=%s.network
+PublishPort=127.0.0.1:%d:8080
 Environment=KC_DB=postgres
 Environment=KC_DB_URL=jdbc:postgresql://%s:5432/keycloak
 Environment=KC_DB_USERNAME=cave
 Environment=KC_DB_PASSWORD=%s
-Environment=KEYCLOAK_ADMIN=%s
+%sEnvironment=KEYCLOAK_ADMIN=%s
 Environment=KEYCLOAK_ADMIN_PASSWORD=%s
 Exec=start-dev
 Label=cave.managed-by=cavectl
@@ -173,7 +190,9 @@ Restart=always
 WantedBy=default.target
 `, prefix, prefix, prefix,
 			cfg.ContainerName("keycloak"), cfg.Auth.Keycloak.Image,
-			prefix, cfg.ContainerName("pg"), cfg.Database.Password,
+			prefix, cfg.Ports.Keycloak,
+			cfg.ContainerName("pg"), cfg.Database.Password,
+			kcHostnameLines.String(),
 			cfg.Auth.Keycloak.AdminUser, cfg.Auth.Keycloak.AdminPassword, prefix)
 	}
 
@@ -200,9 +219,16 @@ WantedBy=default.target
 	}
 
 	if cfg.Auth.Mode == "keycloak" {
-		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=http://localhost:%d/realms/cave\n", cfg.Ports.HTTP))
+		issuer := fmt.Sprintf("http://localhost:%d/realms/cave", cfg.Ports.Keycloak)
+		if cfg.Auth.Keycloak.PublicURL != "" {
+			issuer = strings.TrimRight(cfg.Auth.Keycloak.PublicURL, "/") + "/realms/cave"
+		}
+		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=%s\n", issuer))
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER_INTERNAL=http://%s:8080/realms/cave\n", cfg.ContainerName("keycloak")))
 		envLines.WriteString("Environment=CAVE_OIDC_CLIENT_ID=cave\n")
+		if cfg.Auth.Keycloak.ClientSecret != "" {
+			envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_CLIENT_SECRET=%s\n", cfg.Auth.Keycloak.ClientSecret))
+		}
 	} else if cfg.Auth.Mode == "oidc" {
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=%s\n", cfg.Auth.OIDC.Issuer))
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER_INTERNAL=%s\n", cfg.Auth.OIDC.Issuer))
@@ -216,6 +242,19 @@ WantedBy=default.target
 		volumeLines.WriteString(fmt.Sprintf("Volume=%s-zoekt.volume:/data/zoekt-index\n", prefix))
 	}
 
+	sshBind := cfg.Ports.SSHBind
+	if sshBind == "" {
+		sshBind = "127.0.0.1"
+	}
+	grpcBind := cfg.Ports.GRPCBind
+	if grpcBind == "" {
+		grpcBind = "127.0.0.1"
+	}
+	var grpcPublishLine string
+	if cfg.Ports.GRPC > 0 {
+		grpcPublishLine = fmt.Sprintf("PublishPort=%s:%d:9443\n", grpcBind, cfg.Ports.GRPC)
+	}
+
 	units[prefix+".container"] = fmt.Sprintf(`[Unit]
 Description=Cave Code Forge (%s)
 %s
@@ -226,8 +265,8 @@ ContainerName=%s
 Image=%s
 Network=%s.network
 PublishPort=127.0.0.1:%d:8080
-PublishPort=127.0.0.1:%d:22
-%s%sLabel=cave.managed-by=cavectl
+PublishPort=%s:%d:22
+%s%s%sLabel=cave.managed-by=cavectl
 Label=cave.instance=%s
 
 [Service]
@@ -237,8 +276,8 @@ Restart=always
 WantedBy=default.target
 `, prefix, caveAfter, caveRequires,
 		cfg.ContainerName("cave"), cfg.Cave.Image, prefix,
-		cfg.Ports.HTTP, cfg.Ports.SSH,
-		envLines.String(), volumeLines.String(), prefix)
+		cfg.Ports.HTTP, sshBind, cfg.Ports.SSH,
+		grpcPublishLine, envLines.String(), volumeLines.String(), prefix)
 
 	// Zoekt
 	if cfg.Zoekt.Enabled {
