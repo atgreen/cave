@@ -623,9 +623,9 @@ CREATE TABLE cave_commit_signatures (
 );
 CREATE INDEX idx_commit_sigs_repo ON cave_commit_signatures (repo_id);")
 
-    (45 . "-- Admin approval gate for self-registration. Existing rows default to
--- 'approved' so a migration doesn't lock anyone out; new OIDC users land
--- as 'pending' (set explicitly by provision-oidc-user) until an admin acts.
+    (45 . "-- Admin approval gate for self-registration. Existing rows default
+-- to 'approved' so the migration doesn't lock anyone out. New OIDC users
+-- land as 'pending' (set explicitly by provision-oidc-user).
 ALTER TABLE cave_users ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved';
 CREATE INDEX idx_users_approval_pending ON cave_users (approval_status) WHERE approval_status = 'pending';"))
   "Ordered list of (version . sql) migration pairs.")
