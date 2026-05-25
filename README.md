@@ -6,80 +6,120 @@ Cave is built for small teams who want to own their infrastructure without the b
 
 ## Features
 
-- **Git hosting** — SSH push/clone with per-repo access control
+- **Git hosting** — SSH push/clone with per-repo access control, plus anonymous read-only clone over HTTPS
 - **Pull requests** — graduated review model (approve, approve with concerns, request changes), merge eligibility rules, squash merge
 - **Stacked changesets** — first-class support for dependent PRs
 - **Issues** — with comments, close/reopen, labels
-- **Code browser** — file tree, Monaco editor, syntax-highlighted diffs via diff2html
-- **README rendering** — server-side Markdown with tables and fenced code blocks
+- **Releases** — tag-backed releases with markdown body and per-asset uploads (≤ 100 MB each), download counts
+- **Pulse tab** — per-repo activity chart, total views, unique visitors, top contributors, referring sites (member-only)
+- **Commit signature verification** — SSH-signed commits validated against registered user keys on push; "Verified" badge in the commit list
+- **Code browser** — file tree, Monaco editor, syntax-highlighted diffs via diff2html, SSH/HTTPS clone widget on every repo
+- **README rendering** — server-side Markdown with tables and fenced code blocks; rendered HTML cached by blob sha
+- **Public landing** — anonymous visitors get a list of public repos and recent activity, no login required
 - **Keycloak SSO** — OIDC authentication, self-registration, email verification, 2FA (TOTP)
+- **Email** — SMTP via mailpit (dev) or any external relay (Resend / Postmark / SES / Fastmail …) configured per deploy
 - **Observability** — Prometheus metrics, Grafana dashboards, SBCL runtime stats
 - **Webhooks** — HTTP callbacks on push, PR, and issue events
 - **Commit status API** — external CI reports pass/fail on PRs
-- **Automation runners** — self-hosted gRPC runners execute checks and automations
-- **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), with repo-scoped and global modes
+- **Automation runners + workflows** — self-hosted gRPC runners execute checks and `.cave/workflows/*.yml` jobs
+- **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), repo-scoped and global
 - **Repo mirroring** — push to and pull from GitHub/GitLab/Codeberg
-- **User themes** — built-in themes (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
+- **User themes** — built-in (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
+- **Multi-chamber storage** — Praefect-style routing across multiple git storage nodes (single-chamber is the default; multi-chamber is opt-in)
 - **Backup/restore** — one-command backup and restore of all data
+- **Declarative deployment** — `cavectl` reconciles containers from a single `cave.yaml`; `cavectl doctor` runs end-to-end health checks
 - **Quadlet deployment** — systemd user services for production, with rollback
 
-## Quick Start
+## Quick start
 
 ```bash
-# Build
-make
-
-# Start locally (Cave + Postgres + Keycloak + Mailpit)
-make podman-up
-
-# Open Cave
-open http://localhost:8080
-
-# Keycloak admin
-open http://localhost:8180  # admin/admin
-
-# Mailpit (email catcher)
-open http://localhost:8025
-```
-
-## Production Deployment
-
-```bash
-# Build and tag a release
+# Build cave + cavectl + cav
 make build
-make release
 
-# Install systemd quadlet units
-make prod-install
+# Spin up the full stack locally (postgres, keycloak with cave theme + realm,
+# mailpit, zoekt, cave, runner) — picks free ports, generates secrets
+./cavectl init
 
-# Start production
+# Visit cave at http://localhost:9080
+```
+
+`cavectl init` writes a `cave.yaml` with every secret already filled in. Edit it
+to change images, ports, or auth mode, then `cavectl apply --yes` to reconcile.
+
+## Production deployment
+
+Two paths. Pick one.
+
+### Path A — `cavectl` (recommended for new installs)
+
+On the target host (Fedora/Rocky/Alma/Debian/Ubuntu, with `podman` or `docker`):
+
+```bash
+# 1. Pull cavectl from a release artifact, or build from source:
+go build -o cavectl ./cli/cavectl
+
+# 2. Generate a fresh cave.yaml — by default it pulls images from ghcr.io.
+./cavectl init --name cave
+
+# 3. Edit cave.yaml: set base_url to https://cave.example.com,
+#    auth.mode to "keycloak", auth.keycloak.public_url to
+#    https://auth.cave.example.com, smtp.mode to "external" with your
+#    relay credentials, and ports.ssh to 22 if cave's SSH should be on
+#    the public port (then move system sshd off 22 first).
+
+# 4. Apply
+./cavectl apply --yes
+
+# 5. Health-check
+./cavectl doctor
+```
+
+Front it with Caddy:
+
+```caddyfile
+cave.example.com       { reverse_proxy 127.0.0.1:9080 }
+auth.cave.example.com  { reverse_proxy 127.0.0.1:9180 }
+```
+
+### Path B — Make + systemd quadlets
+
+```bash
+make build && make release   # build images, tag :prod
+make prod-install            # drop quadlet units in ~/.config/containers/systemd/
 make prod-start
-
-# Ports: Cave 9080, Keycloak 9180, Mailpit 9025, SSH 9222
 ```
 
-### Deploy workflow
+Default ports: cave 9080, keycloak 9180, mailpit 9025, SSH 9222.
+
+### Rollback / backup
 
 ```bash
-make build && make release && systemctl --user restart cave
-```
-
-### Rollback
-
-```bash
-make prod-rollback
-```
-
-### Backup
-
-```bash
-make prod-backup                    # → ~/cave-backups/cave-YYYY-MM-DD.tar.gz
+make prod-rollback                                # swap back to cave:prod-previous
+make prod-backup                                  # → ~/cave-backups/cave-YYYY-MM-DD.tar.gz
 make prod-restore F=path/to/archive.tar.gz
 ```
 
+## Container images
+
+Published from `main` and from tagged releases via the `Publish container images`
+GitHub Actions workflow:
+
+| Image                              | Source                       |
+|------------------------------------|------------------------------|
+| `ghcr.io/atgreen/cave`             | `Containerfile.local`        |
+| `ghcr.io/atgreen/cave-runner`      | `Containerfile.runner`       |
+| `ghcr.io/atgreen/cave-zoekt`       | `Containerfile.zoekt`        |
+| `ghcr.io/atgreen/cave-keycloak`    | `Containerfile.keycloak`     |
+
+Tags: `:sha-<short>` (immutable), `:main` (rolling), and on `v*` tags
+`:<version>`, `:prod`, `:latest`.
+
 ## Architecture
 
-Cave is a single Common Lisp (SBCL) binary serving HTTP via Hunchentoot, with a gRPC runner service via ag-grpc. All HTML is generated with Spinneret (s-expression HTML). CSS is a single file. No JavaScript frameworks.
+Cave is a single Common Lisp (SBCL) binary serving HTTP via Hunchentoot, with a
+gRPC service for runners (`runner-service.lisp`) and a gRPC service for git
+storage (`chamber.lisp`). All HTML is generated by Spinneret. CSS is a single
+file. No JavaScript framework.
 
 ```
 src/
@@ -87,16 +127,29 @@ src/
 ├── config.lisp         — S-expression config parser
 ├── db.lisp             — PostgreSQL via Postmodern, numbered migrations
 ├── auth.lisp           — OIDC auth, sessions, API tokens, sudo mode
-├── model.lisp          — Domain queries: users, orgs, repos, issues, PRs, reviews
-├── git.lisp            — Git CLI integration (branch, log, tree, diff, merge)
+├── model.lisp          — Domain queries: users, orgs, repos, issues, PRs,
+│                         reviews, releases, signatures, page views, …
+├── git.lisp            — Git CLI integration (branch, log, tree, diff, merge,
+│                         tag, signature verification, trailers)
 ├── views.lisp          — All HTML views via Spinneret
-├── notify.lisp         — Email notifications, webhooks, automation scheduling
-├── search-zoekt.lisp   — Zoekt code search: indexing, API client, visibility filter
+├── notify.lisp         — Email notifications, webhooks
+├── search-zoekt.lisp   — Zoekt code search: indexing, API client, visibility
 ├── metrics.lisp        — Prometheus metrics endpoint
 ├── runner-service.lisp — gRPC service for automation runners
+├── workflow.lisp       — Workflow orchestration: parse, schedule, deps
+├── yaml.lisp           — Minimal YAML parser for workflows
+├── chamber.lisp        — Git storage gRPC service
+├── chamber-client.lisp — Chamber client with chamber-or graceful fallback
+├── chamber-router.lisp — Multi-chamber routing (Praefect-style)
 ├── ssh.lisp            — SSH transport, authorized_keys generation
 ├── server.lisp         — HTTP routes and request handling
 └── main.lisp           — CLI subcommands (serve, init, migrate, runner, etc.)
+
+cli/cavectl/            — Go deployment tool source
+internal/cavectl/       — Go libraries: config, plan, apply, runtime, doctor, …
+keycloak/themes/cave/   — Custom Keycloak login theme
+keycloak/cave-realm.json — Realm import (placeholders substituted at runtime)
+deploy/quadlet/         — systemd-user quadlet units
 ```
 
 ### Key dependencies
@@ -106,49 +159,97 @@ src/
 | Hunchentoot + easy-routes | HTTP server and routing |
 | Postmodern | PostgreSQL client |
 | Spinneret | S-expression HTML generation |
-| ag-grpc | gRPC server for runner protocol |
+| ag-grpc | gRPC server + client (runners, chamber) |
 | 3bmd | Markdown rendering |
 | Dexador | HTTP client (OIDC, webhooks) |
-| Ironclad | Cryptography (tokens, HMAC) |
-| cl-bcrypt | Password hashing (legacy) |
+| Ironclad + jzon + flexi-streams | crypto, JSON, byte streams |
 
 ## Configuration
 
-Cave reads `cave.conf`, an s-expression plist:
+Two configs live side-by-side:
 
-```lisp
-(:http-port 8080
- :grpc-port 9443
- :ssh-port 22
- :data-dir "/var/lib/cave"
- :db-host "localhost"
- :db-name "cave"
- :db-user "cave"
- :db-password "cave"
- :base-url "http://localhost:8080"
- :oidc-issuer "http://localhost:8180/realms/cave"
- :oidc-client-id "cave"
- :oidc-client-secret "cave-dev-secret")
-```
+1. **`cave.conf`** — runtime config consumed by the `cave` binary (rendered by
+   `cavectl` or `entrypoint.sh` from environment variables). S-expression plist:
+
+   ```lisp
+   (:http-port 8080
+    :grpc-port 9443
+    :ssh-port 22
+    :data-dir "/var/lib/cave"
+    :db-host "cave-pg"
+    :db-name "cave"
+    :db-user "cave"
+    :db-password "…"
+    :base-url "https://cave.example.com"
+    :oidc-issuer "https://auth.cave.example.com/realms/cave"
+    :oidc-issuer-internal "http://cave-keycloak:8080/realms/cave"
+    :oidc-client-id "cave"
+    :oidc-client-secret "…"
+    :zoekt-enabled t
+    :zoekt-web-url "http://cave-zoekt-web:6070"
+    :chamber-enabled t
+    :chamber-port 9444)
+   ```
+
+2. **`cave.yaml`** — declarative deployment manifest consumed by `cavectl`:
+
+   ```yaml
+   apiVersion: v1
+   cave:        { image: ghcr.io/atgreen/cave:main, base_url: https://cave.example.com,
+                  secret_key: <32-byte hex> }
+   ports:       { http: 9080, ssh: 22, ssh_bind: 0.0.0.0, keycloak: 9180, mailpit: 9025 }
+   database:    { mode: local, image: docker.io/postgres:16-alpine, password: <random> }
+   auth:
+     mode: keycloak
+     keycloak:  { image: ghcr.io/atgreen/cave-keycloak:main,
+                  admin_user: admin, admin_password: <strong>,
+                  public_url: https://auth.cave.example.com,
+                  client_secret: <random 32-char> }
+   runner:      { enabled: true, image: ghcr.io/atgreen/cave-runner:main, count: 1 }
+   zoekt:       { enabled: true, image: ghcr.io/atgreen/cave-zoekt:main }
+   smtp:
+     mode: external
+     host: smtp.resend.com
+     port: 587
+     starttls: true
+     user: resend
+     password: re_…
+     from: cave@example.com
+     from_display_name: Cave
+   chamber:     { nodes: [] }
+   runtime:     { engine: auto, network: cave-net, prefix: cave }
+   ```
 
 ## CLI
 
 ```
-cave serve     — Start the web server
-cave init      — Initialize the database
-cave migrate   — Run pending migrations
-cave runner    — Start an automation runner agent
-cave run-checks   — Run pre-receive checks (called by git hook)
-cave sync-mirrors — Sync repo mirrors
-cave sync-themes  — Sync user themes from cave-themes repo
-cave update-keys  — Regenerate SSH authorized_keys
-cave git-shell    — SSH git transport handler
-cave post-receive — Handle post-receive events
+cave serve          Start the web server
+cave init           Initialize the database
+cave migrate        Run pending migrations
+cave runner         Start an automation runner agent
+cave run-checks     Run pre-receive checks (called by git hook)
+cave sync-mirrors   Sync repo mirrors (push mirrors after each push)
+cave sync-themes    Sync user themes from a cave-themes repo
+cave update-keys    Regenerate SSH authorized_keys
+cave git-shell      SSH git transport handler (called by sshd)
+cave post-receive   Handle post-receive events (legacy; HTTP endpoint is the
+                    live path)
+
+cavectl init                Generate cave.yaml and bring up the full stack
+cavectl apply               Reconcile containers to match cave.yaml
+cavectl status              Show running containers + assigned ports
+cavectl logs <service>      Tail container logs
+cavectl doctor              Run sanity checks: runtime, ports, DNS, containers,
+                            schema, OIDC, SMTP realm config
+cavectl backup              Tar up postgres + repos + cave.yaml
+cavectl instances           List all cavectl-managed instances on this host
+cavectl destroy             Tear down (keep volumes with --keep-data)
 ```
 
 ## REST API
 
-Authenticate with `Authorization: Bearer <api-token>`.
+Authenticate with `Authorization: Bearer <api-token>` (issued from Settings →
+API Tokens):
 
 ```
 GET    /api/v1/repos/:owner/:repo/issues
@@ -165,25 +266,26 @@ POST   /api/v1/repos/:owner/:repo/statuses/:sha
 
 ## Automation Runners
 
-Cave includes a gRPC-based runner system for executing automations on repo events.
-
 ```bash
-# Generate a registration token (Admin page)
-# Start a runner
+# Generate a registration token (Admin → Runners, or org/repo settings)
 cave runner --url grpc://cave-host:9443 --token <token> --name my-runner
 
-# Or use the runner container image (includes Podman for nested containers)
+# Or use the runner container image (Podman-in-Podman)
 make runner-image
-podman run --privileged cave-runner:latest \
+podman run --privileged ghcr.io/atgreen/cave-runner:main \
   --url grpc://cave-host:9443 --token <token>
 ```
 
-Automations are configured per-repo in Settings → Automations with triggers:
-`pre_receive`, `post_receive`, `changeset_opened`, `changeset_merged`, `manual`
+Automations are configured per-repo in Settings → Automations, with triggers:
+`pre_receive`, `post_receive`, `changeset_opened`, `changeset_merged`, `manual`.
+
+Workflow files at `.cave/workflows/*.yml` are picked up on push and scheduled
+across runners.
 
 ## Themes
 
-Switch themes in Settings → Theme. Built-in: Terminal Warmth, Solarized Dark, Nord, Dracula, Light.
+Switch themes in Settings → Theme. Built-in: Terminal Warmth, Solarized Dark,
+Nord, Dracula, Light.
 
 Custom themes: fork `cave/cave-themes`, add `.toml` files:
 
@@ -195,25 +297,26 @@ font-url = "https://fonts.googleapis.com/css2?family=JetBrains+Mono"
 font-mono = "'JetBrains Mono', monospace"
 ```
 
-Push → themes sync automatically. Invalid values get lint issues filed on your repo.
+Push → themes sync automatically. Invalid values get lint issues filed on your
+themes repo.
 
-## Makefile Targets
+## Makefile targets
 
 ```
-make              — Show all targets
-make build        — Build cave binary + Go CLI
-make test         — Run Playwright tests
-make podman-up    — Start dev environment
-make podman-down  — Stop dev environment
-make runner-image — Build runner container image
-make release      — Build prod container image
-make prod-install — Install quadlet systemd units
-make prod-start   — Start production
-make prod-stop    — Stop production
-make prod-backup  — Backup all data
-make prod-restore — Restore from backup
-make prod-rollback — Roll back to previous release
-make prod-status  — Show service status
+make build         Build cave + cav + cavectl + zoekt-git-index
+make load          Load-test the Lisp tree without producing an image
+make lint          Run ocicl lint on the source
+make podman-up     Bring up the laptop dev stack via plain podman commands
+make podman-down   Tear it down
+make runner-image  Build the runner container image
+make release       Build prod images and tag :prod
+make prod-install  Install systemd quadlet units
+make prod-start    Start production
+make prod-stop     Stop production
+make prod-rollback Roll back to cave:prod-previous
+make prod-backup   Back up all data
+make prod-restore F=path/to/archive.tar.gz
+make prod-status   Show systemd service status
 ```
 
 ## License
@@ -223,4 +326,3 @@ MIT
 ## Author
 
 Anthony Green <green@moxielogic.com>
-
