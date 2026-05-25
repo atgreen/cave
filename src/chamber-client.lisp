@@ -32,19 +32,52 @@
             (ag-grpc:make-channel host-only port :timeout nil))))
   *chamber-channel*)
 
+(define-condition chamber-rpc-error (error)
+  ((method :initarg :method :reader chamber-rpc-error-method)
+   (cause  :initarg :cause  :reader chamber-rpc-error-cause))
+  (:report (lambda (c stream)
+             (format stream "Chamber RPC failed (~A): ~A"
+                     (chamber-rpc-error-method c)
+                     (chamber-rpc-error-cause c)))))
+
 (defun chamber-call (method request response-type &key owner repo-name write-p)
-  "Make a unary gRPC call to Chamber. Routes to correct node in multi-chamber mode."
-  (if (multi-chamber-p)
-      (router-call method request response-type
-                   :owner owner :repo-name repo-name :write-p write-p)
-      (ag-grpc:grpc-call (ensure-chamber-channel) method request
-                          :response-type response-type)))
+  "Make a unary gRPC call to Chamber. Translates transport errors into a
+chamber-rpc-error condition so callers can fall back to direct git
+instead of crashing the server thread."
+  (handler-case
+      (if (multi-chamber-p)
+          (router-call method request response-type
+                       :owner owner :repo-name repo-name :write-p write-p)
+          (ag-grpc:grpc-call (ensure-chamber-channel) method request
+                              :response-type response-type))
+    (error (e)
+      (llog:warn "Chamber RPC failed" :method method
+                                       :error (princ-to-string e))
+      ;; Reset the channel so a subsequent call doesn't reuse a poisoned stream.
+      (setf *chamber-channel* nil)
+      (error 'chamber-rpc-error :method method :cause e))))
+
+(defmacro with-chamber-fallback (fallback-form &body body)
+  "Run BODY; if a chamber-rpc-error escapes, evaluate FALLBACK-FORM instead.
+   Used to keep cave responsive when Chamber's RPC layer hiccups — read paths
+   degrade gracefully to direct git calls on the local disk."
+  `(handler-case (progn ,@body)
+     (chamber-rpc-error () ,fallback-form)))
+
+(defmacro chamber-or (chamber-form direct-form)
+  "If chamber is enabled, evaluate CHAMBER-FORM. On chamber-rpc-error (or
+   when chamber is disabled), evaluate DIRECT-FORM instead. The intended
+   shape of every chamber-* read function."
+  `(if (chamber-enabled-p)
+       (handler-case ,chamber-form
+         (chamber-rpc-error () ,direct-form))
+       ,direct-form))
 
 ;;; --- Read operations ---
 
 (defun chamber-get-tree (owner repo-name &key (ref "HEAD") (path ""))
   "Get directory listing. Returns list of plists or NIL."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetTree"
                                 (make-instance 'cave::get-tree-request
                                                :owner owner :repo-name repo-name
@@ -58,12 +91,12 @@
                         :size (slot-value e 'cave::size)
                         :name (slot-value e 'cave::name)))
                 (coerce (slot-value resp 'cave::entries) 'list)))
-      ;; Fallback: direct git
+
       (git-tree (repo-disk-path owner repo-name) :ref ref :path path)))
 
 (defun chamber-get-blob (owner repo-name ref path)
   "Get file content as string. Returns string or NIL."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetBlob"
                                 (make-instance 'cave::get-blob-request
                                                :owner owner :repo-name repo-name
@@ -76,7 +109,7 @@
 
 (defun chamber-get-blob-bytes (owner repo-name ref path)
   "Get file content as byte vector. Returns vector or NIL."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetBlobBytes"
                                 (make-instance 'cave::get-blob-bytes-request
                                                :owner owner :repo-name repo-name
@@ -89,7 +122,7 @@
 
 (defun chamber-get-blob-info (owner repo-name ref path)
   "Get blob hash, size, is-binary. Returns plist or NIL."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetBlobInfo"
                                 (make-instance 'cave::get-blob-info-request
                                                :owner owner :repo-name repo-name
@@ -109,7 +142,7 @@
 
 (defun chamber-get-commit (owner repo-name hash)
   "Get commit details + diff + stat. Returns plist or NIL."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetCommit"
                                 (make-instance 'cave::get-commit-request
                                                :owner owner :repo-name repo-name
@@ -134,7 +167,7 @@
 
 (defun chamber-get-log (owner repo-name &key (limit 20) branch)
   "Get commit log. Returns list of plists."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetLog"
                                 (make-instance 'cave::get-log-request
                                                :owner owner :repo-name repo-name
@@ -152,7 +185,7 @@
       (git-log (repo-disk-path owner repo-name) :limit limit :branch branch)))
 
 (defun chamber-get-branches (owner repo-name)
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetBranches"
                                 (make-instance 'cave::get-branches-request
                                                :owner owner :repo-name repo-name)
@@ -162,7 +195,7 @@
       (git-branches (repo-disk-path owner repo-name))))
 
 (defun chamber-get-tags (owner repo-name)
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetTags"
                                 (make-instance 'cave::get-tags-request
                                                :owner owner :repo-name repo-name)
@@ -172,7 +205,7 @@
       (git-tags (repo-disk-path owner repo-name))))
 
 (defun chamber-get-default-branch (owner repo-name)
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetDefaultBranch"
                                 (make-instance 'cave::get-default-branch-request
                                                :owner owner :repo-name repo-name)
@@ -182,7 +215,7 @@
       (git-default-branch (repo-disk-path owner repo-name))))
 
 (defun chamber-is-empty (owner repo-name)
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/IsEmpty"
                                 (make-instance 'cave::is-empty-request
                                                :owner owner :repo-name repo-name)
@@ -192,7 +225,7 @@
       (git-repo-empty-p (repo-disk-path owner repo-name))))
 
 (defun chamber-get-diff-merge-base (owner repo-name target source)
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetDiffMergeBase"
                                 (make-instance 'cave::get-diff-merge-base-request
                                                :owner owner :repo-name repo-name
@@ -203,7 +236,7 @@
       (git-diff-merge-base (repo-disk-path owner repo-name) target source)))
 
 (defun chamber-get-commit-count (owner repo-name &key branch)
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/GetCommitCount"
                                 (make-instance 'cave::get-commit-count-request
                                                :owner owner :repo-name repo-name
@@ -215,7 +248,7 @@
 
 (defun chamber-find-readme (owner repo-name &key (ref "HEAD"))
   "Find README file. Returns plist with :name or NIL."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/FindReadme"
                                 (make-instance 'cave::find-readme-request
                                                :owner owner :repo-name repo-name
@@ -230,7 +263,7 @@
 
 (defun chamber-merge-branch (owner repo-name target source &key author message squash)
   "Merge source into target. Returns (VALUES success-p error-string)."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/MergeBranch"
                                 (make-instance 'cave::merge-branch-request
                                                :owner owner :repo-name repo-name
@@ -246,7 +279,7 @@
                          :author author :message message :squash squash)))
 
 (defun chamber-delete-branch (owner repo-name branch)
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/DeleteBranch"
                                 (make-instance 'cave::delete-branch-request
                                                :owner owner :repo-name repo-name
@@ -260,7 +293,7 @@
 
 (defun chamber-clone-from-url (owner repo-name url &key auth-token)
   "Clone bare repo from external URL. Returns (VALUES success-p error-string)."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/CloneFromURL"
                                 (make-instance 'cave::clone-from-url-request
                                                :owner owner :repo-name repo-name
@@ -275,7 +308,7 @@
 
 (defun chamber-push-mirror (owner repo-name url &optional auth-token)
   "Push all refs to remote. Returns (VALUES success-p error-string)."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/PushMirror"
                                 (make-instance 'cave::push-mirror-request
                                                :owner owner :repo-name repo-name
@@ -289,7 +322,7 @@
 
 (defun chamber-pull-mirror (owner repo-name url &optional auth-token)
   "Fetch all refs from remote. Returns (VALUES success-p error-string)."
-  (if (chamber-enabled-p)
+  (chamber-or
       (let ((resp (chamber-call "/cave.chamber.Chamber/PullMirror"
                                 (make-instance 'cave::pull-mirror-request
                                                :owner owner :repo-name repo-name
