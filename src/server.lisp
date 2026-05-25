@@ -571,6 +571,17 @@ the results. Skips deletes and zero-sha boundaries."
           (unless (getf user :is-active)
             (setf (hunchentoot:return-code*) 403)
             (return-from oidc-callback "Account is deactivated"))
+          ;; Approval gate. Pending users see a friendly waiting page and
+          ;; no session is established; rejected users get a final notice.
+          (let ((status (getf user :approval-status)))
+            (cond
+              ((string= status "pending")
+               (return-from oidc-callback
+                 (html-response (view-account-pending :username (getf user :username)))))
+              ((string= status "rejected")
+               (setf (hunchentoot:return-code*) 403)
+               (return-from oidc-callback
+                 (html-response (view-account-rejected :username (getf user :username)))))))
           (if is-sudo
               ;; Sudo flow — set sudo cookie, keep existing session
               (progn
@@ -660,6 +671,7 @@ the results. Skips deletes and zero-sha boundaries."
       (setf (hunchentoot:return-code*) 403)
       (return-from admin-page "Forbidden"))
     (html-response (view-admin :users (list-users :active-only nil)
+                               :pending-users (list-pending-users)
                                :runners (list-runners)))))
 
 (easy-routes:defroute admin-create-runner-token ("/-/admin/runners/token" :method :post) ()
@@ -669,6 +681,7 @@ the results. Skips deletes and zero-sha boundaries."
       (return-from admin-create-runner-token "Forbidden"))
     (let ((token (create-registration-token :created-by-id *current-user-id*)))
       (html-response (view-admin :users (list-users :active-only nil)
+                                 :pending-users (list-pending-users)
                                  :runners (list-runners)
                                  :registration-token token)))))
 
@@ -679,6 +692,24 @@ the results. Skips deletes and zero-sha boundaries."
       (return-from admin-delete-runner "Forbidden"))
     (let ((rid (parse-integer runner-id :junk-allowed t)))
       (when rid (delete-runner rid)))
+    (hunchentoot:redirect "/-/admin")))
+
+(easy-routes:defroute admin-approve-user ("/-/admin/users/:user-id/approve" :method :post) ()
+  (when (require-login)
+    (unless (getf *current-user* :is-admin)
+      (setf (hunchentoot:return-code*) 403)
+      (return-from admin-approve-user "Forbidden"))
+    (let ((uid (parse-integer user-id :junk-allowed t)))
+      (when uid (set-user-approval uid "approved")))
+    (hunchentoot:redirect "/-/admin")))
+
+(easy-routes:defroute admin-reject-user ("/-/admin/users/:user-id/reject" :method :post) ()
+  (when (require-login)
+    (unless (getf *current-user* :is-admin)
+      (setf (hunchentoot:return-code*) 403)
+      (return-from admin-reject-user "Forbidden"))
+    (let ((uid (parse-integer user-id :junk-allowed t)))
+      (when uid (set-user-approval uid "rejected")))
     (hunchentoot:redirect "/-/admin")))
 
 

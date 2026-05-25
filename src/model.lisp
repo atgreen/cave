@@ -62,6 +62,33 @@
   (postmodern:execute
    (:delete-from 'cave-sessions :where (:= 'user-id user-id))))
 
+(defun count-users ()
+  "Total number of rows in cave-users. Used by the OIDC provisioner to
+   bootstrap the first user as approved when admin approval is required."
+  (or (postmodern:query
+       (:select (:count '*) :from 'cave-users)
+       :single)
+      0))
+
+(defun list-pending-users ()
+  "Self-registered users awaiting admin approval, oldest first."
+  (postmodern:query
+   (:order-by
+    (:select '* :from 'cave-users :where (:= 'approval-status "pending"))
+    'created-at)
+   :plists))
+
+(defun set-user-approval (user-id status)
+  "Set approval_status for a user to one of 'approved', 'pending', 'rejected'.
+   On rejection, also kill any sessions the user may have established."
+  (postmodern:execute
+   (:update 'cave-users
+    :set 'approval-status status 'updated-at (:now)
+    :where (:= 'id user-id)))
+  (when (string= status "rejected")
+    (postmodern:execute
+     (:delete-from 'cave-sessions :where (:= 'user-id user-id)))))
+
 ;;; ========================== SSH KEYS ==========================
 
 (defun add-ssh-key (user-id name public-key)

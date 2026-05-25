@@ -101,17 +101,21 @@
                 'updated-at (:now)
            :where (:= 'id (getf user :id))))
          (find-user-by-id (getf user :id))))
-      ;; New user — create
+      ;; New user — create. First user bootstraps as approved so the
+      ;; instance has an admin who can approve everyone else; all subsequent
+      ;; signups land as 'pending' and wait for an admin to act.
       (t
-       (postmodern:query
-        (:insert-into 'cave-users
-         :set 'username username
-              'oidc-sub sub
-              'email email
-              'display-name (or display-name username)
-              'is-admin is-admin
-         :returning '*)
-        :plist)))))
+       (let ((approval (if (zerop (count-users)) "approved" "pending")))
+         (postmodern:query
+          (:insert-into 'cave-users
+           :set 'username username
+                'oidc-sub sub
+                'email email
+                'display-name (or display-name username)
+                'is-admin is-admin
+                'approval-status approval
+           :returning '*)
+          :plist))))))
 
 ;;; --- Sudo mode (step-up authentication) ---
 

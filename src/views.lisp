@@ -165,6 +165,32 @@
       ((equal type "git.clone") (format nil "~A cloned" actor))
       (t (format nil "~A: ~A" actor type)))))
 
+(defun view-account-pending (&key username)
+  "Shown after OIDC callback for a self-registered user awaiting admin approval."
+  (page (:title "Account pending — Cave")
+    (:section :style "max-width:38rem;margin:var(--sp-6) auto;text-align:center"
+     (:h1 "Almost there")
+     (:p :style "color:var(--text-muted);font-size:1.05rem;line-height:1.5"
+      (format nil "Thanks for signing up~@[, ~A~]. Your account is waiting for an administrator to approve it."
+              username))
+     (:p :style "color:var(--text-muted);margin-top:var(--sp-3)"
+      "You'll be able to sign in once an admin gives the nod. Feel free to close this tab — there's nothing else to do here.")
+     (:p :style "margin-top:var(--sp-4)"
+      (:a.btn :href "/" "Back to the front page")))))
+
+(defun view-account-rejected (&key username)
+  "Shown after OIDC callback for a user whose application was rejected."
+  (page (:title "Account not approved — Cave")
+    (:section :style "max-width:38rem;margin:var(--sp-6) auto;text-align:center"
+     (:h1 "Account not approved")
+     (:p :style "color:var(--text-muted);font-size:1.05rem;line-height:1.5"
+      (format nil "~@[~A, t~]~:[T~;t~]his account isn't approved for access to this instance."
+              username username))
+     (:p :style "color:var(--text-muted);margin-top:var(--sp-3)"
+      "If you think that's a mistake, get in touch with the administrator directly.")
+     (:p :style "margin-top:var(--sp-4)"
+      (:a.btn :href "/" "Back to the front page")))))
+
 (defun view-public-landing (&key repos events)
   "Anonymous landing — list public repos so visitors can browse without an account."
   (page (:title "Cave")
@@ -2075,23 +2101,45 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== ADMIN & SETTINGS ==========================
 
-(defun view-admin (&key users runners registration-token message)
+(defun view-admin (&key users pending-users runners registration-token message)
   "Render the admin panel."
   (page (:title "Admin — Cave")
     (:h1 "Instance administration")
+    (when pending-users
+      (:section
+       (:h2 (format nil "Pending approval (~D)" (length pending-users)))
+       (:p :style "color:var(--text-muted);font-size:.9rem;margin-bottom:var(--sp-2)"
+        "Self-registered users waiting for you to let them in.")
+       (:table.data-table
+        (:thead (:tr (:th "Username") (:th "Email") (:th "Display name") (:th "Signed up") (:th "")))
+        (:tbody
+         (dolist (u pending-users)
+           (:tr
+            (:td (getf u :username))
+            (:td (getf u :email))
+            (:td (getf u :display-name))
+            (:td (princ-to-string (getf u :created-at)))
+            (:td
+             (:form :method "post" :style "display:inline;margin-right:.5rem"
+              :action (format nil "/-/admin/users/~A/approve" (getf u :id))
+              (:button.btn.btn-sm.btn-primary :type "submit" "Approve"))
+             (:form :method "post" :style "display:inline"
+              :action (format nil "/-/admin/users/~A/reject" (getf u :id))
+              (:button.btn.btn-sm :type "submit" "Reject")))))))))
     (:section
      (:h2 "Users")
      (when message
        (:div.alert :style "border:1px solid var(--primary);padding:.5rem .75rem;margin-bottom:1rem"
         message))
      (:table.data-table
-      (:thead (:tr (:th "Username") (:th "Admin") (:th "Active") (:th "Created")))
+      (:thead (:tr (:th "Username") (:th "Admin") (:th "Active") (:th "Approval") (:th "Created")))
       (:tbody
        (dolist (u users)
          (:tr
           (:td (getf u :username))
           (:td (if (getf u :is-admin) "yes" "no"))
           (:td (if (getf u :is-active) "yes" "no"))
+          (:td (or (getf u :approval-status) "approved"))
           (:td (princ-to-string (getf u :created-at)))))))
      (:p :style "margin-top:1rem"
       (:a.btn :href (let ((issuer (config-value :oidc-issuer "")))
