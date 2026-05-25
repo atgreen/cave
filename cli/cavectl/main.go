@@ -162,6 +162,8 @@ func cmdInit(args []string) error {
 	keycloakPort := findFreePort(9180, usedPorts)
 	usedPorts[keycloakPort] = true
 	mailpitPort := findFreePort(9025, usedPorts)
+	usedPorts[mailpitPort] = true
+	grpcPort := findFreePort(9443, usedPorts)
 
 	// Generate config with random passwords
 	cfg := config.Default()
@@ -171,6 +173,7 @@ func cmdInit(args []string) error {
 	cfg.Ports.SSH = sshPort
 	cfg.Ports.Keycloak = keycloakPort
 	cfg.Ports.Mailpit = mailpitPort
+	cfg.Ports.GRPC = grpcPort
 	cfg.Cave.BaseURL = fmt.Sprintf("http://localhost:%d", httpPort)
 	cfg.Cave.SecretKey = instance.RandomSecretKey()
 	cfg.Database.Password = instance.RandomPassword(24)

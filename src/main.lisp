@@ -490,15 +490,20 @@
    :handler #'handle-runner))
 
 (defun parse-grpc-url (url)
-  "Parse grpc://host:port into (host port)."
-  (let* ((stripped (if (search "grpc://" url)
-                       (subseq url 7)
-                       url))
-         (colon (position #\: stripped)))
-    (if colon
-        (list (subseq stripped 0 colon)
-              (parse-integer (subseq stripped (1+ colon)) :junk-allowed t))
-        (list stripped 9443))))
+  "Parse grpc://host:port or grpcs://host[:port] into (host port tls-p).
+   grpcs:// defaults to port 443; grpc:// defaults to port 9443."
+  (let* ((tls-p (uiop:string-prefix-p "grpcs://" url))
+         (stripped (cond
+                     ((uiop:string-prefix-p "grpcs://" url) (subseq url 8))
+                     ((uiop:string-prefix-p "grpc://" url) (subseq url 7))
+                     (t url)))
+         (colon (position #\: stripped))
+         (host (if colon (subseq stripped 0 colon) stripped))
+         (port (cond
+                 (colon (parse-integer (subseq stripped (1+ colon)) :junk-allowed t))
+                 (tls-p 443)
+                 (t 9443))))
+    (list host port tls-p)))
 
 (defun handle-runner (cmd)
   (let* ((url (clingon:getopt cmd :url))
@@ -510,10 +515,11 @@
          (ephemeral (clingon:getopt cmd :ephemeral))
          (parsed (parse-grpc-url url))
          (host (first parsed))
-         (port (second parsed)))
+         (port (second parsed))
+         (tls-p (third parsed)))
 
-    (format t "~&Cave Runner~%  Server: ~A:~A~%  Name: ~A~%  Labels: ~A~%  Ephemeral: ~A~%"
-            host port name runner-labels ephemeral)
+    (format t "~&Cave Runner~%  Server: ~A:~A~A~%  Name: ~A~%  Labels: ~A~%  Ephemeral: ~A~%"
+            host port (if tls-p " (TLS)" "") name runner-labels ephemeral)
 
     (labels
         ((make-auth-metadata (auth-token)
@@ -759,7 +765,7 @@
                      (format *error-output* "~&Task execution error: ~A~%" e))))))))
 
       ;; Register with the server (no timeout — builds can take minutes)
-      (let ((channel (ag-grpc:make-channel host port :timeout nil)))
+      (let ((channel (ag-grpc:make-channel host port :timeout nil :tls tls-p)))
         (handler-case
             (progn
               (format t "~&Registering...~%")
@@ -779,6 +785,7 @@
                     (handler-case
                         (let ((ch (ag-grpc:make-channel host port
                                     :timeout nil
+                                    :tls tls-p
                                     :keepalive (ag-grpc:make-keepalive-config
                                                 :ping-interval 15
                                                 :ping-timeout 5

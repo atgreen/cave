@@ -139,6 +139,22 @@
               (config-value :data-dir) e)
       (uiop:quit 1))))
 
+(defun runner-grpc-url ()
+  "URL to show users for `cave-server runner --url …`. Prefers a configured
+:runner-public-url (e.g. grpcs://runner.cave.example.com behind Caddy), then
+the base-url's host on the configured :grpc-port, falling back to localhost."
+  (or (config-value :runner-public-url)
+      (let* ((base (config-value :base-url))
+             (host (when (and base (search "://" base))
+                     (let* ((after (subseq base (+ (search "://" base) 3)))
+                            (slash (position #\/ after))
+                            (hostport (if slash (subseq after 0 slash) after))
+                            (colon (position #\: hostport)))
+                       (if colon (subseq hostport 0 colon) hostport)))))
+        (format nil "grpc://~A:~A"
+                (or host "localhost")
+                (config-value :grpc-port 9443)))))
+
 (defun cli-download-path ()
   "Return the local cave-CLI binary pathname when available for download."
   (or (probe-file (merge-pathnames "cave" (uiop:getcwd)))

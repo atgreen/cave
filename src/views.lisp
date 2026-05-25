@@ -1781,8 +1781,8 @@ function caveShowCommentForm(td) {
        (:strong "Registration token created.") " Use this to register a runner:" (:br)
        (:code :style "word-break:break-all" (getf registration-token :token))
        (:p :style "margin-top:.5rem;color:var(--text-muted);font-size:.85rem"
-        "Run: " (:code (format nil "cave-server runner --url grpc://localhost:~A --token ~A"
-                               (config-value :grpc-port 9443)
+        "Run: " (:code (format nil "cave-server runner --url ~A --token ~A"
+                               (runner-grpc-url)
                                (getf registration-token :token))))))
     (:form :method "post" :action token-action
      (:button.btn.btn-primary :type "submit" "Generate registration token"))))

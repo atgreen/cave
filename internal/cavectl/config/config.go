@@ -36,10 +36,16 @@ type PortsConfig struct {
 	SSH      int `yaml:"ssh"`
 	Keycloak int `yaml:"keycloak,omitempty"`
 	Mailpit  int `yaml:"mailpit,omitempty"`
+	GRPC     int `yaml:"grpc,omitempty"`
 	// SSHBind is the host IP that cave's SSH (git-shell) port is published
 	// on. Default "127.0.0.1" — fine for laptop. For a public VPS where
 	// users push from outside, set to "0.0.0.0" (and open the firewall).
 	SSHBind string `yaml:"ssh_bind,omitempty"`
+	// GRPCBind is the host IP that cave's gRPC runner service is published
+	// on. Default "127.0.0.1". Set to "0.0.0.0" if you want remote runners
+	// (e.g. on a laptop) to connect over the internet — note that runner
+	// auth is currently plaintext, so keep that to trusted networks.
+	GRPCBind string `yaml:"grpc_bind,omitempty"`
 }
 
 type SMTPConfig struct {
@@ -131,7 +137,9 @@ func Default() *Config {
 			SSH:      9222,
 			Keycloak: 9180,
 			Mailpit:  9025,
+			GRPC:     9443,
 			SSHBind:  "127.0.0.1",
+			GRPCBind: "127.0.0.1",
 		},
 		Database: DatabaseConfig{
 			Mode:     "local",
