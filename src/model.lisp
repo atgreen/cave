@@ -1628,6 +1628,45 @@
         limit)
        :plists)))
 
+(defun log-page-view (repo-id &key ip-hash user-id referer-host)
+  "Record a single page view. Cheap insert; aggregated at query time."
+  (postmodern:execute
+   (:insert-into 'cave-page-views
+    :set 'repo-id repo-id
+         'ip-hash (or ip-hash :null)
+         'user-id (or user-id :null)
+         'referer-host (or referer-host :null))))
+
+(defun repo-page-views-by-day (repo-id &key (days 14))
+  "Total views per day for a repo. Returns list of plists (:day :count)."
+  (postmodern:query
+   (format nil "SELECT to_char(date_trunc('day', viewed_at), 'YYYY-MM-DD') AS day, ~
+                       COUNT(*)::int AS count ~
+                FROM cave_page_views ~
+                WHERE repo_id = $1 AND viewed_at >= NOW() - INTERVAL '~D days' ~
+                GROUP BY day ORDER BY day ASC" days)
+   repo-id :plists))
+
+(defun repo-unique-visitors-by-day (repo-id &key (days 14))
+  "Unique visitors per day (distinct ip_hash, falling back to user_id when no hash)."
+  (postmodern:query
+   (format nil "SELECT to_char(date_trunc('day', viewed_at), 'YYYY-MM-DD') AS day, ~
+                       COUNT(DISTINCT COALESCE(ip_hash, user_id::text))::int AS count ~
+                FROM cave_page_views ~
+                WHERE repo_id = $1 AND viewed_at >= NOW() - INTERVAL '~D days' ~
+                GROUP BY day ORDER BY day ASC" days)
+   repo-id :plists))
+
+(defun repo-top-referrers (repo-id &key (days 14) (limit 10))
+  "Most-common referer hostnames driving traffic to a repo."
+  (postmodern:query
+   (format nil "SELECT referer_host AS host, COUNT(*)::int AS count ~
+                FROM cave_page_views ~
+                WHERE repo_id = $1 AND viewed_at >= NOW() - INTERVAL '~D days' ~
+                  AND referer_host IS NOT NULL AND referer_host <> '' ~
+                GROUP BY referer_host ORDER BY count DESC LIMIT $2" days)
+   repo-id limit :plists))
+
 (defun repo-event-counts-by-day (repo-id &key (days 14))
   "Return list of plists (:day yyyy-mm-dd :type event-type :count n) over
 the trailing DAYS days for a single repo. Used to render the Pulse chart."

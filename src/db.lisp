@@ -566,7 +566,19 @@ CREATE UNIQUE INDEX idx_repo_assignments_primary
   ON cave_repo_assignments (repo_id) WHERE role = 'primary';")
 
     (41 . "ALTER TABLE cave_repos ADD COLUMN last_pushed_at TIMESTAMPTZ;
-UPDATE cave_repos SET last_pushed_at = updated_at WHERE last_pushed_at IS NULL;"))
+UPDATE cave_repos SET last_pushed_at = updated_at WHERE last_pushed_at IS NULL;")
+
+    (42 . "-- Per-page-view rows for the repo Pulse tab. Aggregated at query time.
+CREATE TABLE cave_page_views (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  ip_hash VARCHAR(64),         -- sha256(ip + secret); never the raw IP
+  user_id BIGINT,              -- NULL for anon
+  referer_host VARCHAR(256),   -- hostname only, NULL when none
+  viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_page_views_repo_time ON cave_page_views (repo_id, viewed_at);
+CREATE INDEX idx_page_views_time ON cave_page_views (viewed_at);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

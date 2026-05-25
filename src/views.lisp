@@ -1370,36 +1370,102 @@ function caveShowCommentForm(td) {
                                 (third tspec)))
           (second tspec)))))))
 
-(defun view-pulse (&key owner-name repo days event-counts contributors)
-  "Repo Pulse — 14-day activity chart + top contributors."
+(defun render-daily-line-chart (days rows label color)
+  "Single-series line/bar chart. ROWS is a list of plists (:day yyyy-mm-dd :count n)."
+  (let* ((today (multiple-value-bind (s m h d mo y) (decode-universal-time (get-universal-time))
+                  (declare (ignore s m h))
+                  (encode-universal-time 0 0 12 d mo y)))
+         (day-secs 86400)
+         (day-labels
+          (loop for i from (1- days) downto 0
+                collect (multiple-value-bind (s m h d mo y)
+                            (decode-universal-time (- today (* i day-secs)))
+                          (declare (ignore s m h))
+                          (format nil "~4,'0D-~2,'0D-~2,'0D" y mo d))))
+         (bucket (let ((h (make-hash-table :test 'equal)))
+                   (dolist (r rows)
+                     (setf (gethash (getf r :day) h) (or (getf r :count) 0)))
+                   h))
+         (counts (mapcar (lambda (d) (or (gethash d bucket) 0)) day-labels))
+         (max-c (max 1 (reduce #'max counts)))
+         (col-width 28)
+         (chart-h 80))
+    (spinneret:with-html
+      (:div :style (format nil "display:flex;align-items:flex-end;gap:2px;height:~Apx;border-bottom:1px solid var(--border);padding:0 .5rem"
+                           chart-h)
+       (dolist (day day-labels)
+         (let* ((n (or (gethash day bucket) 0))
+                (height (if (zerop n) 0 (max 1 (round (* (/ n max-c) chart-h))))))
+           (:div :style (format nil "width:~Apx;background:~A;height:~Apx"
+                                col-width
+                                (if (plusp n) color "transparent")
+                                height)
+            :title (format nil "~A: ~A ~A" day n label)))))
+      (:div :style (format nil "display:flex;gap:2px;padding:.25rem .5rem;font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted)")
+       (loop for day in day-labels for i from 0
+             do (:div :style (format nil "width:~Apx;text-align:center" col-width)
+                 (when (zerop (mod i 2)) (subseq day 5))))))))
+
+(defun view-pulse (&key owner-name repo days event-counts contributors
+                        views unique-visitors referrers)
+  "Repo Pulse — activity, traffic, and referrers over the last N days."
   (let* ((repo-name (getf repo :name))
-         (total (reduce #'+ event-counts :key (lambda (r) (or (getf r :count) 0)) :initial-value 0))
+         (total-events (reduce #'+ event-counts :key (lambda (r) (or (getf r :count) 0)) :initial-value 0))
          (by-type (let ((h (make-hash-table :test 'equal)))
                     (dolist (row event-counts) (incf (gethash (getf row :type) h 0)
                                                      (or (getf row :count) 0)))
-                    h)))
+                    h))
+         (total-views (reduce #'+ views :key (lambda (r) (or (getf r :count) 0)) :initial-value 0))
+         (peak-unique (reduce #'max unique-visitors
+                              :key (lambda (r) (or (getf r :count) 0)) :initial-value 0)))
     (page (:title (format nil "Pulse — ~A/~A" owner-name repo-name))
       (render-repo-tabs owner-name repo-name :pulse :repo repo)
       (:section
        (:h2 (format nil "Activity in the last ~D days" days))
        (:p :style "color:var(--text-muted);font-size:.9rem;margin-bottom:var(--sp-3)"
         (format nil "~D event~:P total — ~D push~:P, ~D clone~:P, ~D issue~:P, ~D merge~:P."
-                total
+                total-events
                 (gethash "git.push" by-type 0)
                 (gethash "git.clone" by-type 0)
                 (gethash "issue.created" by-type 0)
                 (+ (gethash "pr.merged" by-type 0) (gethash "changeset.merged" by-type 0))))
        (render-pulse-chart days event-counts))
+
       (:section
-       (:h2 "Top contributors")
-       (if contributors
-           (:table.file-tree
-            (:tbody
-             (dolist (c contributors)
-               (:tr
-                (:td (:a :href (format nil "/~A" (getf c :username)) (getf c :username)))
-                (:td.file-size (format nil "~D event~:P" (getf c :count)))))))
-           (:p.empty "No activity yet."))))))
+       (:div :style "display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4)"
+        (:div
+         (:h3 :style "margin-bottom:var(--sp-1)" "Total views")
+         (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-2)"
+          (format nil "~D over ~D days" total-views days))
+         (render-daily-line-chart days views "view" "#7c9a5e"))
+        (:div
+         (:h3 :style "margin-bottom:var(--sp-1)" "Unique visitors")
+         (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-2)"
+          (format nil "peak ~D on a day" peak-unique))
+         (render-daily-line-chart days unique-visitors "visitor" "#d4a054"))))
+
+      (:section
+       (:div :style "display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4)"
+        (:div
+         (:h3 "Top contributors")
+         (if contributors
+             (:table.file-tree
+              (:tbody
+               (dolist (c contributors)
+                 (:tr
+                  (:td (:a :href (format nil "/~A" (getf c :username)) (getf c :username)))
+                  (:td.file-size (format nil "~D event~:P" (getf c :count)))))))
+             (:p.empty "No activity yet.")))
+        (:div
+         (:h3 "Referring sites")
+         (if referrers
+             (:table.file-tree
+              (:tbody
+               (dolist (r referrers)
+                 (:tr
+                  (:td (getf r :host))
+                  (:td.file-size (format nil "~D view~:P" (getf r :count)))))))
+             (:p.empty "No external referrers yet."))))))))
 
 (defun view-runs (&key owner-name repo runs workflow-runs)
   "Render the runs list — both automations and workflows."

@@ -63,7 +63,12 @@
                  (handler-case
                      (handle-workflow-logs-sse uri)
                    (error () nil))
-                 (return-from hunchentoot:acceptor-dispatch-request nil)))
+                 (return-from hunchentoot:acceptor-dispatch-request nil))
+               ;; Page-view tracking — log a row for GET hits on repo subpaths
+               ;; (skip POSTs, static, hooks, smart-HTTP). Cheap and fire-and-forget.
+               (when (eq method :get)
+                 (handler-case (maybe-log-page-view uri request)
+                   (error () nil))))
              (call-next-method)))
       (let* ((elapsed (/ (- (get-internal-real-time) start)
                          (float internal-time-units-per-second 1.0d0)))
@@ -190,6 +195,63 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Internal hooks (called by git hooks inside the container)
+
+(defun visitor-ip-hash (request)
+  "SHA-256 hash of remote IP salted with :secret-key. Raw IP never stored."
+  (let* ((fwd (hunchentoot:header-in :x-forwarded-for request))
+         (ip (or (and fwd (let ((c (position #\, fwd)))
+                            (string-trim " " (if c (subseq fwd 0 c) fwd))))
+                 (hunchentoot:remote-addr request)))
+         (salt (or (config-value :secret-key) "cave"))
+         (bytes (flexi-streams:string-to-octets
+                 (concatenate 'string ip ":" salt)
+                 :external-format :utf-8)))
+    (ironclad:byte-array-to-hex-string
+     (ironclad:digest-sequence :sha256 bytes))))
+
+(defun referer-host (request)
+  "Just the hostname from the Referer header — drop scheme/path/query.
+   NIL when no referer, or when the referer is this same host."
+  (let ((r (hunchentoot:header-in :referer request)))
+    (when (and r (plusp (length r)))
+      (let ((stripped (cond
+                        ((uiop:string-prefix-p "https://" r) (subseq r 8))
+                        ((uiop:string-prefix-p "http://" r)  (subseq r 7))
+                        (t r))))
+        (let* ((slash (position #\/ stripped))
+               (host (if slash (subseq stripped 0 slash) stripped))
+               (colon (position #\: host))
+               (host (if colon (subseq host 0 colon) host))
+               (self (and (config-value :base-url)
+                          (let ((bu (string-right-trim "/" (config-value :base-url))))
+                            (cond
+                              ((uiop:string-prefix-p "https://" bu) (subseq bu 8))
+                              ((uiop:string-prefix-p "http://" bu)  (subseq bu 7))
+                              (t bu))))))
+          (unless (and self (string-equal host self)) host))))))
+
+(defun maybe-log-page-view (uri request)
+  "Log a page view if URI looks like a repo subpath (owner/repo[/...])."
+  ;; Skip uninteresting / internal URIs early
+  (when (or (uiop:string-prefix-p "/-/" uri)
+            (uiop:string-prefix-p "/static/" uri)
+            (uiop:string-prefix-p "/u/" uri)
+            (uiop:string-prefix-p "/o/" uri)
+            (search ".git/" uri)
+            (search "/-/internal/" uri))
+    (return-from maybe-log-page-view nil))
+  (let* ((trimmed (string-trim "/" uri))
+         (parts (uiop:split-string trimmed :separator '(#\/))))
+    ;; Need at least owner/repo
+    (when (and (>= (length parts) 2)
+               (plusp (length (first parts)))
+               (plusp (length (second parts))))
+      (let ((repo (find-repo (first parts) (second parts))))
+        (when (and repo (repo-visible-p repo))
+          (log-page-view (getf repo :id)
+                         :ip-hash (visitor-ip-hash request)
+                         :user-id *current-user-id*
+                         :referer-host (referer-host request)))))))
 
 (defun zero-sha-p (sha)
   (and sha (every (lambda (c) (char= c #\0)) sha)))
@@ -1278,7 +1340,10 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
        (view-pulse :owner-name owner :repo repo
                    :days days
                    :event-counts (repo-event-counts-by-day repo-id :days days)
-                   :contributors (repo-top-contributors repo-id :days days :limit 5))))))
+                   :contributors (repo-top-contributors repo-id :days days :limit 5)
+                   :views (repo-page-views-by-day repo-id :days days)
+                   :unique-visitors (repo-unique-visitors-by-day repo-id :days days)
+                   :referrers (repo-top-referrers repo-id :days days :limit 10))))))
 
 (easy-routes:defroute workflow-run-detail-page
     ("/:owner/:repo-name/runs/w/:run-id" :method :get) ()
