@@ -1366,6 +1366,11 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (easy-routes:defroute pulse-page ("/:owner/:repo-name/pulse" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from pulse-page repo))
+    ;; Pulse is owner/member-only — it exposes referrers, visitor counts,
+    ;; and per-contributor activity that the public doesn't need to see.
+    (unless (and *current-user-id*
+                 (repo-member-role (getf repo :id) *current-user-id*))
+      (return-from pulse-page (not-found)))
     (let ((repo-id (getf repo :id))
           (days 14))
       (html-response

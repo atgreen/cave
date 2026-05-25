@@ -447,8 +447,10 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
       :href (format nil "/~A/~A/pulls" owner-name repo-name) "Pull requests")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :runs))
       :href (format nil "/~A/~A/runs" owner-name repo-name) "Runs")
-     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
-      :href (format nil "/~A/~A/pulse" owner-name repo-name) "Pulse")
+     (when (and repo *current-user-id*
+                (repo-member-role (getf repo :id) *current-user-id*))
+       (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
+        :href (format nil "/~A/~A/pulse" owner-name repo-name) "Pulse"))
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
       :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings"))))
 
