@@ -1781,7 +1781,7 @@ function caveShowCommentForm(td) {
        (:strong "Registration token created.") " Use this to register a runner:" (:br)
        (:code :style "word-break:break-all" (getf registration-token :token))
        (:p :style "margin-top:.5rem;color:var(--text-muted);font-size:.85rem"
-        "Run: " (:code (format nil "cave runner --url grpc://localhost:~A --token ~A"
+        "Run: " (:code (format nil "cave-server runner --url grpc://localhost:~A --token ~A"
                                (config-value :grpc-port 9443)
                                (getf registration-token :token))))))
     (:form :method "post" :action token-action
@@ -2126,7 +2126,7 @@ function caveShowCommentForm(td) {
         (:strong "Registration token created.") " Use this to register a runner:" (:br)
         (:code :style "word-break:break-all" (getf registration-token :token))
         (:p :style "margin-top:.5rem;color:var(--text-muted);font-size:.85rem"
-         "Run: " (:code (format nil "cave runner --url grpc://localhost:~A --token ~A"
+         "Run: " (:code (format nil "cave-server runner --url grpc://localhost:~A --token ~A"
                                 (config-value :grpc-port 9443)
                                 (getf registration-token :token))))))
      (:form :method "post" :action "/-/admin/runners/token"
@@ -2136,7 +2136,7 @@ function caveShowCommentForm(td) {
                            generated-private-key generated-key-name
                            runners registration-token)
   "Render user settings page."
-  (let ((cav-path (cav-download-path)))
+  (let ((cli-path (cli-download-path)))
     (page (:title "Settings — Cave")
       (:h1 "Settings")
 
@@ -2172,19 +2172,19 @@ function caveShowCommentForm(td) {
 
       (:section
        (:h2 "CLI")
-       (if cav-path
+       (if cli-path
            (progn
-             (:p "Download the Cave CLI for issue and API workflows.")
+             (:p "Download the cave CLI for issue and API workflows.")
              (:p
-              (:a.btn.btn-primary :href "/-/downloads/cav" "Download cav"))
+              (:a.btn.btn-primary :href "/-/downloads/cave" "Download cave"))
              (:p :style "color:var(--text-muted);font-size:.85rem"
-              "Save it somewhere on your PATH and run " (:code "chmod +x cav") "."))
-           (:p.empty "cav is not installed on this Cave host yet."))
+              "Save it somewhere on your PATH and run " (:code "chmod +x cave") "."))
+           (:p.empty "cave CLI is not installed on this host yet."))
        (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);font-size:.85rem;overflow-x:auto"
         "export CAVE_BASE_URL=" (config-value :base-url)
         "
 export CAVE_TOKEN=<your-api-token>
-./cav --repo OWNER/REPO issue list"))
+./cave --repo OWNER/REPO issue list"))
 
       (:section
        (:h2 "SSH keys")

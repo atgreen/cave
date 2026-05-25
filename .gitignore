@@ -2,7 +2,7 @@
 .#*
 ocicl
 /cave
-/cav
+/cave-server
 /cavectl
 /zoekt-git-index
 /_zoekt
@@ -16,3 +16,4 @@ package-lock.json
 test-results/
 playwright-report/
 screenshots/
+.gstack/

@@ -4,7 +4,7 @@ LISP := $(SBCL) --non-interactive --eval '(push (truename ".") asdf:*central-reg
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 QUADLET_DIR = $(HOME)/.config/containers/systemd
 
-.PHONY: help build cav load lint clean test test-smoke test-workflow \
+.PHONY: help build cave load lint clean test test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
        runner-image tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
@@ -13,10 +13,10 @@ QUADLET_DIR = $(HOME)/.config/containers/systemd
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-build: cave cav cavectl zoekt-git-index ## Build the Cave server and Go CLI binaries
+build: cave-server cave cavectl zoekt-git-index ## Build the server, CLI, and cavectl
 
-cav: ## Build the Go CLI client
-	go build -o cav ./cli/cav
+cave: ## Build the Go CLI client (talks to a cave-server)
+	go build -o cave ./cli/cave
 
 cavectl: ## Build the cavectl deployment tool
 	go build -o cavectl ./cli/cavectl
@@ -25,9 +25,9 @@ zoekt-git-index: ## Build zoekt-git-index from sourcegraph/zoekt source
 	@if [ ! -d _zoekt ]; then git clone --depth 1 https://github.com/sourcegraph/zoekt.git _zoekt; fi
 	cd _zoekt && CGO_ENABLED=0 go build -o ../zoekt-git-index ./cmd/zoekt-git-index
 
-cave: src/*.lisp *.asd
+cave-server: src/*.lisp *.asd
 	$(LISP) --eval '(asdf:make :cave)'
-	chmod +x cave
+	chmod +x cave-server
 
 load: ## Load-test without building image
 	$(LISP) --eval '(asdf:load-system :cave)' --eval '(format t "~%OK~%")'
@@ -36,7 +36,7 @@ lint: ## Run ocicl lint on source
 	ocicl lint src/*.lisp
 
 clean: ## Remove build artifacts
-	rm -rf *~ cave cav zoekt-git-index _zoekt test-results playwright-report
+	rm -rf *~ cave-server cave zoekt-git-index _zoekt test-results playwright-report
 
 test: ## Run all Playwright tests (requires running cave)
 	npx playwright test
@@ -49,7 +49,7 @@ test-workflow: ## Run org/repo workflow tests only
 
 # --- Podman (local dev) ---
 
-podman-up: cave cav ## Build container and start cave + postgres + keycloak via podman
+podman-up: cave-server cave ## Build container and start cave-server + postgres + keycloak via podman
 	podman network exists cave-net 2>/dev/null || podman network create cave-net
 	podman container exists cave-pg 2>/dev/null || \
 		podman run -d --name cave-pg --network cave-net \

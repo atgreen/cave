@@ -671,4 +671,4 @@ CREATE INDEX idx_commit_sigs_repo ON cave_commit_signatures (repo_id);"))
         (expected (expected-schema-version)))
     (unless (= current expected)
       (error "Database schema version mismatch: have ~A, need ~A. ~
-              Run 'cave migrate' to update." current expected))))
+              Run 'cave-server migrate' to update." current expected))))

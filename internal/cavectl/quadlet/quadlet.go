@@ -283,7 +283,7 @@ Requires=%s.service
 ContainerName=%s
 Image=%s
 Network=%s.network
-Exec=cave runner --url %s --name %s
+Exec=cave-server runner --url %s --name %s
 Label=cave.managed-by=cavectl
 Label=cave.instance=%s
 

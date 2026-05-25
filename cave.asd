@@ -62,7 +62,7 @@
                 (:file "src/server")
                 (:file "src/main"))
   :build-operation "program-op"
-  :build-pathname "cave"
+  :build-pathname "cave-server"
   :entry-point "cave:main")
 
 #+sb-core-compression

@@ -1,7 +1,7 @@
 #!/bin/bash
 # cave-shell.sh — Git SSH transport wrapper
 # Called by sshd via authorized_keys command= prefix.
-# Authenticates via cave git-shell, then runs git through Chamber lock coordination.
+# Authenticates via cave-server git-shell, then runs git through Chamber lock coordination.
 #
 # Usage in authorized_keys:
 #   command="/usr/bin/cave-shell.sh /etc/cave.conf 7 8080",...  ssh-ed25519 AAAA...
@@ -29,8 +29,8 @@ case "$GIT_CMD" in
         ;;
 esac
 
-# Authenticate: cave git-shell checks key->user->repo permissions.
-OUTPUT=$(cave git-shell --config "$CONFIG" --key-id "$KEY_ID" 2>/dev/null)
+# Authenticate: cave-server git-shell checks key->user->repo permissions.
+OUTPUT=$(cave-server git-shell --config "$CONFIG" --key-id "$KEY_ID" 2>/dev/null)
 EXIT=$?
 
 if [ $EXIT -ne 0 ]; then
@@ -38,7 +38,7 @@ if [ $EXIT -ne 0 ]; then
     exit 1
 fi
 
-# Parse two lines from cave git-shell: <user-id> then <disk-path>.
+# Parse two lines from cave-server git-shell: <user-id> then <disk-path>.
 USER_ID=$(echo "$OUTPUT" | sed -n '1p')
 DISK_PATH=$(echo "$OUTPUT" | sed -n '2p')
 

@@ -17,13 +17,13 @@ RUN dnf install -y openssh-server git openssl && dnf clean all && \
     chmod 700 /home/cave/.ssh && \
     chown cave:cave /home/cave/.ssh
 
+COPY cave-server /usr/bin/cave-server
 COPY cave /usr/bin/cave
-COPY cav /usr/bin/cav
 COPY zoekt-git-index /usr/local/bin/zoekt-git-index
 COPY cave-shell.sh /usr/bin/cave-shell.sh
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/bin/cave /usr/bin/cav /usr/bin/cave-shell.sh
+RUN chmod +x /entrypoint.sh /usr/bin/cave-server /usr/bin/cave /usr/bin/cave-shell.sh
 
 EXPOSE 8080 22
 VOLUME /var/lib/cave

@@ -784,13 +784,13 @@ the results. Skips deletes and zero-sha boundaries."
           (when runner (delete-runner rid)))))
     (hunchentoot:redirect "/-/settings")))
 
-(easy-routes:defroute download-cav ("/-/downloads/cav" :method :get) ()
-  (let ((path (cav-download-path)))
+(easy-routes:defroute download-cli ("/-/downloads/cave" :method :get) ()
+  (let ((path (cli-download-path)))
     (unless path
       (setf (hunchentoot:return-code*) 404)
-      (return-from download-cav "cav is not installed on this Cave host"))
+      (return-from download-cli "cave CLI is not installed on this host"))
     (setf (hunchentoot:header-out "Content-Disposition")
-          "attachment; filename=\"cav\"")
+          "attachment; filename=\"cave\"")
     (hunchentoot:handle-static-file path "application/octet-stream")))
 
 ;; ----------------------------------------------------------------------------
@@ -1045,16 +1045,16 @@ the results. Skips deletes and zero-sha boundaries."
             ;; Install hooks
             (let ((pre-hook (merge-pathnames "hooks/pre-receive" dest-path)))
               (with-open-file (out pre-hook :direction :output :if-exists :supersede)
-                (format out "#!/bin/bash~%exec cave run-checks --config /etc/cave.conf --repo ~A/~A~%"
+                (format out "#!/bin/bash~%exec cave-server run-checks --config /etc/cave.conf --repo ~A/~A~%"
                         username repo-name))
               (uiop:run-program (list "chmod" "+x" (namestring pre-hook))
                                  :ignore-error-status t))
             (let ((post-hook (merge-pathnames "hooks/post-receive" dest-path)))
               (with-open-file (out post-hook :direction :output :if-exists :supersede)
-                (format out "#!/bin/bash~%cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
+                (format out "#!/bin/bash~%cave-server sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
                         username repo-name)
                 (when (string= repo-name "cave-themes")
-                  (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
+                  (format out "cave-server sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
                           username)))
               (uiop:run-program (list "chmod" "+x" (namestring post-hook))
                                  :ignore-error-status t))
@@ -2456,7 +2456,7 @@ the results. Skips deletes and zero-sha boundaries."
   (let ((hook-path (merge-pathnames "hooks/pre-receive" path)))
     (ensure-directories-exist hook-path)
     (with-open-file (out hook-path :direction :output :if-exists :supersede)
-      (format out "#!/bin/bash~%exec cave run-checks --config /etc/cave.conf --repo ~A/~A~%"
+      (format out "#!/bin/bash~%exec cave-server run-checks --config /etc/cave.conf --repo ~A/~A~%"
               owner repo-name))
     (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                        :ignore-error-status t))
@@ -2465,10 +2465,10 @@ the results. Skips deletes and zero-sha boundaries."
     (with-open-file (out hook-path :direction :output :if-exists :supersede)
       (format out "#!/bin/bash~%# Pipe ref updates to the running Cave server~%tee >(curl -sf -X POST --data-binary @- \"http://localhost:~A/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\") >/dev/null~%"
               (config-value :http-port 8080) owner repo-name)
-      (format out "cave sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
+      (format out "cave-server sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
               owner repo-name)
       (when (string= repo-name "cave-themes")
-        (format out "cave sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
+        (format out "cave-server sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
                 owner)))
     (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                        :ignore-error-status t))

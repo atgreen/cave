@@ -27,7 +27,7 @@ COPY cli/ cli/
 COPY ocicl/ ocicl/
 
 # Build — `make` alone runs the `help` target; we want the real binaries.
-RUN make cave cav
+RUN make cave-server cave
 
 ## --- Runtime image ---
 
@@ -45,12 +45,12 @@ RUN dnf install -y openssh-server git pgbouncer && dnf clean all && \
     chmod 700 /home/cave/.ssh && \
     chown cave:cave /home/cave/.ssh
 
+COPY --from=builder /build/cave-server /usr/bin/cave-server
 COPY --from=builder /build/cave /usr/bin/cave
-COPY --from=builder /build/cav /usr/bin/cav
 COPY --from=zoekt-builder /usr/local/bin/zoekt-git-index /usr/local/bin/zoekt-git-index
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/bin/cave /usr/bin/cav
+RUN chmod +x /entrypoint.sh /usr/bin/cave-server /usr/bin/cave
 
 EXPOSE 8080 22
 VOLUME /var/lib/cave

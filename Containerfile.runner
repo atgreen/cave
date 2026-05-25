@@ -20,13 +20,13 @@ RUN mkdir -p /home/runner/.config/containers && \
     echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/runner/.config/containers/storage.conf && \
     chown -R runner:runner /home/runner
 
-# Copy the cave binary
-COPY cave /usr/bin/cave
-RUN chmod +x /usr/bin/cave
+# Copy the cave-server binary (the runner is a subcommand of cave-server)
+COPY cave-server /usr/bin/cave-server
+RUN chmod +x /usr/bin/cave-server
 
 # Create workspace directory
 RUN mkdir -p /workspace && chown runner:runner /workspace
 WORKDIR /workspace
 
 USER runner
-ENTRYPOINT ["cave", "runner"]
+ENTRYPOINT ["cave-server", "runner"]

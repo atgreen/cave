@@ -139,8 +139,8 @@
               (config-value :data-dir) e)
       (uiop:quit 1))))
 
-(defun cav-download-path ()
-  "Return the local cav binary pathname when available for download."
-  (or (probe-file (merge-pathnames "cav" (uiop:getcwd)))
-      (probe-file #P"/usr/local/bin/cav")
-      (probe-file #P"/usr/bin/cav")))
+(defun cli-download-path ()
+  "Return the local cave-CLI binary pathname when available for download."
+  (or (probe-file (merge-pathnames "cave" (uiop:getcwd)))
+      (probe-file #P"/usr/local/bin/cave")
+      (probe-file #P"/usr/bin/cave")))

@@ -703,12 +703,12 @@ launch due to the non-standard port.
 **Setup and operations**
 
 - As an operator, I want minimal setup.
-  - Acceptance: `cave init --admin-user <name> --admin-password <pass>
+  - Acceptance: `cave-server init --admin-user <name> --admin-password <pass>
     --admin-ssh-key <path> --config cave.conf` bootstraps non-interactively.
-    Separate command from `cave serve`. `cave init` is idempotent for schema
+    Separate command from `cave-server serve`. `cave-server init` is idempotent for schema
     creation (safe to re-run). Admin credential update requires explicit
     `cave admin reset-password` (not part of init).
-  - `cave serve --config cave.conf` starts the forge.
+  - `cave-server serve --config cave.conf` starts the forge.
   - Host dependencies (documented, not bundled): Git 2.30+, podman 4.0+,
     PostgreSQL 14+. Cave does not manage their lifecycle.
 
@@ -721,7 +721,7 @@ launch due to the non-standard port.
     server to be stopped. Secrets in the dump are encrypted; restore fails
     with a clear error if `cave.conf` has a different encryption key.
     Deploy state (running containers) is NOT backed up.
-  - **Upgrade path:** `cave migrate --config cave.conf` runs pending DB
+  - **Upgrade path:** `cave-server migrate --config cave.conf` runs pending DB
     migrations. Server refuses to start if schema version doesn't match
     binary version (clear error message with instruction to run migrate).
 

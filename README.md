@@ -33,7 +33,7 @@ Cave is built for small teams who want to own their infrastructure without the b
 ## Quick start
 
 ```bash
-# Build cave + cavectl + cav
+# Build cave-server + cave (CLI) + cavectl
 make build
 
 # Spin up the full stack locally (postgres, keycloak with cave theme + realm,
@@ -223,16 +223,16 @@ Two configs live side-by-side:
 ## CLI
 
 ```
-cave serve          Start the web server
-cave init           Initialize the database
-cave migrate        Run pending migrations
-cave runner         Start an automation runner agent
-cave run-checks     Run pre-receive checks (called by git hook)
-cave sync-mirrors   Sync repo mirrors (push mirrors after each push)
-cave sync-themes    Sync user themes from a cave-themes repo
-cave update-keys    Regenerate SSH authorized_keys
-cave git-shell      SSH git transport handler (called by sshd)
-cave post-receive   Handle post-receive events (legacy; HTTP endpoint is the
+cave-server serve          Start the web server
+cave-server init           Initialize the database
+cave-server migrate        Run pending migrations
+cave-server runner         Start an automation runner agent
+cave-server run-checks     Run pre-receive checks (called by git hook)
+cave-server sync-mirrors   Sync repo mirrors (push mirrors after each push)
+cave-server sync-themes    Sync user themes from a cave-themes repo
+cave-server update-keys    Regenerate SSH authorized_keys
+cave-server git-shell      SSH git transport handler (called by sshd)
+cave-server post-receive   Handle post-receive events (legacy; HTTP endpoint is the
                     live path)
 
 cavectl init                Generate cave.yaml and bring up the full stack
@@ -268,7 +268,7 @@ POST   /api/v1/repos/:owner/:repo/statuses/:sha
 
 ```bash
 # Generate a registration token (Admin → Runners, or org/repo settings)
-cave runner --url grpc://cave-host:9443 --token <token> --name my-runner
+cave-server runner --url grpc://cave-host:9443 --token <token> --name my-runner
 
 # Or use the runner container image (Podman-in-Podman)
 make runner-image
@@ -303,7 +303,7 @@ themes repo.
 ## Makefile targets
 
 ```
-make build         Build cave + cav + cavectl + zoekt-git-index
+make build         Build cave-server + cave + cavectl + zoekt-git-index
 make load          Load-test the Lisp tree without producing an image
 make lint          Run ocicl lint on the source
 make podman-up     Bring up the laptop dev stack via plain podman commands

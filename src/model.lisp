@@ -694,7 +694,7 @@
     :where (:and (:= 'ephemeral t)
                  (:or (:is-null 'last-seen-at)
                       (:<= 'last-seen-at
-                           (:- (:now) (:raw "'2 minutes'"))))))))
+                           (:- (:now) (:raw "INTERVAL '2 minutes'"))))))))
 
 (defun cleanup-offline-runners ()
   "Mark runners as offline if no heartbeat in 60 seconds. Delete stale ephemeral ones."
@@ -703,7 +703,7 @@
     :set 'status "offline"
     :where (:and (:= 'status "online")
                  (:<= 'last-seen-at
-                      (:- (:now) (:raw "'60 seconds'"))))))
+                      (:- (:now) (:raw "INTERVAL '60 seconds'"))))))
   (cleanup-stale-ephemeral-runners)
   ;; Delete offline runners (they re-register on reconnect)
   (postmodern:execute

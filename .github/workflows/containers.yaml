@@ -44,16 +44,16 @@ jobs:
         if: matrix.name == 'cave' || matrix.name == 'cave-runner'
         run: ocicl install
 
-      # Containerfile.local (used by the cave image) needs cave, cav, and
-      # zoekt-git-index pre-built and present in the build context.
-      # Containerfile.runner only needs cave.
+      # Containerfile.local (used by the cave image) needs cave-server, cave
+      # (the CLI), and zoekt-git-index pre-built and present in the build
+      # context. Containerfile.runner only needs cave-server.
       - name: Pre-build cave binaries
         if: matrix.name == 'cave'
-        run: make cave cav zoekt-git-index
+        run: make cave-server cave zoekt-git-index
 
-      - name: Pre-build cave binary
+      - name: Pre-build cave-server binary
         if: matrix.name == 'cave-runner'
-        run: make cave
+        run: make cave-server
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

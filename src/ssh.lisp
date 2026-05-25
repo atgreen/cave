@@ -4,8 +4,8 @@
 ;;;
 ;;; Architecture:
 ;;;   1. authorized_keys has: command="cave-shell.sh /etc/cave.conf 7" ...
-;;;   2. cave-shell.sh reads SSH_ORIGINAL_COMMAND, calls cave git-shell for auth
-;;;   3. cave git-shell checks key->user->permissions, prints two lines to stdout:
+;;;   2. cave-shell.sh reads SSH_ORIGINAL_COMMAND, calls cave-server git-shell for auth
+;;;   3. cave-server git-shell checks key->user->permissions, prints two lines to stdout:
 ;;;      user-id, then repo disk path
 ;;;   4. cave-shell.sh exports CAVE_PUSH_USER_ID and execs git-upload-pack or
 ;;;      git-receive-pack — the post-receive hook then forwards the actor id to

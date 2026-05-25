@@ -31,7 +31,7 @@ Implement a new module src/search-zoekt.lisp:
 
 ## 3. Data Flow
 1.  **Push:** Developer pushes to org/repo.
-2.  **Hook:** cave post-receive runs, updating the DB and potentially touching a "last-updated" file that Zoekt watches.
+2.  **Hook:** cave-server post-receive runs, updating the DB and potentially touching a "last-updated" file that Zoekt watches.
 3.  **Index:** zoekt-indexserver detects the change and updates the trigram index for org/repo.
 4.  **Search:** User types a query in Cave. Cave sends JSON request to zoekt-webserver.
 5.  **Render:** Cave receives JSON results and renders them using Spinneret.

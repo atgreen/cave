@@ -5,7 +5,7 @@ A self-hosted code forge written in Common Lisp (SBCL).
 ## Build
 
 ```bash
-make          # builds cave + cav + cavectl + zoekt-git-index using /usr/bin/sbcl
+make          # builds cave-server + cave + cavectl + zoekt-git-index using /usr/bin/sbcl
 make load     # load-test the Lisp tree without producing an image
 make lint     # run ocicl lint on source
 ```
@@ -63,7 +63,7 @@ username/password flag.
 - **src/server.lisp** — Hunchentoot routes and request handling
 - **src/main.lisp** — CLI subcommands via clingon: init, serve, migrate,
   git-shell, update-keys, post-receive, runner, sync-mirrors, sync-themes
-- **cave-shell.sh** — Bash wrapper called by sshd, parses `cave git-shell` output
+- **cave-shell.sh** — Bash wrapper called by sshd, parses `cave-server git-shell` output
   (user-id + disk-path), exports `CAVE_PUSH_USER_ID`, then execs git
 - **cli/cavectl/** — Go source for the declarative deploy tool
 - **internal/cavectl/** — Go libraries: config, plan, apply, runtime, doctor,
@@ -90,8 +90,8 @@ username/password flag.
 - Config is an s-expression plist in cave.conf. Secrets (cave.conf, data/,
   `/*.yaml` for cavectl instance configs) are gitignored.
 - The `when-let` macro is defined in `auth.lisp`.
-- SSH transport: sshd calls `cave-shell.sh` which calls `cave git-shell` for
-  auth. `cave git-shell` prints two lines on stdout: the user-id, then the
+- SSH transport: sshd calls `cave-shell.sh` which calls `cave-server git-shell` for
+  auth. `cave-server git-shell` prints two lines on stdout: the user-id, then the
   repo disk path. `cave-shell.sh` exports `CAVE_PUSH_USER_ID` so the
   post-receive hook can forward the actor to the internal HTTP endpoint
   (which logs the rich git.push event and verifies signatures).

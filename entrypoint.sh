@@ -47,10 +47,10 @@ for i in $(seq 1 30); do
 done
 
 # Run migrations
-cave migrate --config "$CONFIG"
+cave-server migrate --config "$CONFIG"
 
 # Generate initial authorized_keys
-cave update-keys \
+cave-server update-keys \
   --config "$CONFIG" \
   --output /home/cave/.ssh/authorized_keys \
   --cave-shell /usr/bin/cave-shell.sh || true
@@ -81,4 +81,4 @@ fi
 
 # Start Cave (foreground) — run from /opt/cave so static/ is found
 cd /opt/cave
-exec cave serve --config "$CONFIG"
+exec cave-server serve --config "$CONFIG"

@@ -73,7 +73,7 @@ fi
 
 # 5. Regenerate authorized_keys from DB
 echo "Regenerating authorized_keys..."
-podman exec "${PREFIX}" cave update-keys \
+podman exec "${PREFIX}" cave-server update-keys \
   --config /etc/cave.conf \
   --output /home/cave/.ssh/authorized_keys \
   --cave-shell /usr/bin/cave-shell.sh 2>/dev/null || true

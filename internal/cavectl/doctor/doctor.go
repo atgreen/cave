@@ -228,7 +228,7 @@ func checkSchemaVersion(cfg *config.Config, rt runtime.Runtime) Result {
 	v := strings.TrimSpace(out)
 	if v == "0" || v == "" {
 		return Result{Name: "cave schema", Status: Fail, Detail: "no migrations applied",
-			Fix: "podman exec " + cfg.ContainerName("cave") + " cave migrate --config /etc/cave.conf"}
+			Fix: "podman exec " + cfg.ContainerName("cave") + " cave-server migrate --config /etc/cave.conf"}
 	}
 	return Result{Name: "cave schema", Status: OK, Detail: "version " + v}
 }

@@ -33,13 +33,13 @@ jobs:
       - name: Build cave binary
         run: |
           [ -f /workspace/.release-tag ] || { echo "Not a release build; skipping."; exit 0; }
-          make cave cav
+          make cave-server cave
 
       - name: Verify the binary runs
         run: |
           [ -f /workspace/.release-tag ] || { echo "Not a release build; skipping."; exit 0; }
-          ./cave --version || true
-          ls -lah cave cav
+          ./cave-server --version || true
+          ls -lah cave-server cave
 
       - name: Generate SBOMs
         run: |
@@ -55,8 +55,8 @@ jobs:
           echo "===================================================="
           echo "Release build complete for $TAG"
           echo "Artifacts produced in /workspace:"
-          echo "  cave           — server binary"
-          echo "  cav            — CLI client"
+          echo "  cave-server    — server binary"
+          echo "  cave           — CLI client"
           echo "  cave-sbom.json — CycloneDX SBOM"
           echo "  cave-sbom.spdx.json — SPDX SBOM"
           echo

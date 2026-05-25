@@ -56,10 +56,10 @@ type client struct {
 
 func configPath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "cav", "config.json")
+		return filepath.Join(xdg, "cave", "config.json")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "cav", "config.json")
+	return filepath.Join(home, ".config", "cave", "config.json")
 }
 
 func loadConfig() config {
@@ -86,7 +86,7 @@ func saveConfig(cfg config) error {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "cav: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cave: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -110,7 +110,7 @@ func run(args []string) error {
 
 	cfg := loadConfig()
 
-	global := flag.NewFlagSet("cav", flag.ContinueOnError)
+	global := flag.NewFlagSet("cave", flag.ContinueOnError)
 	global.SetOutput(io.Discard)
 	baseURL := global.String("base-url", envOrDefault("CAVE_BASE_URL", firstNonEmpty(cfg.BaseURL, defaultBaseURL)), "Cave base URL")
 	token := global.String("token", firstNonEmpty(os.Getenv("CAVE_TOKEN"), cfg.Token), "Cave API token")
@@ -280,7 +280,7 @@ func runIssueGet(c *client, ownerName, repoName string, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: cav issue get [flags] <number>")
+		return errors.New("usage: cave issue get [flags] <number>")
 	}
 
 	issue, err := c.getIssue(ownerName, repoName, fs.Arg(0))
@@ -336,7 +336,7 @@ func runIssueCreate(c *client, ownerName, repoName string, args []string) error 
 
 func runIssueClose(c *client, ownerName, repoName string, args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: cav issue close <number>")
+		return errors.New("usage: cave issue close <number>")
 	}
 	issue, err := c.updateIssue(ownerName, repoName, args[0], issueUpdateRequest{Status: "closed"})
 	if err != nil {
@@ -348,7 +348,7 @@ func runIssueClose(c *client, ownerName, repoName string, args []string) error {
 
 func runIssueReopen(c *client, ownerName, repoName string, args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: cav issue reopen <number>")
+		return errors.New("usage: cave issue reopen <number>")
 	}
 	issue, err := c.updateIssue(ownerName, repoName, args[0], issueUpdateRequest{Status: "open"})
 	if err != nil {
@@ -494,7 +494,7 @@ func writeJSON(w io.Writer, value any) error {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  cav [global flags] <command> [flags]")
+	fmt.Fprintln(w, "  cave [global flags] <command> [flags]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Global flags:")
 	fmt.Fprintln(w, "  --base-url URL     Cave base URL (default: http://localhost:8080)")

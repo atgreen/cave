@@ -26,7 +26,7 @@
              (make-config-option))
    :handler #'handle-init
    :examples '(("Initialize Cave:" .
-                "cave init --config cave.conf"))))
+                "cave-server init --config cave.conf"))))
 
 (defun handle-init (cmd)
   (let ((config-path (clingon:getopt cmd :config)))
@@ -83,8 +83,8 @@
               :short-name #\s :long-name "slynk-port" :key :slynk-port
               :description "Slynk REPL port"))
    :handler #'handle-serve
-   :examples '(("Start Cave on port 8080:" . "cave serve")
-               ("Start with custom port:" . "cave serve -p 9090"))))
+   :examples '(("Start Cave on port 8080:" . "cave-server serve")
+               ("Start with custom port:" . "cave-server serve -p 9090"))))
 
 (defun handle-serve (cmd)
   (let ((config-path (clingon:getopt cmd :config))
@@ -119,7 +119,7 @@
         (uiop:quit 1)))
     (handler-case (check-schema-version)
       (error (e)
-        (format *error-output* "~&~A~%Run: cave migrate --config ~A~%"
+        (format *error-output* "~&~A~%Run: cave-server migrate --config ~A~%"
                 e config-path)
         (uiop:quit 1)))
 
@@ -403,7 +403,7 @@
               :initial-value "/usr/bin/cave-shell.sh"))
    :handler #'handle-update-keys
    :examples '(("Update authorized_keys:" .
-                "cave update-keys --config /etc/cave.conf"))))
+                "cave-server update-keys --config /etc/cave.conf"))))
 
 ;;; --- RUN-CHECKS subcommand ---
 
@@ -1042,9 +1042,9 @@
 (defun make-app ()
   "Create the top-level CLI command with subcommands."
   (clingon:make-command
-   :name "cave"
+   :name "cave-server"
    :version +version+
-   :description "Cave — A self-hosted code forge"
+   :description "Cave server — self-hosted code forge"
    :authors '("Cave contributors")
    :license "MIT"
    :sub-commands (list (make-init-command)
