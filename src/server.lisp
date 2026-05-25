@@ -897,21 +897,32 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
     (let* ((empty (chamber-is-empty owner repo-name))
            (default-branch (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
            (readme-entry (unless empty (chamber-find-readme owner repo-name :ref default-branch)))
-           (readme-content (when readme-entry
-                             (chamber-get-blob owner repo-name default-branch
-                                               (getf readme-entry :name))))
-           (readme-html (when (and readme-content
-                                   (search ".md" (string-downcase
-                                                   (getf readme-entry :name))))
-                          (render-markdown readme-content
-                                          :raw-base-url (format nil "~A/~A/~A/raw/~A?path="
-                                                                (config-value :base-url "http://localhost:8080")
-                                                                owner repo-name
-                                                                (or default-branch "HEAD")))))
-           (readme-html (or readme-html
-                            (when readme-content
-                              (format nil "<pre>~A</pre>"
-                                      (spinneret::escape-string readme-content))))))
+           (raw-base-url (when readme-entry
+                           (format nil "~A/~A/~A/raw/~A?path="
+                                   (config-value :base-url "http://localhost:8080")
+                                   owner repo-name
+                                   (or default-branch "HEAD"))))
+           ;; Cheap pre-check: lookup the README's blob sha via get-blob-info,
+           ;; then consult the rendered-HTML cache before we ever read or render.
+           (readme-info (when readme-entry
+                          (chamber-get-blob-info owner repo-name default-branch
+                                                 (getf readme-entry :name))))
+           (cache-key (when readme-info
+                        (cons (getf readme-info :hash) raw-base-url)))
+           (cached-html (when cache-key (readme-cache-get cache-key)))
+           (readme-html
+            (or cached-html
+                (let ((content (when readme-entry
+                                 (chamber-get-blob owner repo-name default-branch
+                                                   (getf readme-entry :name)))))
+                  (when content
+                    (let ((html (if (search ".md" (string-downcase
+                                                   (getf readme-entry :name)))
+                                    (render-markdown content :raw-base-url raw-base-url)
+                                    (format nil "<pre>~A</pre>"
+                                            (spinneret::escape-string content)))))
+                      (when cache-key (readme-cache-put cache-key html))
+                      html))))))
       (html-response
        (view-repo :owner-name owner :repo repo :empty empty
                   :default-branch default-branch
@@ -1044,6 +1055,27 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (defvar *blob-cache-lock* (bt2:make-lock :name "blob-cache"))
 (defvar *blob-cache-max-bytes* (* 64 1024 1024) "Max cache size in bytes (64MB).")
 (defvar *blob-cache-bytes* 0 "Current cache size in bytes.")
+
+;; Rendered-README cache — content-addressable by (sha + raw-base-url). The base-url
+;; participates because render-markdown rewrites relative <img src> using it, so the
+;; same README on two different deploys must render to two different strings.
+(defvar *readme-cache* (make-hash-table :test 'equal))
+(defvar *readme-cache-lock* (bt2:make-lock :name "readme-cache"))
+(defparameter *readme-cache-max* 256
+  "Max entries in *readme-cache*. Beyond this, we evict at random.")
+
+(defun readme-cache-get (key)
+  (bt2:with-lock-held (*readme-cache-lock*)
+    (gethash key *readme-cache*)))
+
+(defun readme-cache-put (key html)
+  (bt2:with-lock-held (*readme-cache-lock*)
+    (when (>= (hash-table-count *readme-cache*) *readme-cache-max*)
+      ;; Random eviction — no LRU bookkeeping. Cheap enough at this size.
+      (let ((victim (loop for k being the hash-keys of *readme-cache* return k)))
+        (when victim (remhash victim *readme-cache*))))
+    (setf (gethash key *readme-cache*) html))
+  html)
 
 (defun blob-cache-get (sha)
   "Get cached blob by SHA. Returns content or NIL."
