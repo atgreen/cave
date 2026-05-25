@@ -143,10 +143,16 @@
       (t
        (format nil "~A pushed to ~A" actor ref)))))
 
+(defun ->actor (value)
+  "Coerce a postmodern :null / NIL / string actor field into a display name."
+  (cond
+    ((or (null value) (eq value :null)) "someone")
+    (t value)))
+
 (defun format-event (event)
   "Format an event as a short English sentence."
   (let ((type (getf event :event-type))
-        (actor (or (getf event :actor) "someone"))
+        (actor (->actor (getf event :actor)))
         (md (event-metadata event)))
     (cond
       ((equal type "issue.created") (format nil "~A opened an issue" actor))
