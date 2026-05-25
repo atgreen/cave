@@ -447,6 +447,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
       :href (format nil "/~A/~A/pulls" owner-name repo-name) "Pull requests")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :runs))
       :href (format nil "/~A/~A/runs" owner-name repo-name) "Runs")
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :releases))
+      :href (format nil "/~A/~A/releases" owner-name repo-name) "Releases")
      (when (and repo *current-user-id*
                 (repo-member-role (getf repo :id) *current-user-id*))
        (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
@@ -1468,6 +1470,134 @@ function caveShowCommentForm(td) {
                   (:td (getf r :host))
                   (:td.file-size (format nil "~D view~:P" (getf r :count)))))))
              (:p.empty "No external referrers yet."))))))))
+
+(defun format-bytes (n)
+  "Human-readable byte size for an integer N."
+  (cond
+    ((or (null n) (eq n :null)) "—")
+    ((< n 1024) (format nil "~D B" n))
+    ((< n (* 1024 1024)) (format nil "~,1F KB" (/ n 1024.0)))
+    ((< n (* 1024 1024 1024)) (format nil "~,1F MB" (/ n 1024.0 1024.0)))
+    (t (format nil "~,2F GB" (/ n 1024.0 1024.0 1024.0)))))
+
+(defun view-releases (&key owner-name repo releases assets-by-release can-create)
+  "List of releases for a repo."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Releases — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :releases :repo repo)
+      (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-3)"
+       (:h2 "Releases")
+       (when can-create
+         (:a.btn.btn-primary :href (format nil "/~A/~A/releases/new" owner-name repo-name)
+          "Draft a new release")))
+      (if releases
+          (:ul.repo-list
+           (loop for r in releases for i from 0
+                 do (let* ((tag (getf r :tag-name))
+                           (assets (gethash (getf r :id) assets-by-release)))
+                      (:li
+                       (:div :style "display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap"
+                        (:a :href (format nil "/~A/~A/releases/~A" owner-name repo-name tag)
+                         :style "font-size:1.1rem;font-weight:600"
+                         (or (getf r :name) tag))
+                        (:span.badge :style "font-family:var(--font-mono)" tag)
+                        (when (zerop i) (:span.badge :style "background:var(--accent-bg);color:var(--accent)" "Latest"))
+                        (when (getf r :is-prerelease) (:span.badge "pre-release"))
+                        (when (getf r :is-draft) (:span.badge "draft"))
+                        (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:auto"
+                         (let ((rel (format-relative-time (getf r :published-at))))
+                           (format nil "~@[by ~A ~]~@[~A~]" (getf r :author) rel))))
+                       (when assets
+                         (:div :style "margin-top:.4rem;color:var(--text-muted);font-size:.85rem"
+                          (format nil "~D asset~:P" (length assets))))))))
+          (:p.empty "No releases yet.")))))
+
+(defun view-release (&key owner-name repo release assets can-edit)
+  "Single release detail page."
+  (let* ((repo-name (getf repo :name))
+         (tag (getf release :tag-name))
+         (body (getf release :body))
+         (rendered-body (when (and body (plusp (length body)))
+                          (render-markdown body))))
+    (page (:title (format nil "~A — ~A/~A" tag owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :releases :repo repo)
+      (:div :style "display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;margin-bottom:var(--sp-3)"
+       (:h2 :style "margin:0" (or (getf release :name) tag))
+       (:span.badge :style "font-family:var(--font-mono)" tag)
+       (when (getf release :is-prerelease) (:span.badge "pre-release"))
+       (when (getf release :is-draft) (:span.badge "draft"))
+       (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:auto"
+        (let ((rel (format-relative-time (getf release :published-at))))
+          (format nil "~@[by ~A ~]~@[~A~]" (getf release :author) rel))))
+
+      (when rendered-body
+        (:section.readme-content (:raw rendered-body)))
+
+      (:section
+       (:h3 "Assets")
+       (if assets
+           (:table.file-tree
+            (:tbody
+             (dolist (a assets)
+               (:tr
+                (:td (:a :href (format nil "/~A/~A/releases/download/~A/~A"
+                                       owner-name repo-name tag (getf a :name))
+                      (getf a :name)))
+                (:td.file-size (format-bytes (getf a :size)))
+                (:td.file-size (format nil "~D download~:P" (or (getf a :download-count) 0)))
+                (when can-edit
+                  (:td (:form :method "post" :style "display:inline"
+                        :action (format nil "/~A/~A/releases/~A/assets/~A/delete"
+                                        owner-name repo-name tag (getf a :id))
+                        (:button.btn.btn-sm :type "submit" "Delete"))))))))
+           (:p.empty "No assets attached.")))
+
+      (when can-edit
+        (:section
+         (:h3 "Upload asset")
+         (:form :method "post" :enctype "multipart/form-data"
+          :action (format nil "/~A/~A/releases/~A/upload" owner-name repo-name tag)
+          (:div.field
+           (:input :type "file" :name "asset" :required t))
+          (:button.btn.btn-primary :type "submit" "Upload"))
+         (:p :style "color:var(--text-muted);font-size:.85rem;margin-top:.3rem"
+          "Up to 100 MB per file.")
+
+         (:form :method "post" :style "margin-top:var(--sp-4)"
+          :action (format nil "/~A/~A/releases/~A/delete" owner-name repo-name tag)
+          :onsubmit "return confirm('Delete this release? Assets will be removed too.');"
+          (:button.btn :type "submit" :style "color:var(--red)" "Delete release")))))))
+
+(defun view-new-release (&key owner-name repo existing-tags error)
+  "Form to create a new release."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "New release — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :releases :repo repo)
+      (:h2 "Draft a new release")
+      (when error (:div.alert.alert-error error))
+      (:form :method "post" :action (format nil "/~A/~A/releases/new" owner-name repo-name)
+       (:div.field
+        (:label :for "tag_name" "Tag (existing tag, or a new one)")
+        (:input :type "text" :id "tag_name" :name "tag_name"
+                :placeholder "v1.0.0" :required t
+                :list "existing-tags"
+                :pattern "[A-Za-z0-9._/+\\-]+")
+        (when existing-tags
+          (:datalist :id "existing-tags"
+           (dolist (tg existing-tags)
+             (:option :value tg)))))
+       (:div.field
+        (:label :for "name" "Release name (optional)")
+        (:input :type "text" :id "name" :name "name"
+                :placeholder "Defaults to the tag name"))
+       (:div.field
+        (:label :for "body" "Description (Markdown supported)")
+        (:textarea :id "body" :name "body" :rows 12
+                   :style "width:100%;font-family:var(--font-mono);font-size:.9rem"))
+       (:div.field
+        (:label (:input :type "checkbox" :name "is_prerelease" :value "1")
+         " Mark as pre-release"))
+       (:button.btn.btn-primary :type "submit" "Publish release")))))
 
 (defun view-runs (&key owner-name repo runs workflow-runs)
   "Render the runs list — both automations and workflows."

@@ -25,6 +25,25 @@
       (remove-if #'uiop:emptyp
                  (uiop:split-string output :separator '(#\Newline))))))
 
+(defun git-create-tag (repo-path tag-name target &key message)
+  "Create a lightweight (or annotated, if MESSAGE) git tag pointing at TARGET.
+Returns T on success, NIL otherwise."
+  (let ((args (if message
+                  (list "tag" "-a" tag-name target "-m" message)
+                  (list "tag" tag-name target))))
+    (multiple-value-bind (_o _e exit-code)
+        (apply #'git-run repo-path args)
+      (declare (ignore _o _e))
+      (zerop exit-code))))
+
+(defun git-tag-exists-p (repo-path tag-name)
+  "Return T when TAG-NAME exists in REPO-PATH."
+  (multiple-value-bind (_o _e exit-code)
+      (git-run repo-path "rev-parse" "--verify"
+               (format nil "refs/tags/~A" tag-name))
+    (declare (ignore _o _e))
+    (zerop exit-code)))
+
 (defun git-tags (repo-path)
   "List tags in a bare repo. Returns list of tag name strings, newest first."
   (multiple-value-bind (output _err exit-code)

@@ -578,7 +578,37 @@ CREATE TABLE cave_page_views (
   viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_page_views_repo_time ON cave_page_views (repo_id, viewed_at);
-CREATE INDEX idx_page_views_time ON cave_page_views (viewed_at);"))
+CREATE INDEX idx_page_views_time ON cave_page_views (viewed_at);")
+
+    (43 . "-- Releases: each row keyed by repo + git tag name.
+CREATE TABLE cave_releases (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  tag_name VARCHAR(256) NOT NULL,
+  name VARCHAR(512),
+  body TEXT,
+  is_prerelease BOOLEAN NOT NULL DEFAULT FALSE,
+  is_draft BOOLEAN NOT NULL DEFAULT FALSE,
+  created_by BIGINT REFERENCES cave_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, tag_name)
+);
+CREATE INDEX idx_releases_repo ON cave_releases (repo_id, published_at DESC);
+
+CREATE TABLE cave_release_assets (
+  id BIGSERIAL PRIMARY KEY,
+  release_id BIGINT NOT NULL REFERENCES cave_releases(id) ON DELETE CASCADE,
+  name VARCHAR(512) NOT NULL,
+  content_type VARCHAR(256),
+  size BIGINT NOT NULL,
+  storage_path VARCHAR(1024) NOT NULL,
+  download_count BIGINT NOT NULL DEFAULT 0,
+  uploaded_by BIGINT REFERENCES cave_users(id),
+  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(release_id, name)
+);
+CREATE INDEX idx_release_assets_release ON cave_release_assets (release_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

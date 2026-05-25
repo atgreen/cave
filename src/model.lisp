@@ -1694,6 +1694,86 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
                 LIMIT $2" days)
    repo-id limit :plists))
 
+;;; ========================== RELEASES ==========================
+
+(defun create-release (&key repo-id tag-name name body is-prerelease is-draft created-by)
+  "Create a release row. Returns its id."
+  (postmodern:query
+   (:insert-into 'cave-releases
+    :set 'repo-id repo-id
+         'tag-name tag-name
+         'name (or name tag-name)
+         'body (or body "")
+         'is-prerelease (or is-prerelease nil)
+         'is-draft (or is-draft nil)
+         'created-by (or created-by :null)
+    :returning 'id)
+   :single))
+
+(defun list-releases (repo-id &key (limit 50))
+  "Releases for a repo, newest first."
+  (postmodern:query
+   (:limit
+    (:order-by
+     (:select 'r.* (:as 'u.username 'author)
+      :from (:as 'cave-releases 'r)
+      :left-join (:as 'cave-users 'u) :on (:= 'r.created-by 'u.id)
+      :where (:= 'r.repo-id repo-id))
+     (:desc 'r.published-at))
+    limit)
+   :plists))
+
+(defun find-release-by-tag (repo-id tag-name)
+  "Look up a single release. Returns plist or NIL."
+  (postmodern:query
+   (:select 'r.* (:as 'u.username 'author)
+    :from (:as 'cave-releases 'r)
+    :left-join (:as 'cave-users 'u) :on (:= 'r.created-by 'u.id)
+    :where (:and (:= 'r.repo-id repo-id) (:= 'r.tag-name tag-name)))
+   :plist))
+
+(defun delete-release (release-id)
+  (postmodern:execute (:delete-from 'cave-releases :where (:= 'id release-id))))
+
+(defun create-release-asset (&key release-id name content-type size storage-path uploaded-by)
+  (postmodern:query
+   (:insert-into 'cave-release-assets
+    :set 'release-id release-id
+         'name name
+         'content-type (or content-type "application/octet-stream")
+         'size size
+         'storage-path storage-path
+         'uploaded-by (or uploaded-by :null)
+    :returning 'id)
+   :single))
+
+(defun list-release-assets (release-id)
+  (postmodern:query
+   (:order-by
+    (:select '* :from 'cave-release-assets
+     :where (:= 'release-id release-id))
+    'name)
+   :plists))
+
+(defun find-release-asset-by-name (release-id name)
+  (postmodern:query
+   (:select '* :from 'cave-release-assets
+    :where (:and (:= 'release-id release-id) (:= 'name name)))
+   :plist))
+
+(defun find-release-asset-by-id (asset-id)
+  (postmodern:query
+   (:select '* :from 'cave-release-assets :where (:= 'id asset-id))
+   :plist))
+
+(defun delete-release-asset (asset-id)
+  (postmodern:execute (:delete-from 'cave-release-assets :where (:= 'id asset-id))))
+
+(defun increment-asset-download-count (asset-id)
+  (postmodern:execute
+   "UPDATE cave_release_assets SET download_count = download_count + 1 WHERE id = $1"
+   asset-id))
+
 ;;; ========================== CHAMBER NODES ==========================
 
 (defun list-chamber-nodes (&key status)

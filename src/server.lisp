@@ -1382,6 +1382,202 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                    :unique-visitors (repo-unique-visitors-by-day repo-id :days days)
                    :referrers (repo-top-referrers repo-id :days days :limit 10))))))
 
+;; ----------------------------------------------------------------------------
+;; Routes: Releases
+
+(defparameter *release-asset-max-bytes* (* 100 1024 1024)
+  "Per-asset upload cap. 100 MB.")
+
+(defun release-asset-dir (repo-id release-id)
+  "Absolute path to a release's asset directory. Created on demand."
+  (let ((dir (merge-pathnames (format nil "releases/~A/~A/" repo-id release-id)
+                              (data-dir))))
+    (ensure-directories-exist dir)
+    dir))
+
+(defun sanitize-asset-filename (name)
+  "Strip path components and disallowed chars from an uploaded filename."
+  (let* ((bare (file-namestring (or name "asset")))
+         (clean (with-output-to-string (s)
+                  (loop for c across bare
+                        do (write-char
+                            (if (or (alphanumericp c)
+                                    (find c ".-_+" :test #'char=))
+                                c #\_)
+                            s)))))
+    (if (zerop (length clean)) "asset" clean)))
+
+(defun member-of-repo-p (repo)
+  (and *current-user-id* (repo-member-role (getf repo :id) *current-user-id*)))
+
+(easy-routes:defroute releases-page ("/:owner/:repo-name/releases" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from releases-page repo))
+    (let* ((releases (list-releases (getf repo :id)))
+           (assets-by-release
+            (let ((h (make-hash-table)))
+              (dolist (r releases)
+                (setf (gethash (getf r :id) h)
+                      (list-release-assets (getf r :id))))
+              h)))
+      (html-response
+       (view-releases :owner-name owner :repo repo
+                      :releases releases
+                      :assets-by-release assets-by-release
+                      :can-create (and (member-of-repo-p repo) t))))))
+
+(easy-routes:defroute new-release-page ("/:owner/:repo-name/releases/new" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from new-release-page repo))
+    (unless (member-of-repo-p repo)
+      (return-from new-release-page (not-found)))
+    (let* ((disk-path (repo-disk-path owner repo-name))
+           (existing-tags (git-tags disk-path)))
+      (html-response
+       (view-new-release :owner-name owner :repo repo :existing-tags existing-tags)))))
+
+(easy-routes:defroute create-release-submit ("/:owner/:repo-name/releases/new" :method :post) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from create-release-submit repo))
+    (unless (member-of-repo-p repo)
+      (return-from create-release-submit (not-found)))
+    (let* ((tag-name (string-trim '(#\Space) (or (hunchentoot:post-parameter "tag_name") "")))
+           (release-name (hunchentoot:post-parameter "name"))
+           (body (or (hunchentoot:post-parameter "body") ""))
+           (is-prerelease (equal (hunchentoot:post-parameter "is_prerelease") "1"))
+           (disk-path (repo-disk-path owner repo-name))
+           (default-branch (or (chamber-get-default-branch owner repo-name) "main")))
+      (when (zerop (length tag-name))
+        (return-from create-release-submit
+          (html-response (view-new-release :owner-name owner :repo repo
+                                            :existing-tags (git-tags disk-path)
+                                            :error "Tag name is required."))))
+      (when (find-release-by-tag (getf repo :id) tag-name)
+        (return-from create-release-submit
+          (html-response (view-new-release :owner-name owner :repo repo
+                                            :existing-tags (git-tags disk-path)
+                                            :error (format nil "Release ~A already exists." tag-name)))))
+      ;; If the tag doesn't exist in git, create it at HEAD of the default branch.
+      (unless (git-tag-exists-p disk-path tag-name)
+        (unless (git-create-tag disk-path tag-name default-branch
+                                :message (or release-name tag-name))
+          (return-from create-release-submit
+            (html-response (view-new-release :owner-name owner :repo repo
+                                              :existing-tags (git-tags disk-path)
+                                              :error (format nil "Could not create git tag ~A." tag-name))))))
+      (create-release :repo-id (getf repo :id)
+                      :tag-name tag-name
+                      :name release-name
+                      :body body
+                      :is-prerelease is-prerelease
+                      :created-by *current-user-id*)
+      (hunchentoot:redirect (format nil "/~A/~A/releases/~A" owner repo-name tag-name)))))
+
+(easy-routes:defroute release-detail-page ("/:owner/:repo-name/releases/:tag" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from release-detail-page repo))
+    (let ((release (find-release-by-tag (getf repo :id) tag)))
+      (unless release (return-from release-detail-page (not-found)))
+      (html-response
+       (view-release :owner-name owner :repo repo
+                     :release release
+                     :assets (list-release-assets (getf release :id))
+                     :can-edit (and (member-of-repo-p repo) t))))))
+
+(easy-routes:defroute delete-release-submit
+    ("/:owner/:repo-name/releases/:tag/delete" :method :post) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from delete-release-submit repo))
+    (unless (member-of-repo-p repo)
+      (return-from delete-release-submit (not-found)))
+    (let ((release (find-release-by-tag (getf repo :id) tag)))
+      (when release
+        ;; Wipe assets on disk before the DB cascades the rows.
+        (let ((dir (release-asset-dir (getf repo :id) (getf release :id))))
+          (handler-case (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)
+            (error () nil)))
+        (delete-release (getf release :id))))
+    (hunchentoot:redirect (format nil "/~A/~A/releases" owner repo-name))))
+
+(easy-routes:defroute upload-release-asset
+    ("/:owner/:repo-name/releases/:tag/upload" :method :post) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from upload-release-asset repo))
+    (unless (member-of-repo-p repo)
+      (return-from upload-release-asset (not-found)))
+    (let ((release (find-release-by-tag (getf repo :id) tag)))
+      (unless release (return-from upload-release-asset (not-found)))
+      ;; Reject early on Content-Length if available.
+      (let ((cl (hunchentoot:header-in* :content-length)))
+        (when (and cl (> (parse-integer cl :junk-allowed t) *release-asset-max-bytes*))
+          (setf (hunchentoot:return-code*) 413)
+          (return-from upload-release-asset "Asset too large.")))
+      (let ((upload (hunchentoot:post-parameter "asset")))
+        (unless (consp upload)
+          (return-from upload-release-asset
+            (progn (setf (hunchentoot:return-code*) 400) "No file in upload.")))
+        (let* ((temp-path (first upload))
+               (orig-name (second upload))
+               (content-type (third upload))
+               (clean-name (sanitize-asset-filename orig-name))
+               (size (with-open-file (s temp-path :element-type '(unsigned-byte 8))
+                       (file-length s))))
+          (when (> size *release-asset-max-bytes*)
+            (ignore-errors (delete-file temp-path))
+            (setf (hunchentoot:return-code*) 413)
+            (return-from upload-release-asset "Asset too large."))
+          (when (find-release-asset-by-name (getf release :id) clean-name)
+            (ignore-errors (delete-file temp-path))
+            (setf (hunchentoot:return-code*) 409)
+            (return-from upload-release-asset "An asset with that name already exists."))
+          (let* ((dir (release-asset-dir (getf repo :id) (getf release :id)))
+                 (dest (merge-pathnames clean-name dir)))
+            (uiop:rename-file-overwriting-target temp-path dest)
+            (create-release-asset :release-id (getf release :id)
+                                  :name clean-name
+                                  :content-type content-type
+                                  :size size
+                                  :storage-path (namestring dest)
+                                  :uploaded-by *current-user-id*))))
+      (hunchentoot:redirect (format nil "/~A/~A/releases/~A" owner repo-name tag)))))
+
+(easy-routes:defroute delete-release-asset-submit
+    ("/:owner/:repo-name/releases/:tag/assets/:asset-id/delete" :method :post) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from delete-release-asset-submit repo))
+    (unless (member-of-repo-p repo)
+      (return-from delete-release-asset-submit (not-found)))
+    (let* ((aid (parse-integer asset-id :junk-allowed t))
+           (asset (when aid (find-release-asset-by-id aid))))
+      (when asset
+        (ignore-errors (delete-file (getf asset :storage-path)))
+        (delete-release-asset aid)))
+    (hunchentoot:redirect (format nil "/~A/~A/releases/~A" owner repo-name tag))))
+
+(easy-routes:defroute release-asset-download
+    ("/:owner/:repo-name/releases/download/:tag/:filename" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from release-asset-download repo))
+    (let ((release (find-release-by-tag (getf repo :id) tag)))
+      (unless release (return-from release-asset-download (not-found)))
+      (let ((asset (find-release-asset-by-name (getf release :id) filename)))
+        (unless (and asset (probe-file (getf asset :storage-path)))
+          (return-from release-asset-download (not-found)))
+        (increment-asset-download-count (getf asset :id))
+        (setf (hunchentoot:content-type*) (or (getf asset :content-type)
+                                              "application/octet-stream"))
+        (setf (hunchentoot:header-out :content-disposition)
+              (format nil "attachment; filename=\"~A\"" (getf asset :name)))
+        (setf (hunchentoot:header-out :content-length) (princ-to-string (getf asset :size)))
+        (let ((out (hunchentoot:send-headers)))
+          (with-open-file (in (getf asset :storage-path) :element-type '(unsigned-byte 8))
+            (let ((buf (make-array 8192 :element-type '(unsigned-byte 8))))
+              (loop for n = (read-sequence buf in)
+                    while (plusp n)
+                    do (write-sequence buf out :end n))))
+          (finish-output out))
+        nil))))
+
 (easy-routes:defroute workflow-run-detail-page
     ("/:owner/:repo-name/runs/w/:run-id" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
