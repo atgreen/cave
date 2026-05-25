@@ -572,7 +572,7 @@ UPDATE cave_repos SET last_pushed_at = updated_at WHERE last_pushed_at IS NULL;"
 CREATE TABLE cave_page_views (
   id BIGSERIAL PRIMARY KEY,
   repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
-  ip_hash VARCHAR(64),         -- sha256(ip + secret); never the raw IP
+  ip_hash VARCHAR(64),         -- sha256(ip + secret), never the raw IP
   user_id BIGINT,              -- NULL for anon
   referer_host VARCHAR(256),   -- hostname only, NULL when none
   viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
