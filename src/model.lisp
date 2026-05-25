@@ -1694,6 +1694,51 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
                 LIMIT $2" days)
    repo-id limit :plists))
 
+;;; ========================== COMMIT SIGNATURES ==========================
+
+(defun all-ssh-keys-with-user ()
+  "All registered SSH keys joined with the owning user's email + username.
+   Used to build the allowed_signers file for git verify-commit."
+  (postmodern:query
+   (:select 'cave-users.email 'cave-users.username
+            'cave-ssh-keys.public-key 'cave-ssh-keys.fingerprint
+            (:as 'cave-ssh-keys.user-id 'user-id)
+    :from 'cave-ssh-keys
+    :inner-join 'cave-users :on (:= 'cave-ssh-keys.user-id 'cave-users.id))
+   :plists))
+
+(defun record-commit-signature (&key repo-id commit-sha verified scheme fingerprint signer-user-id)
+  "Upsert a signature verification result. Idempotent on (repo_id, commit_sha)."
+  (postmodern:execute
+   "INSERT INTO cave_commit_signatures
+       (repo_id, commit_sha, verified, scheme, fingerprint, signer_user_id)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (repo_id, commit_sha) DO UPDATE
+       SET verified = EXCLUDED.verified,
+           scheme = EXCLUDED.scheme,
+           fingerprint = EXCLUDED.fingerprint,
+           signer_user_id = EXCLUDED.signer_user_id"
+   repo-id commit-sha verified
+   (or scheme :null) (or fingerprint :null) (or signer-user-id :null)))
+
+(defun find-commit-signature (repo-id commit-sha)
+  (postmodern:query
+   (:select '* :from 'cave-commit-signatures
+    :where (:and (:= 'repo-id repo-id) (:= 'commit-sha commit-sha)))
+   :plist))
+
+(defun commit-signatures-by-sha (repo-id shas)
+  "Bulk lookup. Returns hash-table sha → signature plist for shas that have one."
+  (let ((h (make-hash-table :test 'equal)))
+    (when shas
+      (let ((rows (postmodern:query
+                   "SELECT * FROM cave_commit_signatures
+                    WHERE repo_id = $1 AND commit_sha = ANY($2)"
+                   repo-id (coerce shas 'vector) :plists)))
+        (dolist (r rows)
+          (setf (gethash (getf r :commit-sha) h) r))))
+    h))
+
 ;;; ========================== RELEASES ==========================
 
 (defun create-release (&key repo-id tag-name name body is-prerelease is-draft created-by)

@@ -608,7 +608,20 @@ CREATE TABLE cave_release_assets (
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(release_id, name)
 );
-CREATE INDEX idx_release_assets_release ON cave_release_assets (release_id);"))
+CREATE INDEX idx_release_assets_release ON cave_release_assets (release_id);")
+
+    (44 . "-- Commit signature verification cache, populated by the post-receive hook.
+CREATE TABLE cave_commit_signatures (
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  commit_sha VARCHAR(64) NOT NULL,
+  verified BOOLEAN NOT NULL,
+  scheme VARCHAR(16),         -- 'ssh' or 'gpg', NULL for unsigned
+  fingerprint VARCHAR(128),   -- key fingerprint when known
+  signer_user_id BIGINT REFERENCES cave_users(id),
+  signed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (repo_id, commit_sha)
+);
+CREATE INDEX idx_commit_sigs_repo ON cave_commit_signatures (repo_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

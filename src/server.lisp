@@ -290,6 +290,67 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
       (when tip (setf (gethash "tip" md) tip)))
     md))
 
+(defun ensure-allowed-signers-file ()
+  "Materialize an allowed_signers file from every SSH key in cave's DB.
+Cached in /tmp, rewritten when the registered-key fingerprint set changes.
+Returns the path."
+  (let* ((path (merge-pathnames "cave-allowed-signers" (uiop:temporary-directory)))
+         (keys (all-ssh-keys-with-user))
+         (entries (loop for k in keys
+                        collect (list (or (getf k :email)
+                                          (getf k :username)
+                                          (format nil "user-~A" (getf k :user-id)))
+                                      (getf k :public-key)))))
+    (write-allowed-signers entries path)
+    path))
+
+(defun verify-pushed-commits (owner-name repo disk-path refs)
+  "For each ref update, verify newly-introduced commits' signatures and cache
+the results. Skips deletes and zero-sha boundaries."
+  (declare (ignore owner-name))
+  (let* ((shas (loop for r in refs
+                     when (and (not (zero-sha-p (getf r :new))))
+                       append
+                       (let ((range (if (zero-sha-p (getf r :old))
+                                        (list (getf r :new))
+                                        (multiple-value-bind (out _err exit)
+                                            (git-run disk-path "rev-list"
+                                                     (format nil "~A..~A"
+                                                             (getf r :old) (getf r :new)))
+                                          (declare (ignore _err))
+                                          (if (zerop exit)
+                                              (remove-if #'uiop:emptyp
+                                                         (uiop:split-string
+                                                          out :separator '(#\Newline)))
+                                              nil)))))
+                         range)))
+         (shas (remove-duplicates shas :test #'equal)))
+    (when shas
+      (let ((signers (ensure-allowed-signers-file))
+            (key->user (let ((h (make-hash-table :test 'equal)))
+                         (dolist (k (all-ssh-keys-with-user))
+                           (setf (gethash (getf k :fingerprint) h) (getf k :user-id)))
+                         h)))
+        (dolist (sha shas)
+          (multiple-value-bind (signed scheme)
+              (git-commit-signature-info disk-path sha)
+            (cond
+              ((not signed)
+               (record-commit-signature :repo-id (getf repo :id)
+                                        :commit-sha sha :verified nil :scheme nil))
+              ((eq scheme :ssh)
+               (let* ((verified (git-verify-commit disk-path sha signers))
+                      (fp (git-commit-signature-key disk-path sha)))
+                 (record-commit-signature :repo-id (getf repo :id)
+                                          :commit-sha sha :verified verified
+                                          :scheme "ssh" :fingerprint fp
+                                          :signer-user-id (gethash fp key->user))))
+              (t
+               ;; GPG: we don't verify (no GPG key store yet) — record as unsigned
+               (record-commit-signature :repo-id (getf repo :id)
+                                        :commit-sha sha :verified nil
+                                        :scheme "gpg")))))))))
+
 (easy-routes:defroute internal-post-receive
     ("/-/internal/hook/post-receive/:owner/:repo-name" :method :post) ()
   ;; Only accept from localhost
@@ -332,6 +393,10 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                                               :ref (getf r :ref))
               (error (e)
                 (llog:error "Workflow scheduling failed" :error (princ-to-string e))))))
+        ;; Verify any signed commits in the pushed range, cache results
+        (handler-case (verify-pushed-commits owner repo (repo-disk-path owner repo-name) refs)
+          (error (e)
+            (llog:warn "Signature verification failed" :error (princ-to-string e))))
         ;; Invalidate Chamber cache for this repo
         (chamber-invalidate-repo owner repo-name)
         (when (multi-chamber-p)
@@ -948,6 +1013,9 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
                       :default-branch default-branch
                       :commit-count commit-count
                       :recent-commits recent-commits
+                      :signatures (commit-signatures-by-sha
+                                   (getf repo :id)
+                                   (mapcar (lambda (c) (getf c :hash)) recent-commits))
                       :file-tree file-tree))))))
 
 ;; Fork
@@ -1187,6 +1255,8 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
            (html-response
             (view-commit :owner-name owner :repo repo
                          :commit (getf result :commit)
+                         :signature (find-commit-signature (getf repo :id) clean-hash)
+                         :trailers (git-commit-trailers disk-path clean-hash)
                          :diff-raw (getf result :diff)))))))))
 
 (easy-routes:defroute new-org-repo-page ("/o/:org-name/-/new-repo" :method :get) ()

@@ -25,6 +25,56 @@
       (remove-if #'uiop:emptyp
                  (uiop:split-string output :separator '(#\Newline))))))
 
+(defun git-commit-signature-info (repo-path commit-sha)
+  "Return (values has-signature scheme) for COMMIT-SHA.
+SCHEME is :ssh, :gpg, or NIL when unsigned."
+  (multiple-value-bind (out _err exit)
+      (git-run repo-path "log" "-1" "--format=%GS%n%GG" commit-sha)
+    (declare (ignore _err))
+    (cond
+      ((not (zerop exit)) (values nil nil))
+      ((search "BEGIN SSH SIGNATURE" out) (values t :ssh))
+      ((search "BEGIN PGP SIGNATURE" out) (values t :gpg))
+      (t (values nil nil)))))
+
+(defun git-commit-signature-key (repo-path commit-sha)
+  "Return the SSH key fingerprint that signed COMMIT-SHA, or NIL."
+  (multiple-value-bind (out _err exit)
+      (git-run repo-path "log" "-1" "--format=%GF" commit-sha)
+    (declare (ignore _err))
+    (when (zerop exit)
+      (let ((trimmed (string-trim '(#\Space #\Newline #\Tab) out)))
+        (when (plusp (length trimmed)) trimmed)))))
+
+(defun git-verify-commit (repo-path commit-sha allowed-signers-path)
+  "Run git verify-commit against ALLOWED-SIGNERS-PATH. Returns T on success."
+  (multiple-value-bind (_out _err exit)
+      (git-run repo-path
+               "-c" (format nil "gpg.ssh.allowedSignersFile=~A" allowed-signers-path)
+               "verify-commit" commit-sha)
+    (declare (ignore _out _err))
+    (zerop exit)))
+
+(defun write-allowed-signers (entries path)
+  "Write an OpenSSH allowed_signers file. ENTRIES is a list of (principal pubkey)."
+  (with-open-file (s path :direction :output :if-exists :supersede)
+    (dolist (e entries)
+      (format s "~A ~A~%" (first e)
+              (string-trim '(#\Space #\Newline #\Tab) (second e))))))
+
+(defun git-commit-trailers (repo-path commit-sha)
+  "Return (((token . value) ...) ...) — the trailers of COMMIT-SHA's message.
+Each trailer is a cons (token . value); the result is a list of those."
+  (multiple-value-bind (out _err exit)
+      (git-run repo-path "log" "-1" "--format=%(trailers:only=true)" commit-sha)
+    (declare (ignore _err))
+    (when (zerop exit)
+      (loop for line in (uiop:split-string out :separator '(#\Newline))
+            for colon = (position #\: line)
+            when (and colon (plusp colon))
+              collect (cons (string-trim " " (subseq line 0 colon))
+                            (string-trim " " (subseq line (1+ colon))))))))
+
 (defun git-create-tag (repo-path tag-name target &key message)
   "Create a lightweight (or annotated, if MESSAGE) git tag pointing at TARGET.
 Returns T on success, NIL otherwise."

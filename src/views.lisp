@@ -575,8 +575,23 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
              (:h2 (or readme-filename "README"))
              (:div.readme-content (:raw readme-html))))))))
 
+(defun render-verified-badge (sig)
+  "Render the green Verified / amber Unverified pill if SIG is non-NIL."
+  (when sig
+    (spinneret:with-html
+      (cond
+        ((getf sig :verified)
+         (:span :title (or (getf sig :fingerprint) "")
+          :style "display:inline-block;padding:.05rem .35rem;margin-left:.4rem;border-radius:3px;font-size:.65rem;font-family:var(--font-mono);background:var(--green-bg, rgba(124,154,94,.15));color:var(--green,#7c9a5e);border:1px solid var(--green,#7c9a5e)"
+          "Verified"))
+        ((getf sig :scheme)
+         (:span :title (format nil "Signed with ~A but signature not verified"
+                               (getf sig :scheme))
+          :style "display:inline-block;padding:.05rem .35rem;margin-left:.4rem;border-radius:3px;font-size:.65rem;font-family:var(--font-mono);background:var(--yellow-bg, rgba(201,160,62,.15));color:var(--yellow,#c9a03e);border:1px solid var(--yellow,#c9a03e)"
+          "Unverified"))))))
+
 (defun view-code (&key owner-name repo branches tags default-branch
-                       commit-count recent-commits file-tree)
+                       commit-count recent-commits file-tree signatures)
   "Render the repo code/file browser page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
@@ -615,12 +630,14 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
          (:h2 "Recent commits")
          (:ul.issue-list
           (dolist (c recent-commits)
-            (:li
-             (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name (getf c :hash))
-              (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
-             (:span (getf c :subject))
-             (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
-              (getf c :author))))))))))
+            (let ((sig (when signatures (gethash (getf c :hash) signatures))))
+              (:li
+               (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name (getf c :hash))
+                (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
+               (:span (getf c :subject))
+               (render-verified-badge sig)
+               (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
+                (getf c :author)))))))))))
 
 ;;; ========================== TREE & BLOB PAGES ==========================
 
@@ -770,8 +787,10 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 " (com.inuoe.jzon:stringify (or raw-diff "")))))))
 
-(defun view-commit (&key owner-name repo commit diff-raw diff-stat)
+(defun view-commit (&key owner-name repo commit diff-raw diff-stat
+                         signature trailers)
   "Render a commit detail page with diff."
+  (declare (ignore diff-stat))
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" (getf commit :short-hash) owner-name repo-name))
       (render-repo-tabs owner-name repo-name :code :repo repo)
@@ -780,7 +799,9 @@ document.addEventListener('DOMContentLoaded', function() {
              (list (format nil "/~A/~A" owner-name repo-name) repo-name)
              (getf commit :short-hash)))
       (:div.commit-header
-       (:h1.commit-subject (getf commit :subject))
+       (:h1.commit-subject
+        (getf commit :subject)
+        (render-verified-badge signature))
        (when (and (getf commit :body) (not (uiop:emptyp (getf commit :body))))
          (:pre.commit-body (getf commit :body))))
       (:div.commit-meta
@@ -788,6 +809,12 @@ document.addEventListener('DOMContentLoaded', function() {
        (:span :style "margin-left:var(--sp-2);color:var(--text-muted)"
         (getf commit :date))
        (:code :style "margin-left:auto" (getf commit :hash)))
+      ;; Trailer chips — Co-Authored-By / Signed-off-by etc.
+      (when trailers
+        (:div :style "display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem"
+         (dolist (tr trailers)
+           (:span :style "padding:.1rem .45rem;border:1px solid var(--border);border-radius:3px;font-family:var(--font-mono);font-size:.75rem;color:var(--text-muted)"
+            (format nil "~A: ~A" (car tr) (cdr tr))))))
       (when diff-raw
         (render-diff2html diff-raw)))))
 
