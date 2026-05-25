@@ -344,7 +344,8 @@
    :plists))
 
 (defun list-recent-public-events (&key (limit 20))
-  "Recent events on public repos. For the anon landing's activity feed."
+  "Recent events on public repos. For the anon landing's activity feed.
+   Clones are excluded — they're noise in a feed and counted in Pulse instead."
   (postmodern:query
    (:limit
     (:order-by
@@ -353,7 +354,8 @@
       :from 'cave-events
       :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
       :inner-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id)
-      :where (:= 'cave-repos.is-private nil))
+      :where (:and (:= 'cave-repos.is-private nil)
+                   (:!= 'cave-events.event-type "git.clone")))
      (:desc 'cave-events.created-at))
     limit)
    :plists))
@@ -1604,7 +1606,8 @@
                        :null))))
 
 (defun list-recent-events (&key repo-id (limit 30))
-  "List recent events, optionally filtered by repo."
+  "List recent events, optionally filtered by repo.
+   Clones are excluded — they're noise in a feed and counted in Pulse instead."
   (if repo-id
       (postmodern:query
        (:limit
@@ -1612,7 +1615,8 @@
          (:select 'cave-events.* (:as 'cave-users.username 'actor)
           :from 'cave-events
           :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
-          :where (:= 'cave-events.repo-id repo-id))
+          :where (:and (:= 'cave-events.repo-id repo-id)
+                       (:!= 'cave-events.event-type "git.clone")))
          (:desc 'cave-events.created-at))
         limit)
        :plists)
@@ -1623,7 +1627,8 @@
                   (:as 'cave-repos.name 'repo-name)
           :from 'cave-events
           :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
-          :left-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id))
+          :left-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id)
+          :where (:!= 'cave-events.event-type "git.clone"))
          (:desc 'cave-events.created-at))
         limit)
        :plists)))
