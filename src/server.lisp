@@ -2246,6 +2246,76 @@ the results. Skips deletes and zero-sha boundaries."
        (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
 
 ;; ----------------------------------------------------------------------------
+;; Routes: API v1 — Repos
+
+(easy-routes:defroute api-create-personal-repo
+    ("/api/v1/user/repos" :method :post) ()
+  "Create a personal repo for the authenticated user. Mirrors the HTML
+   /-/new-repo flow: mode is one of 'empty' (default), 'import' (one-shot
+   clone of remote URL), or 'mirror' (import + ongoing pull mirror)."
+  (unless *current-user-id*
+    (return-from api-create-personal-repo (json-error "unauthorized" :status 401)))
+  (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+         (json (com.inuoe.jzon:parse (or body-text "{}")))
+         (raw-name (gethash "name" json))
+         (description (gethash "description" json))
+         (is-private (gethash "private" json))
+         (mode (or (gethash "mode" json) "empty"))
+         (url (gethash "url" json))
+         (auth-token (gethash "auth_token" json))
+         (interval (or (gethash "mirror_interval_minutes" json) 60))
+         (username (getf *current-user* :username))
+         ;; Auto-derive name from URL when importing/mirroring without one.
+         (name (cond ((and raw-name (not (eq raw-name 'null)) (not (uiop:emptyp raw-name)))
+                      raw-name)
+                     ((and (member mode '("import" "mirror") :test #'equal)
+                           url (not (eq url 'null)) (not (uiop:emptyp url)))
+                      (repo-name-from-url url))
+                     (t nil))))
+    (unless (and name (not (uiop:emptyp name)))
+      (return-from api-create-personal-repo (json-error "name required")))
+    (unless (member mode '("empty" "import" "mirror") :test #'equal)
+      (return-from api-create-personal-repo
+        (json-error "mode must be empty, import, or mirror")))
+    (when (and (member mode '("import" "mirror") :test #'equal)
+               (or (null url) (eq url 'null) (uiop:emptyp url)))
+      (return-from api-create-personal-repo
+        (json-error "url required for import/mirror mode")))
+    (handler-case
+        (let ((repo (create-repo :owner-id *current-user-id*
+                                 :name name
+                                 :description (unless (eq description 'null) description)
+                                 :is-private (and is-private (not (eq is-private 'null))))))
+          (cond
+            ((equal mode "import")
+             (import-repo-from-url username name url
+                                   :auth-token (unless (or (null auth-token)
+                                                            (eq auth-token 'null)
+                                                            (uiop:emptyp auth-token))
+                                                 auth-token)))
+            ((equal mode "mirror")
+             (import-repo-from-url username name url
+                                   :auth-token (unless (or (null auth-token)
+                                                            (eq auth-token 'null)
+                                                            (uiop:emptyp auth-token))
+                                                 auth-token))
+             (create-mirror :repo-id (getf repo :id)
+                            :direction "pull"
+                            :remote-url url
+                            :auth-token (unless (or (null auth-token)
+                                                     (eq auth-token 'null)
+                                                     (uiop:emptyp auth-token))
+                                          auth-token)
+                            :interval-minutes interval))
+            (t (init-bare-repo username name)))
+          (log-event "repo.created" :user-id *current-user-id*
+                                    :repo-id (getf repo :id)
+                                    :metadata (format nil "{\"mode\": \"~A\"}" mode))
+          (json-response (find-repo username name) :status 201))
+      (error (e)
+        (json-error (format nil "~A" e) :status 400)))))
+
+;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Issues
 
 (easy-routes:defroute api-list-issues

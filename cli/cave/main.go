@@ -39,6 +39,26 @@ type issueUpdateRequest struct {
 	Status string `json:"status"`
 }
 
+type Repo struct {
+	ID          int64       `json:"id"`
+	Name        string      `json:"name"`
+	OwnerID     *int64      `json:"owner_id"`
+	OrgID       *int64      `json:"org_id"`
+	Description string      `json:"description"`
+	IsPrivate   bool        `json:"is_private"`
+	CreatedAt   json.Number `json:"created_at"`
+}
+
+type repoCreateRequest struct {
+	Name                  string `json:"name,omitempty"`
+	Description           string `json:"description,omitempty"`
+	Private               bool   `json:"private,omitempty"`
+	Mode                  string `json:"mode,omitempty"`
+	URL                   string `json:"url,omitempty"`
+	AuthToken             string `json:"auth_token,omitempty"`
+	MirrorIntervalMinutes int    `json:"mirror_interval_minutes,omitempty"`
+}
+
 type apiError struct {
 	Error string `json:"error"`
 }
@@ -146,6 +166,8 @@ func run(args []string) error {
 	switch rest[0] {
 	case "issue", "issues":
 		return runIssues(c, ownerName, resolvedRepo, rest[1:])
+	case "repo", "repos":
+		return runRepos(c, rest[1:])
 	case "help", "-h", "--help":
 		printUsage(os.Stdout)
 		return nil
@@ -153,6 +175,92 @@ func run(args []string) error {
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", rest[0])
 	}
+}
+
+func runRepos(c *client, args []string) error {
+	if len(args) == 0 {
+		printRepoUsage(os.Stderr)
+		return errors.New("missing repo command")
+	}
+	switch args[0] {
+	case "create":
+		return runRepoCreate(c, args[1:])
+	case "help", "-h", "--help":
+		printRepoUsage(os.Stdout)
+		return nil
+	default:
+		printRepoUsage(os.Stderr)
+		return fmt.Errorf("unknown repo command %q", args[0])
+	}
+}
+
+func runRepoCreate(c *client, args []string) error {
+	fs := flag.NewFlagSet("repo create", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	description := fs.String("description", "", "Repo description")
+	private := fs.Bool("private", false, "Make the repo private")
+	mode := fs.String("mode", "empty", "One of: empty, import, mirror")
+	remoteURL := fs.String("url", "", "Remote URL (required for import/mirror)")
+	authToken := fs.String("auth-token", "", "Auth token for the remote URL (optional)")
+	interval := fs.Int("mirror-interval", 60, "Pull interval in minutes (mirror mode)")
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	name := strings.TrimSpace(fs.Arg(0))
+	if name == "" && (*mode == "import" || *mode == "mirror") && *remoteURL != "" {
+		// Server will derive name from URL.
+	} else if name == "" {
+		return errors.New("usage: cave repo create <name> [flags]")
+	}
+
+	repo, err := c.createRepo(repoCreateRequest{
+		Name:                  name,
+		Description:           strings.TrimSpace(*description),
+		Private:               *private,
+		Mode:                  *mode,
+		URL:                   strings.TrimSpace(*remoteURL),
+		AuthToken:             strings.TrimSpace(*authToken),
+		MirrorIntervalMinutes: *interval,
+	})
+	if err != nil {
+		return err
+	}
+
+	if *jsonOut {
+		return writeJSON(os.Stdout, repo)
+	}
+
+	fmt.Fprintf(os.Stdout, "Created %s/%s\n",
+		repoOwnerLabel(repo), repo.Name)
+	fmt.Fprintf(os.Stdout, "  %s/%s/%s\n",
+		strings.TrimRight(c.baseURL, "/"), repoOwnerLabel(repo), repo.Name)
+	return nil
+}
+
+func repoOwnerLabel(r *Repo) string {
+	// We don't fetch usernames in the response — the server returns owner_id/org_id
+	// only. Fall back to a placeholder; users will see the name and full URL printed
+	// by the caller anyway. The server's create response could be enriched later.
+	if r.OwnerID != nil {
+		return fmt.Sprintf("(owner_id=%d)", *r.OwnerID)
+	}
+	if r.OrgID != nil {
+		return fmt.Sprintf("(org_id=%d)", *r.OrgID)
+	}
+	return "?"
+}
+
+func (c *client) createRepo(payload repoCreateRequest) (*Repo, error) {
+	var repo Repo
+	if err := c.doJSON(http.MethodPost, c.baseURL+"/api/v1/user/repos", payload, &repo); err != nil {
+		return nil, err
+	}
+	return &repo, nil
 }
 
 func runLogin(args []string) error {
@@ -508,7 +616,17 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  logout                                   Remove saved config")
 	fmt.Fprintln(w, "  status                                   Show current auth config")
 	fmt.Fprintln(w)
+	printRepoUsage(w)
+	fmt.Fprintln(w)
 	printIssueUsage(w)
+}
+
+func printRepoUsage(w io.Writer) {
+	fmt.Fprintln(w, "Repo commands:")
+	fmt.Fprintln(w, "  repo create <name> [--description \"…\"] [--private]")
+	fmt.Fprintln(w, "                       [--mode empty|import|mirror]")
+	fmt.Fprintln(w, "                       [--url URL] [--auth-token TOKEN]")
+	fmt.Fprintln(w, "                       [--mirror-interval MINUTES] [--json]")
 }
 
 func printIssueUsage(w io.Writer) {
