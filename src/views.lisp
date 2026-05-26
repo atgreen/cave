@@ -700,6 +700,26 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
           (render-file-tree file-tree owner-name repo-name ref path)
           (:p.empty "Empty directory.")))))
 
+(defun json-for-script (s)
+  "JSON-stringify a string for safe inlining inside a <script> tag.
+   jzon emits a literal </script> when the input contains one (e.g. a
+   source file with embedded <script> templates), and the browser's HTML
+   parser closes the surrounding <script> early. Replace </ with <\\/ —
+   a JSON-legal escape that JavaScript treats identically to / but that
+   the HTML parser won't match as a script-close."
+  (let* ((json (com.inuoe.jzon:stringify s))
+         (out (make-string-output-stream))
+         (i 0))
+    (loop while (< i (length json)) do
+      (cond ((and (char= (char json i) #\<)
+                  (< (1+ i) (length json))
+                  (char= (char json (1+ i)) #\/))
+             (write-string "<\\/" out)
+             (incf i 2))
+            (t (write-char (char json i) out)
+               (incf i))))
+    (get-output-stream-string out)))
+
 (defun view-blob (&key owner-name repo ref path content is-binary file-size language)
   "Render a file content page with Monaco editor."
   (let ((repo-name (getf repo :name))
@@ -875,8 +895,8 @@ require(['vs/editor/editor.main'], function() {
   }
   }
 });"
-                  (com.inuoe.jzon:stringify content)
-                  (com.inuoe.jzon:stringify content)
+                  (json-for-script content)
+                  (json-for-script content)
                   (com.inuoe.jzon:stringify (or language "plaintext"))
                   (format nil "/~A/~A" owner-name repo-name)))))))))
 
