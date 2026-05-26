@@ -45,7 +45,8 @@
                            (parse-integer (subseq addr (1+ colon)) :junk-allowed t)
                            9444)))
             (setf (gethash node-id *chamber-channels*)
-                  (ag-grpc:make-channel host (or port 9444) :timeout nil)))))))
+                  (ag-grpc:make-channel host (or port 9444)
+                                        :timeout (config-value :chamber-rpc-timeout 10))))))))
 
 (defun close-all-channels ()
   "Close all cached gRPC channels."

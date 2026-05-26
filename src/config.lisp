@@ -36,6 +36,7 @@
     :chamber-enabled nil
     :chamber-port 9444
     :chamber-url nil
+    :chamber-rpc-timeout 10
     :chamber-max-git-processes 64
     :chamber-cache-size-mb 128
     :chamber-nodes nil

@@ -29,7 +29,8 @@
                      (parse-integer port-str :junk-allowed t)
                      (config-value :chamber-port 9444))))
       (setf *chamber-channel*
-            (ag-grpc:make-channel host-only port :timeout nil))))
+            (ag-grpc:make-channel host-only port
+                                  :timeout (config-value :chamber-rpc-timeout 10)))))
   *chamber-channel*)
 
 (define-condition chamber-rpc-error (error)
@@ -40,22 +41,43 @@
                      (chamber-rpc-error-method c)
                      (chamber-rpc-error-cause c)))))
 
+(defun reset-chamber-channel ()
+  "Drop the cached channel and try to close its connection, so the next
+   call rebuilds it fresh. A poisoned channel can otherwise wedge every
+   subsequent request."
+  (let ((stale *chamber-channel*))
+    (setf *chamber-channel* nil)
+    (when stale
+      (handler-case (ag-grpc:channel-close stale) (error () nil)))))
+
 (defun chamber-call (method request response-type &key owner repo-name write-p)
-  "Make a unary gRPC call to Chamber. Translates transport errors into a
-chamber-rpc-error condition so callers can fall back to direct git
-instead of crashing the server thread."
-  (handler-case
-      (if (multi-chamber-p)
-          (router-call method request response-type
-                       :owner owner :repo-name repo-name :write-p write-p)
-          (ag-grpc:grpc-call (ensure-chamber-channel) method request
-                              :response-type response-type))
-    (error (e)
-      (llog:warn "Chamber RPC failed" :method method
-                                       :error (princ-to-string e))
-      ;; Reset the channel so a subsequent call doesn't reuse a poisoned stream.
-      (setf *chamber-channel* nil)
-      (error 'chamber-rpc-error :method method :cause e))))
+  "Make a unary gRPC call to Chamber. Translates transport errors and
+hard wall-clock timeouts into a chamber-rpc-error condition so callers
+can fall back to direct git instead of crashing the server thread.
+
+The bt2:with-timeout wrapper is a hard deadline: ag-grpc's own per-call
+timeout only covers the receive path, not connection establishment or
+internal stalls, so without this any wedge in the gRPC stack would block
+the Hunchentoot worker forever."
+  (let ((deadline (config-value :chamber-rpc-timeout 10)))
+    (handler-case
+        (bt2:with-timeout (deadline)
+          (if (multi-chamber-p)
+              (router-call method request response-type
+                           :owner owner :repo-name repo-name :write-p write-p)
+              (ag-grpc:grpc-call (ensure-chamber-channel) method request
+                                  :response-type response-type
+                                  :timeout deadline)))
+      (bt2:timeout ()
+        (llog:warn "Chamber RPC timed out" :method method :deadline deadline)
+        (reset-chamber-channel)
+        (error 'chamber-rpc-error :method method
+                                  :cause (format nil "deadline exceeded (~As)" deadline)))
+      (error (e)
+        (llog:warn "Chamber RPC failed" :method method
+                                         :error (princ-to-string e))
+        (reset-chamber-channel)
+        (error 'chamber-rpc-error :method method :cause e)))))
 
 (defmacro with-chamber-fallback (fallback-form &body body)
   "Run BODY; if a chamber-rpc-error escapes, evaluate FALLBACK-FORM instead.
