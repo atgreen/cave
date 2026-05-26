@@ -802,40 +802,55 @@ require(['vs/editor/editor.main'], function() {
     ed.setPosition({ lineNumber: line, column: 1 });
     highlightLine(line);
   }
-  // Per-line action menu. Clicking a line number sets the #L<n> permalink
-  // hash, highlights the line, and opens a small popover with Copy line,
-  // Copy permalink, and Reference in new issue.
-  var menu = document.createElement('div');
-  menu.className = 'cave-line-menu';
-  menu.style.display = 'none';
-  var editorContainer = document.getElementById('editor-container');
-  editorContainer.style.position = 'relative';
-  editorContainer.appendChild(menu);
+  // Per-line action menu, hung off a Monaco ContentWidget so the editor
+  // owns the positioning — it stays anchored to the line through scroll
+  // and viewport flips above/below when there's no room.
+  var menuDom = document.createElement('div');
+  menuDom.className = 'cave-line-menu';
+  var menuLine = null;
+  var menuWidget = {
+    allowEditorOverflow: true,
+    getId: function() { return 'cave.line-menu'; },
+    getDomNode: function() { return menuDom; },
+    getPosition: function() {
+      if (menuLine === null) return null;
+      return {
+        position: { lineNumber: menuLine, column: 1 },
+        preference: [
+          monaco.editor.ContentWidgetPositionPreference.BELOW,
+          monaco.editor.ContentWidgetPositionPreference.ABOVE
+        ]
+      };
+    }
+  };
+  ed.addContentWidget(menuWidget);
 
   function buildMenu(n) {
     var permalink = location.origin + location.pathname + location.search + '#L' + n;
     var lineText = ed.getModel().getLineContent(n);
     var refBody = '#' + permalink + '\\n\\n```\\n' + lineText + '\\n```';
     var issueHref = '~A/issues/new?body=' + encodeURIComponent(refBody);
-    menu.innerHTML =
+    menuDom.innerHTML =
         '<button type=\"button\" class=\"cave-line-menu-item\" data-act=\"copy-line\">Copy line</button>' +
         '<button type=\"button\" class=\"cave-line-menu-item\" data-act=\"copy-link\">Copy permalink</button>' +
         '<a class=\"cave-line-menu-item\" href=\"' + issueHref + '\">Reference in new issue</a>';
-    menu.querySelector('[data-act=\"copy-line\"]').onclick = function() {
+    menuDom.querySelector('[data-act=\"copy-line\"]').onclick = function() {
       navigator.clipboard && navigator.clipboard.writeText(lineText);
-      menu.style.display = 'none';
+      hideMenu();
     };
-    menu.querySelector('[data-act=\"copy-link\"]').onclick = function() {
+    menuDom.querySelector('[data-act=\"copy-link\"]').onclick = function() {
       navigator.clipboard && navigator.clipboard.writeText(permalink);
-      menu.style.display = 'none';
+      hideMenu();
     };
   }
   function showMenu(n) {
     buildMenu(n);
-    var top = ed.getTopForLineNumber(n) - ed.getScrollTop() + 22;
-    menu.style.top = top + 'px';
-    menu.style.left = '60px';
-    menu.style.display = 'block';
+    menuLine = n;
+    ed.layoutContentWidget(menuWidget);
+  }
+  function hideMenu() {
+    menuLine = null;
+    ed.layoutContentWidget(menuWidget);
   }
   ed.onMouseDown(function(e) {
     if (e.target && e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
@@ -844,14 +859,13 @@ require(['vs/editor/editor.main'], function() {
       history.replaceState(null, '', '#L' + n);
       highlightLine(n);
       showMenu(n);
-    } else {
-      menu.style.display = 'none';
     }
   });
+  // Click anywhere outside the menu or line-numbers gutter dismisses.
   document.addEventListener('click', function(e) {
     if (e.target.closest('.cave-line-menu')) return;
     if (e.target.closest('.line-numbers')) return;
-    menu.style.display = 'none';
+    if (menuLine !== null) hideMenu();
   });
   if (search) {
     var fc = ed.getContribution('editor.contrib.findController');
