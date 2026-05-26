@@ -9,14 +9,14 @@ Cave is built for small teams who want to own their infrastructure without the b
 - **Git hosting** — SSH push/clone with per-repo access control, plus anonymous read-only clone over HTTPS
 - **Pull requests** — graduated review model (approve, approve with concerns, request changes), merge eligibility rules, squash merge
 - **Stacked changesets** — first-class support for dependent PRs
-- **Issues** — with comments, close/reopen, labels
+- **Issues** — with comments, close/reopen
 - **Releases** — tag-backed releases with markdown body and per-asset uploads (≤ 100 MB each), download counts
 - **Pulse tab** — per-repo activity chart, total views, unique visitors, top contributors, referring sites (member-only)
 - **Commit signature verification** — SSH-signed commits validated against registered user keys on push; "Verified" badge in the commit list
-- **Code browser** — file tree, Monaco editor, syntax-highlighted diffs via diff2html, SSH/HTTPS clone widget on every repo
+- **Code browser** — file tree, Monaco editor, syntax-highlighted diffs via diff2html, SSH/HTTPS clone widget on every repo, click-a-line-number permalinks (`#L42`) with a per-line action menu (copy line, copy permalink, reference in new issue)
 - **README rendering** — server-side Markdown with tables and fenced code blocks; rendered HTML cached by blob sha
 - **Public landing** — anonymous visitors get a list of public repos and recent activity, no login required
-- **Keycloak SSO** — OIDC authentication, self-registration, email verification, 2FA (TOTP)
+- **Keycloak SSO** — OIDC authentication, self-registration gated by admin approval, email verification, 2FA (TOTP)
 - **Email** — SMTP via mailpit (dev) or any external relay (Resend / Postmark / SES / Fastmail …) configured per deploy
 - **Observability** — Prometheus metrics, Grafana dashboards, SBCL runtime stats
 - **Webhooks** — HTTP callbacks on push, PR, and issue events
@@ -197,7 +197,9 @@ Two configs live side-by-side:
    apiVersion: v1
    cave:        { image: ghcr.io/atgreen/cave:main, base_url: https://cave.example.com,
                   secret_key: <32-byte hex> }
-   ports:       { http: 9080, ssh: 22, ssh_bind: 0.0.0.0, keycloak: 9180, mailpit: 9025 }
+   ports:       { http: 9080, ssh: 22, ssh_bind: 0.0.0.0,
+                  grpc: 9443, grpc_bind: 0.0.0.0,
+                  keycloak: 9180, mailpit: 9025 }
    database:    { mode: local, image: docker.io/postgres:16-alpine, password: <random> }
    auth:
      mode: keycloak
@@ -222,6 +224,33 @@ Two configs live side-by-side:
 
 ## CLI
 
+### `cave` — user CLI
+
+Talks to a cave-server over HTTPS using a personal API token from
+Settings → API Tokens.
+
+```
+cave login [--base-url URL] [--token TOKEN]   Save server URL and token
+cave logout                                   Remove saved config
+cave status                                   Show current auth config
+
+cave repo create <name> [--description "…"] [--private]
+                        [--mode empty|import|mirror]
+                        [--url URL] [--auth-token TOKEN]
+                        [--mirror-interval MINUTES] [--json]
+
+cave issue list   [--status open|closed] [--json]
+cave issue get    [--json] <number>
+cave issue create --title TITLE [--body TEXT] [--json]
+cave issue close  <number>
+cave issue reopen <number>
+```
+
+Set `CAVE_REPO=owner/repo` (or pass `--repo`) so issue commands can find
+the target without you typing it every time.
+
+### `cave-server` — server binary
+
 ```
 cave-server serve          Start the web server
 cave-server init           Initialize the database
@@ -232,9 +261,15 @@ cave-server sync-mirrors   Sync repo mirrors (push mirrors after each push)
 cave-server sync-themes    Sync user themes from a cave-themes repo
 cave-server update-keys    Regenerate SSH authorized_keys
 cave-server git-shell      SSH git transport handler (called by sshd)
+cave-server git-proxy      Proxy git protocol through Chamber gRPC (called by
+                           cave-shell.sh when chamber is enabled)
 cave-server post-receive   Handle post-receive events (legacy; HTTP endpoint is the
-                    live path)
+                           live path)
+```
 
+### `cavectl` — deployment tool
+
+```
 cavectl init                Generate cave.yaml and bring up the full stack
 cavectl apply               Reconcile containers to match cave.yaml
 cavectl status              Show running containers + assigned ports
@@ -242,8 +277,10 @@ cavectl logs <service>      Tail container logs
 cavectl doctor              Run sanity checks: runtime, ports, DNS, containers,
                             schema, OIDC, SMTP realm config
 cavectl backup              Tar up postgres + repos + cave.yaml
+cavectl restore <archive>   Restore from a cavectl backup archive
 cavectl instances           List all cavectl-managed instances on this host
 cavectl destroy             Tear down (keep volumes with --keep-data)
+cavectl version             Print cavectl version
 ```
 
 ## REST API
@@ -252,9 +289,11 @@ Authenticate with `Authorization: Bearer <api-token>` (issued from Settings →
 API Tokens):
 
 ```
+POST   /api/v1/user/repos                                Create a personal repo
 GET    /api/v1/repos/:owner/:repo/issues
 POST   /api/v1/repos/:owner/:repo/issues
 GET    /api/v1/repos/:owner/:repo/issues/:number
+PATCH  /api/v1/repos/:owner/:repo/issues/:number         Close / reopen
 GET    /api/v1/repos/:owner/:repo/pulls
 POST   /api/v1/repos/:owner/:repo/pulls
 GET    /api/v1/repos/:owner/:repo/pulls/:number
