@@ -129,7 +129,7 @@ routes, ghcr.io/ocicl/routes@sha256:e64fe3e85f8c0f19ada40f6cbda843f63ee73c705d5c
 s-sql, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a578371d1125786f4f43101169e4857cdd, postmodern-1.33.11/s-sql.asd
 salza2, ghcr.io/ocicl/salza2@sha256:0f9d930524b469e1442372a6e12b26742d9e6a1144e6a455006943190d1ea71e, salza2-2.1/salza2.asd
 sanitize-html, ghcr.io/ocicl/sanitize-html@sha256:b980df2e67cd22cc91dd738bc9fcfdd4f2b0bfaff782aef1417fdd1b5b29d0ff, cl-sanitize-html-20251102-5e5b3f4/sanitize-html.asd
-serapeum, ghcr.io/ocicl/serapeum@sha256:31bccc85079addd0cb5583b484b121e54fab8cb156e8919f5e7ff2ae9b1de076, serapeum-20260213-71f35c9/serapeum.asd
+serapeum, ghcr.io/ocicl/serapeum@sha256:c2d9623e8e48fa4befe99435c3c22e3470bb07bd09e4de1d04b8ebc8eca0ab2f, serapeum-20260510-c4dcbb6/serapeum.asd
 simple-date, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a578371d1125786f4f43101169e4857cdd, postmodern-1.33.11/simple-date.asd
 slynk, ghcr.io/ocicl/slynk@sha256:3571fd2a8da88873460baae3185e7b94c80699f2c3ac6dfe675180e9f246a41c, sly-20251214-b01993c/slynk/slynk.asd
 smart-buffer, ghcr.io/ocicl/smart-buffer@sha256:b8d194f5881c415fd7f0099b88dfd9e2158405c2966de15c716b155a364bf0f7, smart-buffer-20240503-619759d/smart-buffer.asd
