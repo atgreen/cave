@@ -1059,3 +1059,7 @@ html[data-theme="dracula"] {
   background: var(--border-subtle);
   padding: 0;
 }
+
+/* Permalink-to-line highlight (Monaco gutter click → #L42) */
+.cave-line-link { background: rgba(232, 168, 76, 0.12); }
+.cave-line-link-gutter { width: 3px !important; background: var(--accent); }

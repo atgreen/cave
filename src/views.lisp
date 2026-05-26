@@ -783,12 +783,36 @@ require(['vs/editor/editor.main'], function() {
     scrollbar: { verticalScrollbarSize: 8 }
   });
   var params = new URLSearchParams(window.location.search);
-  var line = parseInt(params.get('line'));
   var search = params.get('search');
+  // Line target: prefer #L42 fragment (the shape we emit on click and the one
+  // people are used to from GitHub); fall back to legacy ?line=42.
+  var hashMatch = (window.location.hash || '').match(/^#L(\\d+)/);
+  var line = hashMatch ? parseInt(hashMatch[1]) : parseInt(params.get('line'));
+  var deco = [];
+  function highlightLine(n) {
+    if (!n || n < 1) { deco = ed.deltaDecorations(deco, []); return; }
+    deco = ed.deltaDecorations(deco, [{
+      range: new monaco.Range(n, 1, n, 1),
+      options: { isWholeLine: true, className: 'cave-line-link',
+                 linesDecorationsClassName: 'cave-line-link-gutter' }
+    }]);
+  }
   if (line) {
     ed.revealLineInCenter(line);
     ed.setPosition({ lineNumber: line, column: 1 });
+    highlightLine(line);
   }
+  // Click a line number to capture a permalink to that line. We update the
+  // URL hash so the user can just copy from the address bar; this also leaves
+  // the page reload-safe via the #L42 parser above.
+  ed.onMouseDown(function(e) {
+    if (e.target && e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
+      var n = e.target.position && e.target.position.lineNumber;
+      if (!n) return;
+      history.replaceState(null, '', '#L' + n);
+      highlightLine(n);
+    }
+  });
   if (search) {
     var fc = ed.getContribution('editor.contrib.findController');
     fc.setSearchString(search);
