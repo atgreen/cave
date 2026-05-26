@@ -44,6 +44,7 @@ type Repo struct {
 	Name        string      `json:"name"`
 	OwnerID     *int64      `json:"owner_id"`
 	OrgID       *int64      `json:"org_id"`
+	OwnerName   string      `json:"owner_name"`
 	Description string      `json:"description"`
 	IsPrivate   bool        `json:"is_private"`
 	CreatedAt   json.Number `json:"created_at"`
@@ -204,14 +205,31 @@ func runRepoCreate(c *client, args []string) error {
 	authToken := fs.String("auth-token", "", "Auth token for the remote URL (optional)")
 	interval := fs.Int("mirror-interval", 60, "Pull interval in minutes (mirror mode)")
 	jsonOut := fs.Bool("json", false, "Emit raw JSON")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
+
+	// Allow flags interleaved with the positional name: re-invoke Parse
+	// after each non-flag token. Stdlib flag stops at the first positional,
+	// so without this, `cave repo create foo --json` silently drops --json.
+	var positional []string
+	remaining := args
+	for {
+		if err := fs.Parse(remaining); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
 		}
-		return err
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		remaining = rest[1:]
 	}
 
-	name := strings.TrimSpace(fs.Arg(0))
+	name := ""
+	if len(positional) > 0 {
+		name = strings.TrimSpace(positional[0])
+	}
 	if name == "" && (*mode == "import" || *mode == "mirror") && *remoteURL != "" {
 		// Server will derive name from URL.
 	} else if name == "" {
@@ -235,17 +253,19 @@ func runRepoCreate(c *client, args []string) error {
 		return writeJSON(os.Stdout, repo)
 	}
 
-	fmt.Fprintf(os.Stdout, "Created %s/%s\n",
-		repoOwnerLabel(repo), repo.Name)
+	owner := repoOwnerLabel(repo)
+	fmt.Fprintf(os.Stdout, "Created %s/%s\n", owner, repo.Name)
 	fmt.Fprintf(os.Stdout, "  %s/%s/%s\n",
-		strings.TrimRight(c.baseURL, "/"), repoOwnerLabel(repo), repo.Name)
+		strings.TrimRight(c.baseURL, "/"), owner, repo.Name)
 	return nil
 }
 
 func repoOwnerLabel(r *Repo) string {
-	// We don't fetch usernames in the response — the server returns owner_id/org_id
-	// only. Fall back to a placeholder; users will see the name and full URL printed
-	// by the caller anyway. The server's create response could be enriched later.
+	if r.OwnerName != "" {
+		return r.OwnerName
+	}
+	// Belt-and-braces — the server now always returns owner_name, but if a
+	// future version doesn't, we'd rather print something than crash.
 	if r.OwnerID != nil {
 		return fmt.Sprintf("(owner_id=%d)", *r.OwnerID)
 	}

@@ -2314,7 +2314,11 @@ the results. Skips deletes and zero-sha boundaries."
           (log-event "repo.created" :user-id *current-user-id*
                                     :repo-id (getf repo :id)
                                     :metadata (format nil "{\"mode\": \"~A\"}" mode))
-          (json-response (find-repo username name) :status 201))
+          ;; Include owner_name so API clients (e.g. the cave CLI) can print
+          ;; OWNER/REPO without a second lookup.
+          (let ((created (find-repo username name)))
+            (json-response (append created (list :owner-name username))
+                           :status 201)))
       (error (e)
         (json-error (format nil "~A" e) :status 400)))))
 
