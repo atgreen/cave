@@ -58,7 +58,9 @@ On the target host (Fedora/Rocky/Alma/Debian/Ubuntu, with `podman` or `docker`):
 # 1. Pull cavectl from a release artifact, or build from source:
 go build -o cavectl ./cli/cavectl
 
-# 2. Generate a fresh cave.yaml — by default it pulls images from ghcr.io.
+# 2. Generate cave.yaml. init also brings the stack up after it prints
+#    the plan; answer "no" at the prompt if you want to edit cave.yaml
+#    before anything is created.
 ./cavectl init --name cave
 
 # 3. Edit cave.yaml: set base_url to https://cave.example.com,
@@ -66,11 +68,10 @@ go build -o cavectl ./cli/cavectl
 #    https://auth.cave.example.com, smtp.mode to "external" with your
 #    relay credentials, and ports.ssh to 22 if cave's SSH should be on
 #    the public port (then move system sshd off 22 first).
-
-# 4. Apply
+#    Then reconcile the edits:
 ./cavectl apply --yes
 
-# 5. Health-check
+# 4. Health-check
 ./cavectl doctor
 ```
 
