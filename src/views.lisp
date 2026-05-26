@@ -710,12 +710,15 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
+               ;; Every intermediate path segment is a directory, so use /tree/.
+               ;; The final segment is the file itself and is rendered text-only
+               ;; (no link), so its URL doesn't matter.
                (let ((parts (uiop:split-string path :separator '(#\/)))
                      (crumbs nil)
                      (built ""))
                  (dolist (part parts)
                    (setf built (if (uiop:emptyp built) part (format nil "~A/~A" built part)))
-                   (push (list (format nil "/~A/~A/blob/~A?path=~A"
+                   (push (list (format nil "/~A/~A/tree/~A?path=~A"
                                        owner-name repo-name ref built)
                                part)
                          crumbs))
