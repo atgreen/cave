@@ -621,8 +621,13 @@ Otherwise checks for null bytes."
                     (uiop:string-prefix-p "//" url)
                     (uiop:string-prefix-p "data:" url))
                 (setf pos (1+ url-end))
-                ;; Rewrite relative URL
-                (let ((new-url (format nil "~A~A" base-url url)))
+                ;; Rewrite relative URL. Strip a leading "./" or "/" so the
+                ;; raw handler sees a clean path; without this, ![](./foo.png)
+                ;; produces ?path=./foo.png and 404s.
+                (let* ((clean (cond ((uiop:string-prefix-p "./" url) (subseq url 2))
+                                    ((uiop:string-prefix-p "/" url) (subseq url 1))
+                                    (t url)))
+                       (new-url (format nil "~A~A" base-url clean)))
                   (setf result (concatenate 'string
                                             (subseq result 0 url-start)
                                             new-url
