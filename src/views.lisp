@@ -802,16 +802,56 @@ require(['vs/editor/editor.main'], function() {
     ed.setPosition({ lineNumber: line, column: 1 });
     highlightLine(line);
   }
-  // Click a line number to capture a permalink to that line. We update the
-  // URL hash so the user can just copy from the address bar; this also leaves
-  // the page reload-safe via the #L42 parser above.
+  // Per-line action menu. Clicking a line number sets the #L<n> permalink
+  // hash, highlights the line, and opens a small popover with Copy line,
+  // Copy permalink, and Reference in new issue.
+  var menu = document.createElement('div');
+  menu.className = 'cave-line-menu';
+  menu.style.display = 'none';
+  var editorContainer = document.getElementById('editor-container');
+  editorContainer.style.position = 'relative';
+  editorContainer.appendChild(menu);
+
+  function buildMenu(n) {
+    var permalink = location.origin + location.pathname + location.search + '#L' + n;
+    var lineText = ed.getModel().getLineContent(n);
+    var refBody = '#' + permalink + '\\n\\n```\\n' + lineText + '\\n```';
+    var issueHref = '~A/issues/new?body=' + encodeURIComponent(refBody);
+    menu.innerHTML =
+        '<button type=\"button\" class=\"cave-line-menu-item\" data-act=\"copy-line\">Copy line</button>' +
+        '<button type=\"button\" class=\"cave-line-menu-item\" data-act=\"copy-link\">Copy permalink</button>' +
+        '<a class=\"cave-line-menu-item\" href=\"' + issueHref + '\">Reference in new issue</a>';
+    menu.querySelector('[data-act=\"copy-line\"]').onclick = function() {
+      navigator.clipboard && navigator.clipboard.writeText(lineText);
+      menu.style.display = 'none';
+    };
+    menu.querySelector('[data-act=\"copy-link\"]').onclick = function() {
+      navigator.clipboard && navigator.clipboard.writeText(permalink);
+      menu.style.display = 'none';
+    };
+  }
+  function showMenu(n) {
+    buildMenu(n);
+    var top = ed.getTopForLineNumber(n) - ed.getScrollTop() + 22;
+    menu.style.top = top + 'px';
+    menu.style.left = '60px';
+    menu.style.display = 'block';
+  }
   ed.onMouseDown(function(e) {
     if (e.target && e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
       var n = e.target.position && e.target.position.lineNumber;
       if (!n) return;
       history.replaceState(null, '', '#L' + n);
       highlightLine(n);
+      showMenu(n);
+    } else {
+      menu.style.display = 'none';
     }
+  });
+  document.addEventListener('click', function(e) {
+    if (e.target.closest('.cave-line-menu')) return;
+    if (e.target.closest('.line-numbers')) return;
+    menu.style.display = 'none';
   });
   if (search) {
     var fc = ed.getContribution('editor.contrib.findController');
@@ -823,7 +863,8 @@ require(['vs/editor/editor.main'], function() {
 });"
                   (com.inuoe.jzon:stringify content)
                   (com.inuoe.jzon:stringify content)
-                  (com.inuoe.jzon:stringify (or language "plaintext"))))))))))
+                  (com.inuoe.jzon:stringify (or language "plaintext"))
+                  (format nil "/~A/~A" owner-name repo-name)))))))))
 
 ;;; ========================== COMMIT PAGE ==========================
 
@@ -905,7 +946,7 @@ document.addEventListener('DOMContentLoaded', function() {
               (:span.badge (getf iss :status)))))
           (:p.empty "No issues found.")))))
 
-(defun view-new-issue (&key owner-name repo)
+(defun view-new-issue (&key owner-name repo body)
   "Render the new issue form."
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
@@ -918,7 +959,7 @@ document.addEventListener('DOMContentLoaded', function() {
         (:input :type "text" :id "title" :name "title" :required t :autofocus t))
        (:div.field
         (:label :for "body" "Description (optional)")
-        (:textarea :id "body" :name "body" :rows "12"))
+        (:textarea :id "body" :name "body" :rows "12" (when body (princ body))))
        (:button.btn.btn-primary :type "submit" "Create issue")))))
 
 (defun view-issue (&key owner-name repo issue author comments)

@@ -1063,3 +1063,30 @@ html[data-theme="dracula"] {
 /* Permalink-to-line highlight (Monaco gutter click → #L42) */
 .cave-line-link { background: rgba(232, 168, 76, 0.12); }
 .cave-line-link-gutter { width: 3px !important; background: var(--accent); }
+
+/* Per-line action menu in the Monaco blob view */
+.cave-line-menu {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  padding: .25rem;
+  z-index: 1000;
+  min-width: 200px;
+  font-size: .85rem;
+}
+.cave-line-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: .4rem .65rem;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+}
+.cave-line-menu-item:hover { background: var(--surface-2, rgba(255, 255, 255, .04)); }

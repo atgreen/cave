@@ -1950,7 +1950,10 @@ the results. Skips deletes and zero-sha boundaries."
   (when (require-login)
     (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
       (unless repo (return-from new-issue-page repo))
-      (html-response (view-new-issue :owner-name owner :repo repo)))))
+      ;; Allow ?body=… so the blob-view line menu can pre-fill a permalink
+      ;; reference; the title field stays empty for the user to write.
+      (html-response (view-new-issue :owner-name owner :repo repo
+                                     :body (hunchentoot:get-parameter "body"))))))
 
 (easy-routes:defroute create-issue-submit
     ("/:owner/:repo-name/issues/new" :method :post) ()
