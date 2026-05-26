@@ -78,9 +78,15 @@ go build -o cavectl ./cli/cavectl
 Front it with Caddy:
 
 ```caddyfile
-cave.example.com       { reverse_proxy 127.0.0.1:9080 }
-auth.cave.example.com  { reverse_proxy 127.0.0.1:9180 }
+cave.example.com         { reverse_proxy 127.0.0.1:9080 }
+auth.cave.example.com    { reverse_proxy 127.0.0.1:9180 }
+runner.cave.example.com  { reverse_proxy h2c://127.0.0.1:9443 }
 ```
+
+The `runner.` block is what lets remote automation runners reach
+cave's gRPC service through TLS — point runners at
+`grpcs://runner.cave.example.com`. `h2c://` tells Caddy to speak
+plaintext HTTP/2 to the upstream (gRPC).
 
 ### Path B — Make + systemd quadlets
 
