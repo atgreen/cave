@@ -8,11 +8,11 @@
 3bmd-youtube, ghcr.io/ocicl/3bmd@sha256:8271fdd8c5916501e07004a9ccce66091db16dfd704e1c916ec9b0495277e1a1, 3bmd-20250614-f850c88/3bmd-youtube.asd
 3bmd-youtube-tests, ghcr.io/ocicl/3bmd@sha256:8271fdd8c5916501e07004a9ccce66091db16dfd704e1c916ec9b0495277e1a1, 3bmd-20250614-f850c88/3bmd-youtube-tests.asd
 access, ghcr.io/ocicl/access@sha256:96f4ea8a447a99bf4e94de86b2134e1167d45c7a1ca961e986931f06930f1bbd, access-20250418-346e97b/access.asd
-ag-grpc, ghcr.io/ocicl/ag-grpc@sha256:588ef21a211014c002fb1ce6f576db585931c74c2e9c61978bd45c0d3c4e0626, ag-gRPC-20260505-0e89f79/ag-grpc.asd
-ag-grpc-all, ghcr.io/ocicl/ag-grpc@sha256:588ef21a211014c002fb1ce6f576db585931c74c2e9c61978bd45c0d3c4e0626, ag-gRPC-20260505-0e89f79/ag-grpc-all.asd
-ag-http2, ghcr.io/ocicl/ag-grpc@sha256:588ef21a211014c002fb1ce6f576db585931c74c2e9c61978bd45c0d3c4e0626, ag-gRPC-20260505-0e89f79/ag-http2.asd
-ag-proto, ghcr.io/ocicl/ag-grpc@sha256:588ef21a211014c002fb1ce6f576db585931c74c2e9c61978bd45c0d3c4e0626, ag-gRPC-20260505-0e89f79/ag-proto.asd
-ag-proto-cli, ghcr.io/ocicl/ag-grpc@sha256:588ef21a211014c002fb1ce6f576db585931c74c2e9c61978bd45c0d3c4e0626, ag-gRPC-20260505-0e89f79/ag-proto-cli.asd
+ag-grpc, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-grpc.asd
+ag-grpc-all, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-grpc-all.asd
+ag-http2, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-http2.asd
+ag-proto, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-proto.asd
+ag-proto-cli, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-proto-cli.asd
 anaphora, ghcr.io/ocicl/anaphora@sha256:55f1c61b7826c5451a60b4b4522e35e770504bbfa2036d8becbf21f6d654925a, anaphora-20240503-bcf0f74/anaphora.asd
 arnesi, ghcr.io/ocicl/arnesi@sha256:2608e157cb9628c624dd0f8ca41b74a87558a5f6ec56b70c330e3621b6e8063e, arnesi-20241212-93dc906/arnesi.asd
 array-utils, ghcr.io/ocicl/array-utils@sha256:a74a7050591fc003ec9c35f1de8f41a5c8ac1a6157ced767ed6e5a73c2596cbf, array-utils-20260218-16e108a/array-utils.asd
