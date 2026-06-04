@@ -2374,6 +2374,30 @@ the results. Skips deletes and zero-sha boundaries."
           (update-issue (getf issue :id) :status status))
         (json-response (find-issue (getf repo :id) num))))))
 
+(easy-routes:defroute api-create-issue-comment
+    ("/api/v1/repos/:owner/:repo-name/issues/:id/comments" :method :post) ()
+  (unless *current-user-id*
+    (return-from api-create-issue-comment (json-error "unauthorized" :status 401)))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (let* ((num (parse-integer id :junk-allowed t))
+           (issue (when num (find-issue (getf repo :id) num))))
+      (unless issue (return-from api-create-issue-comment (json-error "not found" :status 404)))
+      (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+             (json (com.inuoe.jzon:parse body-text))
+             (body (gethash "body" json)))
+        (when (or (not body) (eq body 'null) (uiop:emptyp body))
+          (return-from api-create-issue-comment (json-error "body required")))
+        (let ((comment (create-issue-comment :issue-id (getf issue :id)
+                                             :author-id *current-user-id*
+                                             :body body)))
+          (notify-issue-comment repo owner repo-name issue body)
+          (fire-webhooks (getf repo :id) "issue"
+                         (make-webhook-payload "issue.comment"
+                                               :owner owner
+                                               :repo repo-name
+                                               :number (getf issue :number)))
+          (json-response comment :status 201))))))
+
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Pull Requests
 

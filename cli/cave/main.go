@@ -39,6 +39,18 @@ type issueUpdateRequest struct {
 	Status string `json:"status"`
 }
 
+type issueCommentRequest struct {
+	Body string `json:"body"`
+}
+
+type IssueComment struct {
+	ID        int64       `json:"id"`
+	IssueID   int64       `json:"issue_id"`
+	AuthorID  int64       `json:"author_id"`
+	Body      string      `json:"body"`
+	CreatedAt json.Number `json:"created_at"`
+}
+
 type Repo struct {
 	ID          int64       `json:"id"`
 	Name        string      `json:"name"`
@@ -355,6 +367,8 @@ func runIssues(c *client, ownerName, repoName string, args []string) error {
 		return runIssueGet(c, ownerName, repoName, args[1:])
 	case "create":
 		return runIssueCreate(c, ownerName, repoName, args[1:])
+	case "comment":
+		return runIssueComment(c, ownerName, repoName, args[1:])
 	case "close":
 		return runIssueClose(c, ownerName, repoName, args[1:])
 	case "reopen":
@@ -460,6 +474,87 @@ func runIssueCreate(c *client, ownerName, repoName string, args []string) error 
 
 	fmt.Fprintf(os.Stdout, "Created issue #%d: %s\n", issue.Number, issue.Title)
 	return nil
+}
+
+func runIssueComment(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("issue comment", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	body := fs.String("body", "", "Comment body (use - to read stdin)")
+	bodyFile := fs.String("body-file", "", "Read comment body from file")
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+
+	// Allow flags interleaved with the positional number.
+	var positional []string
+	remaining := args
+	for {
+		if err := fs.Parse(remaining); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		remaining = rest[1:]
+	}
+
+	if len(positional) != 1 {
+		return errors.New("usage: cave issue comment <number> --body TEXT [--json]")
+	}
+	number := positional[0]
+
+	text, err := resolveCommentBody(*body, *bodyFile)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(text) == "" {
+		return errors.New("comment body is required")
+	}
+
+	comment, err := c.createIssueComment(ownerName, repoName, number, issueCommentRequest{Body: text})
+	if err != nil {
+		return err
+	}
+
+	if *jsonOut {
+		return writeJSON(os.Stdout, comment)
+	}
+
+	fmt.Fprintf(os.Stdout, "Commented on issue #%s\n", number)
+	return nil
+}
+
+func resolveCommentBody(body, bodyFile string) (string, error) {
+	if bodyFile != "" && body != "" {
+		return "", errors.New("--body and --body-file are mutually exclusive")
+	}
+	if bodyFile != "" {
+		data, err := os.ReadFile(bodyFile)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	if body == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	return body, nil
+}
+
+func (c *client) createIssueComment(ownerName, repoName, number string, payload issueCommentRequest) (*IssueComment, error) {
+	var comment IssueComment
+	rawURL := issueURL(c.baseURL, ownerName, repoName, number, nil) + "/comments"
+	if err := c.doJSON(http.MethodPost, rawURL, payload, &comment); err != nil {
+		return nil, err
+	}
+	return &comment, nil
 }
 
 func runIssueClose(c *client, ownerName, repoName string, args []string) error {
@@ -654,6 +749,7 @@ func printIssueUsage(w io.Writer) {
 	fmt.Fprintln(w, "  issue list [--status open|closed] [--json]")
 	fmt.Fprintln(w, "  issue get [--json] <number>")
 	fmt.Fprintln(w, "  issue create --title TITLE [--body TEXT] [--json]")
+	fmt.Fprintln(w, "  issue comment <number> --body TEXT|- [--body-file PATH] [--json]")
 	fmt.Fprintln(w, "  issue close <number>")
 	fmt.Fprintln(w, "  issue reopen <number>")
 }
