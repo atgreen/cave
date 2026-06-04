@@ -1010,7 +1010,7 @@ document.addEventListener('DOMContentLoaded', function() {
        (render-avatar (getf author :email) :size 16)
        (format nil " Opened by ~A" (getf author :username)))
       (when (getf issue :body)
-        (:div.issue-body (getf issue :body)))
+        (:div.issue-body (:raw (render-markdown (getf issue :body)))))
 
       ;; Comments
       (:section
@@ -1022,7 +1022,7 @@ document.addEventListener('DOMContentLoaded', function() {
                (render-avatar (getf c :email) :size 16)
                (:strong (getf c :username))
                (:span.comment-date (princ-to-string (getf c :created-at))))
-              (:div.comment-body (getf c :body))))
+              (:div.comment-body (:raw (render-markdown (getf c :body))))))
            (:p.empty "No comments yet.")))
 
       ;; Comment form + close/reopen
