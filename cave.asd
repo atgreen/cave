@@ -33,9 +33,7 @@
                 ;; Email
                 :cl-smtp
                 ;; Markdown rendering
-                :3bmd
-                :3bmd-ext-tables
-                :3bmd-ext-code-blocks
+                :cl-commonmark
                 :sanitize-html
                 ;; UUIDs
                 :frugal-uuid

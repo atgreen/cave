@@ -559,44 +559,14 @@ Otherwise checks for null bytes."
                   :key (lambda (e) (string-downcase (getf e :name))) :test #'string=)
             (first candidates))))))
 
-(defun dedent-fenced-code-blocks (markdown-string)
-  "Outdent any fenced code blocks whose opening ``` line has leading
-   whitespace. 3bmd-code-blocks only recognises fences at column 0; indented
-   fences (very common inside numbered list items, the way GitHub renders
-   them) silently fall through to inline <code> inside a paragraph, which
-   collapses the newlines. This pre-pass keeps the block intact at the cost
-   of breaking it out of the surrounding list visually."
-  (with-output-to-string (out)
-    (let ((indent nil))
-      (loop for line in (uiop:split-string markdown-string :separator '(#\Newline))
-            for trimmed = (string-left-trim '(#\Space #\Tab) line)
-            for leading = (- (length line) (length trimmed))
-            do (cond
-                 ;; Inside a fenced block: dedent by the recorded amount,
-                 ;; clamped to what's actually on the line.
-                 (indent
-                  (write-string (subseq line (min indent leading)) out)
-                  (when (and (>= (length trimmed) 3)
-                             (string= trimmed "```" :end1 3))
-                    (setf indent nil)))
-                 ;; Start of a fence with leading whitespace — record indent.
-                 ((and (> leading 0)
-                       (>= (length trimmed) 3)
-                       (string= trimmed "```" :end1 3))
-                  (setf indent leading)
-                  (write-string trimmed out))
-                 (t (write-string line out)))
-               (terpri out)))))
-
 (defun render-markdown (markdown-string &key raw-base-url)
   "Render Markdown to sanitized HTML string.
+   Uses cl-commonmark (CommonMark 0.31.2 + GFM tables), so the input is
+   parsed exactly as GitHub renders it — no preprocessing workarounds needed.
    RAW-BASE-URL when provided rewrites relative image src to absolute URLs
    before sanitization (the sanitizer strips relative src as protocol-less)."
-  (let* ((3bmd-tables:*tables* t)
-         (3bmd-code-blocks:*code-blocks* t)
-         (preprocessed (dedent-fenced-code-blocks markdown-string))
-         (raw-html (with-output-to-string (s)
-                     (3bmd:parse-string-and-print-to-stream preprocessed s)))
+  (let* ((raw-html (cl-commonmark:markdown-to-html markdown-string
+                                                   :extensions '(:tables)))
          ;; Rewrite relative URLs BEFORE sanitization so they have a protocol
          (rewritten (if raw-base-url
                         (rewrite-relative-img-src raw-html raw-base-url)

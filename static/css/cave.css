@@ -267,6 +267,33 @@ section { margin-bottom: var(--sp-8); }
   font-size: .9rem;
   line-height: 1.6;
 }
+/* Restore block spacing inside markdown-rendered bodies — the universal
+   reset zeros margins/padding everywhere, which collapses paragraphs,
+   lists, and headings into a single dense wall of text. */
+.issue-body p, .comment-body p { margin: 0 0 var(--sp-3); }
+.issue-body p:last-child, .comment-body p:last-child { margin-bottom: 0; }
+.issue-body ul, .comment-body ul { list-style: disc outside; padding-left: var(--sp-6); margin: var(--sp-3) 0; }
+.issue-body ol, .comment-body ol { list-style: decimal outside; padding-left: var(--sp-6); margin: var(--sp-3) 0; }
+.issue-body li, .comment-body li { margin-bottom: var(--sp-2); }
+.issue-body li:last-child, .comment-body li:last-child { margin-bottom: 0; }
+.issue-body ul ul, .issue-body ol ol, .issue-body ul ol, .issue-body ol ul,
+.comment-body ul ul, .comment-body ol ol, .comment-body ul ol, .comment-body ol ul { margin: var(--sp-2) 0; }
+.issue-body h1, .issue-body h2, .issue-body h3, .issue-body h4, .issue-body h5, .issue-body h6,
+.comment-body h1, .comment-body h2, .comment-body h3, .comment-body h4, .comment-body h5, .comment-body h6 {
+  margin: var(--sp-4) 0 var(--sp-2);
+}
+.issue-body blockquote, .comment-body blockquote {
+  margin: var(--sp-3) 0;
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--border);
+  color: var(--text-secondary);
+}
+.issue-body pre, .comment-body pre { margin: var(--sp-3) 0; }
+.issue-body table, .comment-body table { border-collapse: collapse; margin: var(--sp-3) 0; }
+.issue-body th, .issue-body td, .comment-body th, .comment-body td {
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); font-size: .85rem;
+}
+.issue-body th, .comment-body th { background: var(--bg); }
 
 /* --- Clone URL --- */
 .clone-url {
