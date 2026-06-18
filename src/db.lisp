@@ -627,7 +627,104 @@ CREATE INDEX idx_commit_sigs_repo ON cave_commit_signatures (repo_id);")
 -- to 'approved' so the migration doesn't lock anyone out. New OIDC users
 -- land as 'pending' (set explicitly by provision-oidc-user).
 ALTER TABLE cave_users ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved';
-CREATE INDEX idx_users_approval_pending ON cave_users (approval_status) WHERE approval_status = 'pending';"))
+CREATE INDEX idx_users_approval_pending ON cave_users (approval_status) WHERE approval_status = 'pending';")
+
+    (46 . "-- Resolved dependency graph, populated from SBOMs on push (default ref).
+CREATE TABLE cave_repo_deps (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  ref VARCHAR(256) NOT NULL,
+  manifest_path VARCHAR(1024) NOT NULL,
+  ecosystem VARCHAR(64) NOT NULL,
+  package_name VARCHAR(512) NOT NULL,
+  version VARCHAR(256) NOT NULL,
+  purl VARCHAR(1024) NOT NULL,
+  is_direct BOOLEAN NOT NULL DEFAULT TRUE,
+  scope VARCHAR(32),
+  generation BIGINT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, ref, manifest_path, purl)
+);
+CREATE INDEX idx_repo_deps_repo ON cave_repo_deps (repo_id, ref);
+CREATE INDEX idx_repo_deps_pkg ON cave_repo_deps (ecosystem, package_name);")
+
+    (47 . "-- OSV advisories, mirrored by cave deps sync-advisories.
+CREATE TABLE cave_advisories (
+  id BIGSERIAL PRIMARY KEY,
+  osv_id VARCHAR(64) NOT NULL UNIQUE,
+  summary TEXT,
+  details TEXT,
+  aliases TEXT[] NOT NULL DEFAULT '{}',
+  severity VARCHAR(16),
+  cvss_score NUMERIC(3,1),
+  refs JSONB NOT NULL DEFAULT '[]',
+  published_at TIMESTAMPTZ,
+  modified_at TIMESTAMPTZ,
+  withdrawn_at TIMESTAMPTZ
+);
+CREATE INDEX idx_advisories_modified ON cave_advisories (modified_at);
+CREATE INDEX idx_advisories_aliases ON cave_advisories USING GIN (aliases);
+-- OSV affected ranges flattened to introduced/fixed pairs for SQL matching.
+CREATE TABLE cave_advisory_affected (
+  id BIGSERIAL PRIMARY KEY,
+  advisory_id BIGINT NOT NULL REFERENCES cave_advisories(id) ON DELETE CASCADE,
+  ecosystem VARCHAR(64) NOT NULL,
+  package_name VARCHAR(512) NOT NULL,
+  range_type VARCHAR(16) NOT NULL,
+  introduced VARCHAR(256),
+  fixed VARCHAR(256),
+  last_affected VARCHAR(256)
+);
+CREATE INDEX idx_advisory_affected_pkg ON cave_advisory_affected (ecosystem, package_name);")
+
+    (48 . "-- A vulnerable dependency occurrence, recomputed by the matcher.
+CREATE TABLE cave_dep_alerts (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  dep_id BIGINT NOT NULL REFERENCES cave_repo_deps(id) ON DELETE CASCADE,
+  advisory_id BIGINT NOT NULL REFERENCES cave_advisories(id) ON DELETE CASCADE,
+  state VARCHAR(16) NOT NULL DEFAULT 'open'
+    CHECK (state IN ('open', 'dismissed', 'fixed', 'auto_fixed')),
+  fix_version VARCHAR(256),
+  fix_kind VARCHAR(20)
+    CHECK (fix_kind IS NULL OR fix_kind IN ('manifest', 'lockfile', 'override', 'transitive_parent', 'none')),
+  fix_pr_id BIGINT REFERENCES cave_changesets(id) ON DELETE SET NULL,
+  reachable BOOLEAN,
+  detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(dep_id, advisory_id)
+);
+CREATE INDEX idx_dep_alerts_repo ON cave_dep_alerts (repo_id, state);")
+
+    (49 . "-- Durable suppressions, keyed by stable coordinate so they survive
+-- graph rebuilds and version churn.
+CREATE TABLE cave_dep_suppressions (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  ecosystem VARCHAR(64) NOT NULL,
+  package_name VARCHAR(512) NOT NULL,
+  advisory_id BIGINT NOT NULL REFERENCES cave_advisories(id) ON DELETE CASCADE,
+  reason VARCHAR(32) NOT NULL
+    CHECK (reason IN ('not_used', 'no_fix', 'risk_accepted')),
+  note TEXT,
+  created_by BIGINT REFERENCES cave_users(id),
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, ecosystem, package_name, advisory_id)
+);
+CREATE INDEX idx_dep_suppressions_repo ON cave_dep_suppressions (repo_id);
+-- Org policy caps per-repo .cave/deps.yml. Repo config can only narrow it.
+CREATE TABLE cave_org_dep_policy (
+  org_id BIGINT PRIMARY KEY REFERENCES cave_orgs(id) ON DELETE CASCADE,
+  allowed_ecosystems TEXT[],
+  license_allow TEXT[],
+  license_deny TEXT[],
+  automerge_ceiling VARCHAR(8) NOT NULL DEFAULT 'none'
+    CHECK (automerge_ceiling IN ('none', 'patch', 'minor', 'major')),
+  security_always_on BOOLEAN NOT NULL DEFAULT TRUE,
+  freeze_windows JSONB NOT NULL DEFAULT '[]',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
