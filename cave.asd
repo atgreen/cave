@@ -54,6 +54,7 @@
                 (:file "src/metrics")
                 (:file "src/notify")
                 (:file "src/search-zoekt")
+                (:file "src/osv")
                 (:file "src/workflow")
                 (:file "src/runner-service")
                 (:file "src/ssh")

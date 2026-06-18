@@ -174,26 +174,38 @@ CREATE TABLE cave_org_dep_policy (
 
 ## Ingestion & matching surface
 
-### Producer A — advisory sync (global, in-process)
+### Producer A — advisory sync (in-process) — BUILT
 
-New clingon subcommand beside the existing `sync-mirrors` / `sync-themes` in
-`main.lisp`, run on a timer:
+`cave-server sync-advisories` (clingon subcommand beside `sync-mirrors` /
+`sync-themes` in `main.lisp`), run on a timer. Implemented in `src/osv.lisp`.
+
+**Decision (deviation from the original plan):** query the **OSV REST API for the
+packages the dependency graph actually contains**, rather than mirroring OSV's
+per-ecosystem `all.zip` exports. Rationale: no zip library is available (only
+`salza2` compression, and the container has no `unzip`); a forge only cares
+about advisories for packages it hosts; and the API path is lighter and more
+private. `dexador` + `jzon` (both already deps) carry it.
 
 ```lisp
-;; cave deps sync-advisories
-(defun sync-osv-advisories (&key (ecosystems *tracked-ecosystems*) since)
-  "Mirror OSV into cave_advisories + cave_advisory_affected. Incremental on modified_at.
-   GETs https://osv-vulnerabilities.storage.googleapis.com/<eco>/all.zip per ecosystem.
-   On each record: resolve aliases to a canonical row (GIN lookup on aliases),
-   merge-or-insert, then flatten affected[].ranges[] -> (introduced . fixed) rows.
-   Enqueue rematch-advisory for changed records as a batched background sweep."
-  ...)
+(defun sync-osv-advisories (&key ecosystems (verbose t))
+  "Query OSV for every package in the dependency graph, upsert matching
+   advisories, and re-match affected repos.
+   1. distinct-graph-packages -> (ecosystem . name) list
+   2. POST /v1/querybatch (<=1000/req) -> distinct vulnerability ids
+   3. GET /v1/vulns/<id> per id -> upsert-advisory + replace-advisory-affected
+   4. rematch-advisory per upserted advisory")
 ```
 
-`since` = `MAX(modified_at)`. Alias resolution before insert: `SELECT ... WHERE
-osv_id = ANY(aliases) OR osv_id = $new OR $new = ANY(aliases)`; merge into the
-existing canonical record (union aliases, richest summary, max cvss) so one bug
-is one advisory, not three.
+Alias union happens in `upsert-advisory` (SQL `array_agg(DISTINCT …)` on
+conflict). Affected ranges are flattened from `affected[].ranges[].events[]`
+(introduced/fixed/last_affected), with a bare `versions[]` fallback; GIT ranges
+are skipped. Severity is a best-effort qualitative label from
+`database_specific.severity`.
+
+Not yet done: incremental-by-`modified` (currently re-fetches and idempotently
+upserts every matching advisory), `querybatch` page-token pagination, and a
+numeric CVSS score. Verified end to end against the live OSV API (npm/lodash
+returns real CVEs that match a seeded graph).
 
 ### Producer B — dep extraction (per repo, on push)
 
@@ -286,11 +298,11 @@ Auto-merge gate: `fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org `automerge_
 
 ## Build order (MVP first)
 
-1. Migrations 46–49 + `model.lisp` query layer.
-2. `cave deps sync-advisories` (in-process, timer) — advisory DB populated.
+1. Migrations 46–49 + `model.lisp` query layer. — DONE
+2. `cave-server sync-advisories` (in-process, timer) — advisory DB populated. — DONE (`src/osv.lisp`)
 3. `deps-scan` runner task + `/internal/repos/:id/deps` ingest — graph populated.
-4. Matcher (osv-scanner bootstrap) + alerts + dependency-dashboard issue.
-5. Native semver path → instant rematch-on-new-CVE.
+4. Matcher (osv-scanner bootstrap) + alerts + dependency-dashboard issue. — matcher DONE; dashboard issue TODO
+5. Native semver path → instant rematch-on-new-CVE. — DONE (`compare-versions`)
 6. `deps-fix` pipeline + CI-gated auto-merge.
 7. Org policy + per-repo `.cave/deps.yml` (org caps repo).
 8. Dashboards, badges, reachability, metrics.

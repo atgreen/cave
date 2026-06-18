@@ -1047,6 +1047,33 @@
                       (update-mirror-sync (getf m :id) :error err))))))))
     (disconnect-db)))
 
+;;; --- SYNC-ADVISORIES subcommand ---
+
+(defun make-sync-advisories-command ()
+  (clingon:make-command
+   :name "sync-advisories"
+   :description "Sync OSV security advisories for packages in the dependency graph"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "ecosystem" :key :ecosystem
+              :description "Comma-separated OSV ecosystems to limit to (e.g. npm,Go,PyPI)"))
+   :handler #'handle-sync-advisories))
+
+(defun handle-sync-advisories (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (eco (clingon:getopt cmd :ecosystem)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let ((ecosystems (when (and eco (plusp (length eco)))
+                        (mapcar (lambda (s) (string-trim " " s))
+                                (uiop:split-string eco :separator '(#\,))))))
+      (sync-osv-advisories :ecosystems ecosystems))
+    (disconnect-db)))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -1067,7 +1094,8 @@
                        (make-post-receive-command)
                        (make-runner-command)
                        (make-sync-mirrors-command)
-                       (make-sync-themes-command))
+                       (make-sync-themes-command)
+                       (make-sync-advisories-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 

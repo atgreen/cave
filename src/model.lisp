@@ -2129,7 +2129,8 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
    "INSERT INTO cave_advisories
        (osv_id, summary, details, aliases, severity, cvss_score, refs,
         published_at, modified_at, withdrawn_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)
+    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,
+            $8::timestamptz,$9::timestamptz,$10::timestamptz)
     ON CONFLICT (osv_id) DO UPDATE SET
        summary = EXCLUDED.summary,
        details = EXCLUDED.details,
