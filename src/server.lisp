@@ -403,6 +403,15 @@ the results. Skips deletes and zero-sha boundaries."
           (broadcast-invalidate-cache owner repo-name))
         ;; Trigger Zoekt reindexing
         (zoekt-index-repo owner repo-name)
+        ;; Scan dependencies on default-branch pushes
+        (let ((default-branch (or (chamber-get-default-branch owner repo-name) "main")))
+          (when (find-if (lambda (r)
+                           (member (getf r :ref)
+                                   (list (format nil "refs/heads/~A" default-branch)
+                                         default-branch)
+                                   :test #'equal))
+                         refs)
+            (maybe-scan-repo-deps-async owner repo-name default-branch)))
         ;; Fire webhooks
         (dolist (r refs)
           (fire-webhooks (getf repo :id) "push"
@@ -412,6 +421,35 @@ the results. Skips deletes and zero-sha boundaries."
                            ("repository" . (("owner" . ,owner)
                                             ("name" . ,repo-name))))))))
     "ok"))
+
+(defun valid-runner-request-p ()
+  "True when the request carries a valid runner bearer token."
+  (let ((auth (hunchentoot:header-in* :authorization)))
+    (and auth (>= (length auth) 7)
+         (string-equal "Bearer " (subseq auth 0 7))
+         (authenticate-runner (subseq auth 7))
+         t)))
+
+(easy-routes:defroute internal-repo-deps
+    ("/-/internal/repos/:owner/:repo-name/deps" :method :post) (&get ref)
+  "Ingest a CycloneDX SBOM into the dependency graph. Accepts localhost (the
+   host-side scan) or a valid runner bearer token."
+  (unless (or (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+              (valid-runner-request-p))
+    (setf (hunchentoot:return-code*) 403)
+    (return-from internal-repo-deps "Forbidden"))
+  (let ((repo (find-repo owner repo-name)))
+    (unless repo
+      (setf (hunchentoot:return-code*) 404)
+      (return-from internal-repo-deps "Not found"))
+    (let ((body (hunchentoot:raw-post-data :force-text t))
+          (the-ref (or ref (chamber-get-default-branch owner repo-name) "main")))
+      (handler-case
+          (let ((n (ingest-repo-deps (getf repo :id) the-ref (sbom->deps body))))
+            (format nil "ingested ~A deps~%" n))
+        (error (e)
+          (setf (hunchentoot:return-code*) 400)
+          (format nil "Bad SBOM: ~A~%" e))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Push lock-bracket: SSH pushes acquire/release Chamber write locks via HTTP

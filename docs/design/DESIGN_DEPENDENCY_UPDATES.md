@@ -207,25 +207,39 @@ upserts every matching advisory), `querybatch` page-token pagination, and a
 numeric CVSS score. Verified end to end against the live OSV API (npm/lodash
 returns real CVEs that match a seeded graph).
 
-### Producer B — dep extraction (per repo, on push)
+### Producer B — dep extraction (per repo) — BUILT
 
-Hook the existing `schedule-automations ... "post_receive"` call site
-(`main.lisp:847`) to also enqueue a built-in `deps-scan` task **for the default
-branch only**. The runner emits a CycloneDX SBOM (`syft`) and POSTs it back,
-authenticated like the post-receive forward already is:
+Implemented in `src/sbom.lisp`. One CycloneDX parser + one `ingest-repo-deps`
+path, reachable three ways:
 
-```lisp
-;; server.lisp — internal, runner-token auth (mirror the post-receive endpoint)
-("/internal/repos/:id/deps" :method :post) ...   ; -> (ingest-sbom repo-id ref sbom-json)
+1. **HTTP** — `POST /-/internal/repos/:owner/:repo-name/deps` (`server.lisp`),
+   body = CycloneDX JSON, auth = localhost **or** a valid runner bearer token
+   (`valid-runner-request-p` → `authenticate-runner`). For a future runner.
+2. **CLI** — `cave-server deps-scan --repo owner/name [--ref R] [--sbom FILE]`
+   (`main.lisp`): runs `syft` against the repo's working tree, or ingests a given
+   SBOM file. The verified manual/backfill/cron path.
+3. **Push** — `maybe-scan-repo-deps-async` fires from the post-receive handler on
+   **default-branch pushes only**, in a background thread guarded by
+   `:deps-scan-enabled`, mirroring `zoekt-index-repo`.
 
-;; model.lisp
-(defun ingest-sbom (repo-id ref sbom)
-  "Upsert cave_repo_deps from a CycloneDX SBOM, atomically replacing this (repo,ref)."
-  (let ((gen (next-generation)))
-    (dolist (c (sbom-components sbom)) (upsert-repo-dep repo-id ref c gen))
-    (sweep-stale-deps repo-id ref gen)            ; DELETE WHERE generation < gen
-    (rematch-repo repo-id ref)))
-```
+**Decision (deviation from the original plan):** the original sketch had the
+runner emit the SBOM and POST it back. But the runner's simple-task model just
+runs `bash -c <command>` and captures stdout — it has no injected callback token
+or repo checkout, so it can't POST an authenticated SBOM without more plumbing.
+So extraction runs **host-side** (`syft` on the repo's disk path, in-process)
+for now; the HTTP endpoint stays as the contract for a future runner-based
+scanner. Requires `syft` on PATH (or `:syft-path`); degrades gracefully when
+absent (logs and skips).
+
+`sbom->deps` parses each component's purl (`parse-purl` handles npm scopes, Go
+module paths, Maven group:artifact), maps purl type → OSV ecosystem, and pulls a
+best-effort manifest path from syft's `location` properties. `scan-repo-deps`
+obtains the SBOM and calls `ingest-repo-deps` (atomic generation-sweep replace +
+re-match).
+
+Not yet done: runner-based extraction (the endpoint awaits a scanner that posts
+to it), per-component direct/transitive detection (defaults to direct), and
+per-manifest grouping beyond syft's location hints.
 
 ### The matcher
 
@@ -300,7 +314,7 @@ Auto-merge gate: `fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org `automerge_
 
 1. Migrations 46–49 + `model.lisp` query layer. — DONE
 2. `cave-server sync-advisories` (in-process, timer) — advisory DB populated. — DONE (`src/osv.lisp`)
-3. `deps-scan` runner task + `/internal/repos/:id/deps` ingest — graph populated.
+3. `deps-scan` + `/-/internal/repos/.../deps` ingest — graph populated. — DONE (`src/sbom.lisp`)
 4. Matcher (osv-scanner bootstrap) + alerts + dependency-dashboard issue. — matcher DONE; dashboard issue TODO
 5. Native semver path → instant rematch-on-new-CVE. — DONE (`compare-versions`)
 6. `deps-fix` pipeline + CI-gated auto-merge.

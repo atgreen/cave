@@ -1074,6 +1074,45 @@
       (sync-osv-advisories :ecosystems ecosystems))
     (disconnect-db)))
 
+;;; --- DEPS-SCAN subcommand ---
+
+(defun make-deps-scan-command ()
+  (clingon:make-command
+   :name "deps-scan"
+   :description "Scan a repo's dependencies into the graph (runs syft, or ingests --sbom)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "repo" :key :repo :required t
+              :description "Repo path as owner/name")
+             (clingon:make-option :string
+              :long-name "ref" :key :ref
+              :description "Branch/ref to label the scan (default: repo default branch)")
+             (clingon:make-option :string
+              :long-name "sbom" :key :sbom
+              :description "Path to a CycloneDX JSON SBOM (skip running syft)"))
+   :handler #'handle-deps-scan))
+
+(defun handle-deps-scan (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (repo-path (clingon:getopt cmd :repo))
+        (ref (clingon:getopt cmd :ref))
+        (sbom-file (clingon:getopt cmd :sbom)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
+           (owner (first parts))
+           (name (second parts))
+           (sbom-json (when sbom-file (uiop:read-file-string sbom-file)))
+           (n (scan-repo-deps owner name :ref ref :sbom-json sbom-json)))
+      (if n
+          (format t "~&Ingested ~A dependencies for ~A.~%" n repo-path)
+          (format t "~&No SBOM produced for ~A (is syft installed?).~%" repo-path)))
+    (disconnect-db)))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -1095,7 +1134,8 @@
                        (make-runner-command)
                        (make-sync-mirrors-command)
                        (make-sync-themes-command)
-                       (make-sync-advisories-command))
+                       (make-sync-advisories-command)
+                       (make-deps-scan-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 
