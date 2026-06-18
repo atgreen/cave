@@ -1990,3 +1990,331 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
             (unless (= (getf node :id) (getf best :id))
               (assign-repo-to-node repo-id (getf node :id) "secondary")))
           best))))
+
+;;; ---------------------------------------------------------------------------
+;;; Dependency updates & security alerts (migrations 46-49).
+;;; See docs/design/DESIGN_DEPENDENCY_UPDATES.md. Producers (sync-advisories,
+;;; SBOM parse, server endpoints) live elsewhere; this is the query/match layer.
+;;; ---------------------------------------------------------------------------
+
+;;; --- Dependency graph (cave_repo_deps) -------------------------------------
+
+(defun next-dep-generation (repo-id ref)
+  "Next atomic-replace generation marker for REPO-ID's deps on REF."
+  (1+ (postmodern:query
+       (:select (:coalesce (:max 'generation) 0)
+        :from 'cave-repo-deps
+        :where (:and (:= 'repo-id repo-id) (:= 'ref ref)))
+       :single)))
+
+(defun upsert-repo-dep (repo-id ref dep generation)
+  "Insert or refresh one dependency row, stamping it with GENERATION so the
+   sweep keeps it. DEP is a plist: :manifest-path :ecosystem :package-name
+   :version :purl :is-direct :scope. Unchanged rows keep their id."
+  (postmodern:execute
+   "INSERT INTO cave_repo_deps
+       (repo_id, ref, manifest_path, ecosystem, package_name, version, purl,
+        is_direct, scope, generation, updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+    ON CONFLICT (repo_id, ref, manifest_path, purl) DO UPDATE
+       SET version = EXCLUDED.version,
+           ecosystem = EXCLUDED.ecosystem,
+           package_name = EXCLUDED.package_name,
+           is_direct = EXCLUDED.is_direct,
+           scope = EXCLUDED.scope,
+           generation = EXCLUDED.generation,
+           updated_at = NOW()"
+   repo-id ref (getf dep :manifest-path) (getf dep :ecosystem)
+   (getf dep :package-name) (getf dep :version) (getf dep :purl)
+   (if (getf dep :is-direct t) t nil)
+   (or (getf dep :scope) :null)
+   generation))
+
+(defun sweep-stale-deps (repo-id ref generation)
+  "Delete REPO-ID/REF deps left behind by an older scan generation."
+  (postmodern:execute
+   (:delete-from 'cave-repo-deps
+    :where (:and (:= 'repo-id repo-id) (:= 'ref ref)
+                 (:< 'generation generation)))))
+
+(defun list-repo-deps (repo-id &key ref)
+  "All deps for REPO-ID, optionally scoped to REF."
+  (if ref
+      (postmodern:query
+       (:order-by (:select '* :from 'cave-repo-deps
+                   :where (:and (:= 'repo-id repo-id) (:= 'ref ref)))
+                  'ecosystem 'package-name)
+       :plists)
+      (postmodern:query
+       (:order-by (:select '* :from 'cave-repo-deps :where (:= 'repo-id repo-id))
+                  'ecosystem 'package-name)
+       :plists)))
+
+(defun find-repos-using-package (ecosystem package-name)
+  "Org-wide: every repo (with version + ref) depending on PACKAGE-NAME in
+   ECOSYSTEM. The query an external bot structurally cannot answer."
+  (postmodern:query
+   (:order-by
+    (:select 'repo-id 'ref 'version 'is-direct
+     :from 'cave-repo-deps
+     :where (:and (:= 'ecosystem ecosystem) (:= 'package-name package-name)))
+    'repo-id)
+   :plists))
+
+;;; --- Version comparison & range matching -----------------------------------
+
+(defun %nullish (x)
+  "True for both CL NIL and postmodern's :NULL."
+  (or (null x) (eq x :null)))
+
+(defun %version-release-parts (version)
+  "Return (values release-parts prerelease-p): the integer components of
+   VERSION's release portion, and whether a -/+ suffix follows. Strips a
+   leading 'v'; non-numeric components map to 0."
+  (let* ((v (string-trim " " version))
+         (v (if (and (plusp (length v)) (char-equal (char v 0) #\v))
+                (subseq v 1) v))
+         (cut (position-if (lambda (c) (or (char= c #\-) (char= c #\+))) v))
+         (rel (if cut (subseq v 0 cut) v)))
+    (values
+     (mapcar (lambda (p) (or (parse-integer p :junk-allowed t) 0))
+             (uiop:split-string rel :separator "."))
+     (and cut t))))
+
+(defun compare-versions (a b)
+  "Compare version strings A and B; return -1, 0, or 1. Dotted-numeric ordering
+   covers semver release comparison for npm/crates/Go/most ecosystems; a
+   prerelease sorts below the same release. Exotic schemes (PEP 440 epochs,
+   Maven qualifiers) are out of scope — osv-scanner is the bootstrap matcher."
+  (multiple-value-bind (ar ap) (%version-release-parts a)
+    (multiple-value-bind (br bp) (%version-release-parts b)
+      (loop for x = (pop ar) for y = (pop br)
+            while (or x y)
+            do (let ((xi (or x 0)) (yi (or y 0)))
+                 (cond ((< xi yi) (return-from compare-versions -1))
+                       ((> xi yi) (return-from compare-versions 1)))))
+      (cond ((and ap (not bp)) -1)
+            ((and bp (not ap)) 1)
+            (t 0)))))
+
+(defun version-in-range-p (version introduced fixed last-affected)
+  "OSV range semantics: introduced is inclusive, fixed exclusive, last-affected
+   inclusive. A missing upper bound means open-ended."
+  (and (or (%nullish introduced) (string= introduced "0")
+           (>= (compare-versions version introduced) 0))
+       (cond ((not (%nullish fixed))
+              (< (compare-versions version fixed) 0))
+             ((not (%nullish last-affected))
+              (<= (compare-versions version last-affected) 0))
+             (t t))))
+
+(defun dep-affected-p (dep affected)
+  "True when DEP's version falls within AFFECTED's range. Both are plists.
+   GIT-type ranges aren't version-comparable and never match here."
+  (and (string= (getf dep :ecosystem) (getf affected :ecosystem))
+       (string= (getf dep :package-name) (getf affected :package-name))
+       (not (string-equal (or (getf affected :range-type) "") "GIT"))
+       (version-in-range-p (getf dep :version)
+                           (getf affected :introduced)
+                           (getf affected :fixed)
+                           (getf affected :last-affected))))
+
+;;; --- Advisories (cave_advisories + cave_advisory_affected) ------------------
+
+(defun upsert-advisory (&key osv-id summary details aliases severity cvss-score
+                             refs published-at modified-at withdrawn-at)
+  "Insert or update an advisory keyed by OSV-ID, unioning ALIASES. Returns the
+   advisory row id."
+  (postmodern:query
+   "INSERT INTO cave_advisories
+       (osv_id, summary, details, aliases, severity, cvss_score, refs,
+        published_at, modified_at, withdrawn_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)
+    ON CONFLICT (osv_id) DO UPDATE SET
+       summary = EXCLUDED.summary,
+       details = EXCLUDED.details,
+       aliases = (SELECT COALESCE(array_agg(DISTINCT x), '{}')
+                  FROM unnest(cave_advisories.aliases || EXCLUDED.aliases) x),
+       severity = EXCLUDED.severity,
+       cvss_score = EXCLUDED.cvss_score,
+       refs = EXCLUDED.refs,
+       published_at = EXCLUDED.published_at,
+       modified_at = EXCLUDED.modified_at,
+       withdrawn_at = EXCLUDED.withdrawn_at
+    RETURNING id"
+   osv-id (or summary :null) (or details :null)
+   (coerce (or aliases '()) 'vector)
+   (or severity :null) (or cvss-score :null) (or refs "[]")
+   (or published-at :null) (or modified-at :null) (or withdrawn-at :null)
+   :single))
+
+(defun replace-advisory-affected (advisory-id ranges)
+  "Replace ADVISORY-ID's affected-range rows. RANGES is a list of plists:
+   :ecosystem :package-name :range-type :introduced :fixed :last-affected."
+  (postmodern:with-transaction ()
+    (postmodern:execute
+     (:delete-from 'cave-advisory-affected :where (:= 'advisory-id advisory-id)))
+    (dolist (r ranges)
+      (postmodern:execute
+       "INSERT INTO cave_advisory_affected
+           (advisory_id, ecosystem, package_name, range_type,
+            introduced, fixed, last_affected)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)"
+       advisory-id (getf r :ecosystem) (getf r :package-name)
+       (or (getf r :range-type) "SEMVER")
+       (or (getf r :introduced) :null)
+       (or (getf r :fixed) :null)
+       (or (getf r :last-affected) :null)))))
+
+(defun find-advisory (osv-id)
+  "The advisory whose osv_id is exactly OSV-ID."
+  (postmodern:query
+   (:select '* :from 'cave-advisories :where (:= 'osv-id osv-id))
+   :plist))
+
+(defun find-advisory-by-alias (id)
+  "The canonical advisory whose osv_id equals ID or that lists ID as an alias."
+  (postmodern:query
+   "SELECT * FROM cave_advisories
+    WHERE osv_id = $1 OR $1 = ANY(aliases) LIMIT 1"
+   id :plist))
+
+(defun list-affected-for-package (ecosystem package-name)
+  "Affected ranges for (ECOSYSTEM, PACKAGE-NAME) from non-withdrawn advisories;
+   each row carries its advisory_id."
+  (postmodern:query
+   "SELECT aa.* FROM cave_advisory_affected aa
+    JOIN cave_advisories a ON a.id = aa.advisory_id
+    WHERE aa.ecosystem = $1 AND aa.package_name = $2 AND a.withdrawn_at IS NULL"
+   ecosystem package-name :plists))
+
+(defun advisory-affected-packages (advisory-id)
+  "Distinct (ecosystem, package_name) plists the advisory affects."
+  (postmodern:query
+   "SELECT DISTINCT ecosystem, package_name FROM cave_advisory_affected
+    WHERE advisory_id = $1"
+   advisory-id :plists))
+
+;;; --- Suppressions (cave_dep_suppressions) ----------------------------------
+
+(defun create-dep-suppression (&key repo-id ecosystem package-name advisory-id
+                                    reason note created-by expires-at)
+  "Record durable user intent to suppress an advisory for a package in a repo.
+   Idempotent on (repo, ecosystem, package, advisory)."
+  (postmodern:execute
+   "INSERT INTO cave_dep_suppressions
+       (repo_id, ecosystem, package_name, advisory_id, reason, note,
+        created_by, expires_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (repo_id, ecosystem, package_name, advisory_id) DO UPDATE
+       SET reason = EXCLUDED.reason, note = EXCLUDED.note,
+           created_by = EXCLUDED.created_by, expires_at = EXCLUDED.expires_at"
+   repo-id ecosystem package-name advisory-id reason
+   (or note :null) (or created-by :null) (or expires-at :null)))
+
+(defun find-active-suppression (repo-id ecosystem package-name advisory-id)
+  "Suppression row if one exists and has not lapsed, else NIL. Expiry is
+   enforced here — the locked decision puts lapse handling in the matcher."
+  (postmodern:query
+   "SELECT * FROM cave_dep_suppressions
+    WHERE repo_id = $1 AND ecosystem = $2 AND package_name = $3
+      AND advisory_id = $4 AND (expires_at IS NULL OR expires_at > NOW())
+    LIMIT 1"
+   repo-id ecosystem package-name advisory-id :plist))
+
+;;; --- Alerts (cave_dep_alerts) — derived, recomputable ----------------------
+
+(defun upsert-dep-alert (&key repo-id dep-id advisory-id state fix-version)
+  "Upsert a derived alert. Preserves matcher-external columns (fix_kind,
+   fix_pr_id, reachable) on update."
+  (postmodern:execute
+   "INSERT INTO cave_dep_alerts (repo_id, dep_id, advisory_id, state, fix_version)
+    VALUES ($1,$2,$3,$4,$5)
+    ON CONFLICT (dep_id, advisory_id) DO UPDATE
+       SET state = EXCLUDED.state,
+           fix_version = EXCLUDED.fix_version,
+           updated_at = NOW()"
+   repo-id dep-id advisory-id state (or fix-version :null)))
+
+(defun set-dep-alert-state (alert-id state)
+  "Set an alert's lifecycle state (e.g. 'fixed' when it no longer matches)."
+  (postmodern:execute
+   (:update 'cave-dep-alerts
+    :set 'state state 'updated-at (:now)
+    :where (:= 'id alert-id))))
+
+(defun list-dep-alerts (repo-id &key state)
+  "Alerts for REPO-ID, optionally filtered to a single STATE."
+  (if state
+      (postmodern:query
+       (:select '* :from 'cave-dep-alerts
+        :where (:and (:= 'repo-id repo-id) (:= 'state state)))
+       :plists)
+      (postmodern:query
+       (:select '* :from 'cave-dep-alerts :where (:= 'repo-id repo-id))
+       :plists)))
+
+(defun %open-or-dismissed-alerts (repo-id)
+  "Live alerts (open or dismissed) as (id, dep_id, advisory_id) plists, for
+   reconciliation in the matcher."
+  (postmodern:query
+   "SELECT id, dep_id, advisory_id FROM cave_dep_alerts
+    WHERE repo_id = $1 AND state IN ('open','dismissed')"
+   repo-id :plists))
+
+;;; --- Matcher ---------------------------------------------------------------
+
+(defun rematch-repo (repo-id &optional ref)
+  "Recompute REPO-ID's alerts against the advisory DB. Suppressed matches become
+   'dismissed'; live alerts that no longer match become 'fixed'. Returns the
+   number of current matches."
+  (let ((deps (list-repo-deps repo-id :ref ref))
+        (desired (make-hash-table :test 'equal))
+        (matches 0))
+    (dolist (dep deps)
+      (dolist (aff (list-affected-for-package (getf dep :ecosystem)
+                                              (getf dep :package-name)))
+        (when (dep-affected-p dep aff)
+          (let* ((adv-id (getf aff :advisory-id))
+                 (supp (find-active-suppression repo-id (getf dep :ecosystem)
+                                                (getf dep :package-name) adv-id))
+                 (fixed (getf aff :fixed)))
+            (setf (gethash (cons (getf dep :id) adv-id) desired) t)
+            (incf matches)
+            (upsert-dep-alert :repo-id repo-id :dep-id (getf dep :id)
+                              :advisory-id adv-id
+                              :state (if supp "dismissed" "open")
+                              :fix-version (if (%nullish fixed) nil fixed))))))
+    (dolist (al (%open-or-dismissed-alerts repo-id))
+      (unless (gethash (cons (getf al :dep-id) (getf al :advisory-id)) desired)
+        (set-dep-alert-state (getf al :id) "fixed")))
+    matches))
+
+(defun rematch-advisory (advisory-id)
+  "Re-match the stored graph for every package this advisory affects — the
+   native superpower: a freshly synced CVE finds existing deps with no rescan.
+   Returns the number of (repo, ref) pairs re-matched."
+  (let ((pairs (make-hash-table :test 'equal)))
+    (dolist (pkg (advisory-affected-packages advisory-id))
+      (dolist (rr (postmodern:query
+                   "SELECT DISTINCT repo_id, ref FROM cave_repo_deps
+                    WHERE ecosystem = $1 AND package_name = $2"
+                   (getf pkg :ecosystem) (getf pkg :package-name) :plists))
+        (setf (gethash (cons (getf rr :repo-id) (getf rr :ref)) pairs) t)))
+    (maphash (lambda (k v) (declare (ignore v))
+               (rematch-repo (car k) (cdr k)))
+             pairs)
+    (hash-table-count pairs)))
+
+;;; --- Ingest (atomic graph replace + re-match) ------------------------------
+
+(defun ingest-repo-deps (repo-id ref deps)
+  "Atomically replace REPO-ID's dependency graph for REF with DEPS (a list of
+   plists), then re-match against advisories. Unchanged rows keep their id (so
+   their alerts survive); removed rows are swept. Returns the dep count."
+  (postmodern:with-transaction ()
+    (let ((gen (next-dep-generation repo-id ref)))
+      (dolist (dep deps) (upsert-repo-dep repo-id ref dep gen))
+      (sweep-stale-deps repo-id ref gen))
+    (rematch-repo repo-id ref))
+  (length deps))
