@@ -2319,3 +2319,43 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
       (sweep-stale-deps repo-id ref gen))
     (rematch-repo repo-id ref))
   (length deps))
+
+;;; --- Dashboard support (queries; rendering lives in deps-dashboard.lisp) ----
+
+(defparameter *dependency-bot-username* "cave-bot"
+  "Username of the lazily-created system user that authors dependency dashboards.")
+
+(defun ensure-dependency-bot-user ()
+  "Find or lazily create the cave-bot user that authors dependency dashboards.
+   Returns its id."
+  (getf (or (find-user-by-username *dependency-bot-username*)
+            (create-user :username *dependency-bot-username* :display-name "Cave"))
+        :id))
+
+(defun list-dep-alerts-detailed (repo-id &key (state "open"))
+  "Alerts for REPO-ID joined with their dep + advisory, for display."
+  (postmodern:query
+   "SELECT al.id, al.state, al.fix_version,
+           d.ecosystem, d.package_name, d.version,
+           a.osv_id, a.summary, a.severity, a.cvss_score
+    FROM cave_dep_alerts al
+    JOIN cave_repo_deps d ON d.id = al.dep_id
+    JOIN cave_advisories a ON a.id = al.advisory_id
+    WHERE al.repo_id = $1 AND al.state = $2"
+   repo-id state :plists))
+
+(defun find-dashboard-issue (repo-id marker)
+  "The dependency-dashboard issue for REPO-ID (identified by MARKER in its body),
+   or NIL."
+  (postmodern:query
+   "SELECT * FROM cave_issues WHERE repo_id = $1 AND body LIKE $2 LIMIT 1"
+   repo-id (format nil "%~A%" marker) :plist))
+
+(defun repos-needing-dashboard-refresh (marker)
+  "Repo ids that either have open alerts or already have a dashboard issue."
+  (mapcar (lambda (r) (getf r :repo-id))
+          (postmodern:query
+           "SELECT DISTINCT repo_id FROM cave_dep_alerts WHERE state = 'open'
+            UNION
+            SELECT repo_id FROM cave_issues WHERE body LIKE $1"
+           (format nil "%~A%" marker) :plists)))

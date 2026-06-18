@@ -210,6 +210,7 @@
         (let ((pairs 0))
           (dolist (adv-id (remove-duplicates adv-ids))
             (incf pairs (rematch-advisory adv-id)))
+          (refresh-dependency-dashboards)
           (when verbose
             (format t "~&Synced ~A advisories; re-matched ~A repo/ref pair(s).~%"
                     synced pairs))

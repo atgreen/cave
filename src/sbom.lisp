@@ -118,7 +118,13 @@
     (when json
       (let ((repo (find-repo owner repo-name)))
         (when repo
-          (ingest-repo-deps (getf repo :id) the-ref (sbom->deps json)))))))
+          (let ((n (ingest-repo-deps (getf repo :id) the-ref (sbom->deps json))))
+            (handler-case (update-dependency-dashboard (getf repo :id))
+              (error (e)
+                (llog:warn "Dashboard update failed"
+                           :repo (format nil "~A/~A" owner repo-name)
+                           :error (princ-to-string e))))
+            n))))))
 
 (defun maybe-scan-repo-deps-async (owner repo-name ref)
   "Background dependency scan after a push to the default branch. Guarded by the

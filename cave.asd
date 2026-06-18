@@ -54,6 +54,7 @@
                 (:file "src/metrics")
                 (:file "src/notify")
                 (:file "src/search-zoekt")
+                (:file "src/deps-dashboard")
                 (:file "src/osv")
                 (:file "src/sbom")
                 (:file "src/workflow")

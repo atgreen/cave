@@ -289,10 +289,14 @@ Auto-merge gate: `fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org `automerge_
 
 ## UI & notifications (reuse, don't reinvent)
 
-- **Dependency-dashboard issue**, one pinned per repo (Renovate's best idea),
-  via the existing issue model: pending updates, alerts grouped by severity,
-  checkboxes to trigger/retry a fix. Free markdown (cl-commonmark), permissions,
-  notifications.
+- **Dependency-dashboard issue** — BUILT (`src/deps-dashboard.lisp`). One issue
+  per repo, authored by a lazily-created `cave-bot` user, located idempotently by
+  a hidden `<!-- cave-dependency-dashboard -->` marker in the body. Open alerts
+  grouped by severity (critical→low), each with the OSV link and nearest fix
+  version. Created on first alert, refreshed after every scan (`scan-repo-deps`)
+  and advisory sync (`refresh-dependency-dashboards`); kept and shown as "no open
+  alerts" once clean. TODO: per-update checkboxes to trigger a fix (needs the fix
+  pipeline). Free markdown (cl-commonmark), permissions, notifications.
 - **Digest notifications** in `notify.lisp`: a 40-dep bump round is one email.
 - **Repo Dependencies tab** + org **Insights/Security** dashboard (Spinneret in
   `views.lisp`); inline "N behind / M CVE" badges in the manifest file view.
@@ -315,7 +319,7 @@ Auto-merge gate: `fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org `automerge_
 1. Migrations 46–49 + `model.lisp` query layer. — DONE
 2. `cave-server sync-advisories` (in-process, timer) — advisory DB populated. — DONE (`src/osv.lisp`)
 3. `deps-scan` + `/-/internal/repos/.../deps` ingest — graph populated. — DONE (`src/sbom.lisp`)
-4. Matcher (osv-scanner bootstrap) + alerts + dependency-dashboard issue. — matcher DONE; dashboard issue TODO
+4. Matcher (osv-scanner bootstrap) + alerts + dependency-dashboard issue. — DONE (`src/deps-dashboard.lisp`)
 5. Native semver path → instant rematch-on-new-CVE. — DONE (`compare-versions`)
 6. `deps-fix` pipeline + CI-gated auto-merge.
 7. Org policy + per-repo `.cave/deps.yml` (org caps repo).
