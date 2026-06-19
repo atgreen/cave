@@ -1105,12 +1105,23 @@
         (uiop:quit 1)))
     (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
            (owner (first parts))
-           (name (second parts))
-           (sbom-json (when sbom-file (uiop:read-file-string sbom-file)))
-           (n (scan-repo-deps owner name :ref ref :sbom-json sbom-json)))
-      (if n
-          (format t "~&Ingested ~A dependencies for ~A.~%" n repo-path)
-          (format t "~&No SBOM produced for ~A (is syft installed?).~%" repo-path)))
+           (name (second parts)))
+      (if sbom-file
+          ;; Direct ingest of a pre-built SBOM (no runner).
+          (let ((n (ingest-sbom-json owner name (uiop:read-file-string sbom-file)
+                                     :ref ref)))
+            (if n
+                (format t "~&Ingested ~A dependencies for ~A.~%" n repo-path)
+                (format t "~&Unknown repo: ~A~%" repo-path)))
+          ;; Runner-based scan: enqueue a workflow job a syft runner picks up.
+          (let* ((repo (find-repo owner name))
+                 (run (when repo (enqueue-deps-scan (getf repo :id) :ref ref))))
+            (cond
+              ((null repo) (format t "~&Unknown repo: ~A~%" repo-path))
+              ((null run)
+               (format t "~&Scanning is disabled (set deps-scan-enabled in config).~%"))
+              (t (format t "~&Queued scan run #~A for ~A — a syft runner will pick it up.~%"
+                         (getf run :id) repo-path))))))
     (disconnect-db)))
 
 ;;; --- DEPS-FIX subcommand ---

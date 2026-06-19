@@ -171,7 +171,9 @@
                                                  :test #'equal))
                                        final-jobs)
                                 "success" "failure")))
-          (update-workflow-run-status run-id final-status))))))
+          (update-workflow-run-status run-id final-status)
+          ;; Dependency-scan runs (Option B): ingest the SBOM from the step log.
+          (maybe-ingest-scan-run run-id))))))
 
 (defun job-depends-on-p (job dep-name)
   "Check if JOB depends on DEP-NAME."

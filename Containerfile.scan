@@ -1,0 +1,18 @@
+# Dependency-scan image for runner-based SBOM extraction.
+#
+# The Cave runner creates the job container with `sleep infinity` and runs each
+# step via `bash -c`, so this image needs bash + sleep (busybox) + syft on PATH.
+# The runner clones the repo on the host and bind-mounts it at /workspace; the
+# scan step runs `syft -q dir:/workspace -o cyclonedx-json=...`.
+FROM docker.io/library/alpine:3.20
+
+RUN apk add --no-cache bash ca-certificates \
+ && apk add --no-cache --virtual .build curl \
+ && curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+      | sh -s -- -b /usr/local/bin \
+ && apk del .build \
+ && syft version
+
+# The runner overrides the command with `sleep infinity`; keep a sane default.
+ENTRYPOINT []
+CMD ["sleep", "infinity"]

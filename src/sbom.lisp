@@ -85,61 +85,103 @@
                          deps)))))
     (nreverse deps)))
 
-;;; --- Producer ------------------------------------------------------------
+;;; --- Producer: runner-based extraction (Option B) -------------------------
+;;;
+;;; Extraction runs on a runner, not the server: enqueue-deps-scan schedules a
+;;; workflow job (syft image) that clones the repo, runs syft, and emits the
+;;; CycloneDX SBOM on stdout — captured into the step log. When the run
+;;; finalizes, maybe-ingest-scan-run reads that log and ingests it. No SBOM
+;;; tooling on the server, no token piped into the runner container.
 
-(defparameter *syft-bin* "syft"
-  "Default syft executable, overridable via the :syft-path config key.")
+(defparameter *deps-scan-workflow-name* "deps-scan"
+  "workflow_name marker identifying a run as a dependency scan.")
 
-(defun run-syft-sbom (disk-path)
-  "Run syft against DISK-PATH, returning a CycloneDX JSON string, or NIL on
-   failure (logged). Requires syft on PATH."
-  (handler-case
-      (multiple-value-bind (out err exit)
-          (uiop:run-program (list (config-value :syft-path *syft-bin*)
-                                  (namestring disk-path)
-                                  "-o" "cyclonedx-json")
-                            :output '(:string)
-                            :error-output '(:string)
-                            :ignore-error-status t)
-        (if (zerop exit)
-            out
-            (progn (llog:warn "syft failed" :path (namestring disk-path) :error err)
-                   nil)))
-    (error (e)
-      (llog:warn "syft error" :error (princ-to-string e))
-      nil)))
+(defun ingest-sbom-json (owner repo-name json &key ref)
+  "Ingest a CycloneDX SBOM (JSON string) for OWNER/REPO-NAME and refresh the
+   dashboard. Returns the dep count, or NIL if the repo is unknown."
+  (let ((repo (find-repo owner repo-name)))
+    (when repo
+      (let ((n (ingest-repo-deps
+                (getf repo :id)
+                (or ref (chamber-get-default-branch owner repo-name) "main")
+                (sbom->deps json))))
+        (handler-case (update-dependency-dashboard (getf repo :id))
+          (error (e)
+            (llog:warn "Dashboard update failed"
+                       :repo (format nil "~A/~A" owner repo-name)
+                       :error (princ-to-string e))))
+        n))))
 
-(defun scan-repo-deps (owner repo-name &key ref sbom-json)
-  "Produce and ingest the dependency graph for OWNER/REPO-NAME. Uses SBOM-JSON if
-   given, else runs syft against the repo's working tree. Returns the dep count,
-   or NIL if no SBOM could be produced or the repo is unknown."
-  (let* ((the-ref (or ref (chamber-get-default-branch owner repo-name) "main"))
-         (json (or sbom-json (run-syft-sbom (repo-disk-path owner repo-name)))))
-    (when json
-      (let ((repo (find-repo owner repo-name)))
-        (when repo
-          (let ((n (ingest-repo-deps (getf repo :id) the-ref (sbom->deps json))))
-            (handler-case (update-dependency-dashboard (getf repo :id))
-              (error (e)
-                (llog:warn "Dashboard update failed"
-                           :repo (format nil "~A/~A" owner repo-name)
-                           :error (princ-to-string e))))
-            n))))))
-
-(defun maybe-scan-repo-deps-async (owner repo-name ref)
-  "Background dependency scan after a push to the default branch. Guarded by the
-   :deps-scan-enabled config flag; mirrors zoekt-index-repo."
+(defun enqueue-deps-scan (repo-id &key ref commit-sha triggered-by-id)
+  "Schedule a runner workflow job that produces a CycloneDX SBOM with syft and
+   returns it through the step log. The completion hook ingests it. Guarded by
+   :deps-scan-enabled. Returns the workflow run plist, or NIL."
   (when (config-value :deps-scan-enabled)
-    (bt2:make-thread
-     (lambda ()
-       (handler-case
-           (postmodern:with-connection *db-spec*
-             (let ((n (scan-repo-deps owner repo-name :ref ref)))
-               (when n
-                 (llog:info "Scanned repo deps"
-                            :repo (format nil "~A/~A" owner repo-name) :count n))))
-         (error (e)
-           (llog:warn "Dep scan error"
-                      :repo (format nil "~A/~A" owner repo-name)
-                      :error (princ-to-string e)))))
-     :name (format nil "deps-scan-~A/~A" owner repo-name))))
+    (let* ((repo (find-repo-by-id repo-id))
+           (owner (and repo (repo-owner-name repo)))
+           (name (and repo (getf repo :name))))
+      (when repo
+        (let* ((the-ref (or ref (chamber-get-default-branch owner name) "main"))
+               (labels (config-value :deps-scan-labels ""))
+               (runs-on (when (plusp (length labels))
+                          (mapcar (lambda (s) (string-trim " " s))
+                                  (uiop:split-string labels :separator '(#\,)))))
+               (run (create-workflow-run
+                     :repo-id repo-id
+                     :workflow-name *deps-scan-workflow-name*
+                     :workflow-file ""
+                     :trigger-event "deps_scan"
+                     :commit-sha commit-sha
+                     :ref the-ref
+                     :triggered-by-id triggered-by-id))
+               (job (create-workflow-job
+                     :workflow-run-id (getf run :id)
+                     :name "scan"
+                     :image (config-value :deps-scan-image
+                                          "ghcr.io/atgreen/cave-scan:main")
+                     :runs-on runs-on)))
+          ;; syft -> file, then cat: the runner captures stdout+stderr combined,
+          ;; so suppress syft's progress and emit only clean CycloneDX JSON.
+          (create-workflow-step
+           :job-id (getf job :id) :step-order 1 :name "syft"
+           :command (concatenate 'string
+                                 "syft -q dir:/workspace -o cyclonedx-json=/tmp/sbom.json "
+                                 ">/dev/null 2>&1 && cat /tmp/sbom.json"))
+          run)))))
+
+(defun %extract-json-object (s)
+  "Substring of S from the first { to the last } — a safety net against stray
+   output in the step log. NIL if no object is found."
+  (when (stringp s)
+    (let ((start (position #\{ s))
+          (end (position #\} s :from-end t)))
+      (when (and start end (< start end))
+        (subseq s start (1+ end))))))
+
+(defun maybe-ingest-scan-run (run-id)
+  "Called when a workflow run finalizes. If it's a successful deps-scan run, read
+   the scan step's log (the CycloneDX SBOM) and ingest it."
+  (let ((run (find-workflow-run run-id)))
+    (when (and run
+               (equal (getf run :workflow-name) *deps-scan-workflow-name*)
+               (equal (getf run :status) "success"))
+      (let* ((repo (find-repo-by-id (getf run :repo-id)))
+             (owner (and repo (repo-owner-name repo)))
+             (name (and repo (getf repo :name)))
+             (log (with-output-to-string (out)
+                    (dolist (job (list-workflow-jobs run-id))
+                      (dolist (step (list-workflow-steps (getf job :id)))
+                        (let ((l (getf step :log)))
+                          (when (and l (not (eq l :null))) (write-string l out)))))))
+             (json (%extract-json-object log)))
+        (when (and repo json)
+          (handler-case
+              (let ((n (ingest-sbom-json owner name json
+                                         :ref (let ((r (getf run :ref)))
+                                                (unless (eq r :null) r)))))
+                (llog:info "Ingested runner SBOM"
+                           :repo (format nil "~A/~A" owner name) :count n))
+            (error (e)
+              (llog:warn "Scan ingest failed"
+                         :repo (format nil "~A/~A" owner name)
+                         :error (princ-to-string e)))))))))
