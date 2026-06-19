@@ -2347,7 +2347,8 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
 (defun find-dep-alert-detailed (alert-id)
   "One alert joined with its dep + advisory, for the fix pipeline."
   (postmodern:query
-   "SELECT al.id, al.repo_id, al.state, al.fix_version, al.fix_kind, al.fix_pr_id,
+   "SELECT al.id, al.repo_id, al.advisory_id, al.state, al.fix_version,
+           al.fix_kind, al.fix_pr_id,
            d.ecosystem, d.package_name, d.version, d.manifest_path, d.is_direct,
            a.osv_id, a.summary, a.severity
     FROM cave_dep_alerts al

@@ -181,6 +181,8 @@ func run(args []string) error {
 		return runIssues(c, ownerName, resolvedRepo, rest[1:])
 	case "repo", "repos":
 		return runRepos(c, rest[1:])
+	case "deps":
+		return runDeps(c, ownerName, resolvedRepo, rest[1:])
 	case "help", "-h", "--help":
 		printUsage(os.Stdout)
 		return nil
@@ -689,7 +691,19 @@ func issueURL(baseURL, ownerName, repoName, number string, query url.Values) str
 }
 
 func needsRepo(args []string) bool {
-	return len(args) > 0 && (args[0] == "issue" || args[0] == "issues")
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "issue", "issues":
+		return true
+	case "deps":
+		// Only the repo-scoped deps subcommands need a repo (not who-uses/help).
+		return len(args) >= 2 &&
+			(args[1] == "list" || args[1] == "alerts" || args[1] == "dismiss")
+	default:
+		return false
+	}
 }
 
 func envOrDefault(key, fallback string) string {
@@ -734,6 +748,8 @@ func printUsage(w io.Writer) {
 	printRepoUsage(w)
 	fmt.Fprintln(w)
 	printIssueUsage(w)
+	fmt.Fprintln(w)
+	printDepsUsage(w)
 }
 
 func printRepoUsage(w io.Writer) {

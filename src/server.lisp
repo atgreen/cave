@@ -2542,6 +2542,63 @@ the results. Skips deletes and zero-sha boundaries."
        :status 201))))
 
 ;; ----------------------------------------------------------------------------
+;; Routes: API v1 — Dependencies & security alerts
+
+(easy-routes:defroute api-list-deps
+    ("/api/v1/repos/:owner/:repo-name/deps" :method :get) (&get ref)
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (json-response (list-repo-deps (getf repo :id) :ref ref))))
+
+(easy-routes:defroute api-list-alerts
+    ("/api/v1/repos/:owner/:repo-name/alerts" :method :get) (&get state)
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (json-response (list-dep-alerts-detailed (getf repo :id)
+                                             :state (or state "open")))))
+
+(easy-routes:defroute api-dismiss-alert
+    ("/api/v1/repos/:owner/:repo-name/alerts/:id/dismiss" :method :post) ()
+  (unless *current-user-id*
+    (return-from api-dismiss-alert (json-error "unauthorized" :status 401)))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (unless (repo-member-role (getf repo :id) *current-user-id*)
+      (return-from api-dismiss-alert (json-error "forbidden" :status 403)))
+    (let* ((alert-id (parse-integer id :junk-allowed t))
+           (alert (and alert-id (find-dep-alert-detailed alert-id))))
+      (unless (and alert (eql (getf alert :repo-id) (getf repo :id)))
+        (return-from api-dismiss-alert (json-error "not found" :status 404)))
+      (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+             (json (when (and body-text (plusp (length body-text)))
+                     (com.inuoe.jzon:parse body-text)))
+             (reason (or (and json (let ((r (gethash "reason" json)))
+                                     (when (stringp r) r)))
+                         "risk_accepted"))
+             (note (and json (let ((n (gethash "note" json)))
+                               (when (stringp n) n)))))
+        (unless (member reason '("not_used" "no_fix" "risk_accepted") :test #'equal)
+          (return-from api-dismiss-alert (json-error "invalid reason")))
+        (create-dep-suppression :repo-id (getf repo :id)
+                                :ecosystem (getf alert :ecosystem)
+                                :package-name (getf alert :package-name)
+                                :advisory-id (getf alert :advisory-id)
+                                :reason reason :note note
+                                :created-by *current-user-id*)
+        (set-dep-alert-state alert-id "dismissed")
+        (handler-case (update-dependency-dashboard (getf repo :id)) (error () nil))
+        (json-response (find-dep-alert-detailed alert-id))))))
+
+(easy-routes:defroute api-deps-usage
+    ("/api/v1/deps/usage" :method :get) (&get ecosystem package)
+  "Org-wide: repos using a package, filtered to repos visible to the caller."
+  (unless (and ecosystem package)
+    (return-from api-deps-usage (json-error "ecosystem and package required")))
+  (let ((rows (remove-if-not
+               (lambda (row)
+                 (let ((repo (find-repo-by-id (getf row :repo-id))))
+                   (and repo (repo-visible-p repo))))
+               (find-repos-using-package ecosystem package))))
+    (json-response rows)))
+
+;; ----------------------------------------------------------------------------
 ;; Git smart HTTP transport (read-only, for runner clones)
 
 (defun handle-git-http (owner repo-name)
