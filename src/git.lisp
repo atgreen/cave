@@ -191,12 +191,30 @@ Returns T on success, NIL otherwise."
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-merge-branch (repo-path source-branch target-branch &key squash)
+(defun parse-git-author (author)
+  "Parse AUTHOR (\"Name <email>\") into (values name email). Falls back to a
+   cave-bot identity for blank/garbage input so commits never fail."
+  (let ((a (and (stringp author) (string-trim " " author))))
+    (if (and a (plusp (length a)))
+        (let ((lt (position #\< a)) (gt (position #\> a)))
+          (if (and lt gt (< lt gt))
+              (values (let ((n (string-trim " " (subseq a 0 lt))))
+                        (if (plusp (length n)) n "cave-bot"))
+                      (subseq a (1+ lt) gt))
+              (values a "cave-bot@localhost")))
+        (values "cave-bot" "cave-bot@localhost"))))
+
+(defun git-merge-branch (repo-path source-branch target-branch &key squash author message)
   "Merge SOURCE-BRANCH into TARGET-BRANCH in a bare repo.
-   If SQUASH is T, squash all commits into one.
+   If SQUASH is T, squash all commits into one. AUTHOR (\"Name <email>\") and
+   MESSAGE customize the merge/squash commit; a fallback identity is always set
+   so commits never fail for a missing committer in a clean worktree.
    Uses a temporary worktree. Returns T on success, NIL on failure."
   (let ((tmpdir (format nil "/tmp/cave-merge-~A" (ironclad:byte-array-to-hex-string
-                                                   (ironclad:random-data 8)))))
+                                                   (ironclad:random-data 8))))
+        (ident (multiple-value-bind (name email) (parse-git-author author)
+                 (list "-c" (format nil "user.name=~A" name)
+                       "-c" (format nil "user.email=~A" email)))))
     (unwind-protect
          (let ((exit-code
                 (progn
@@ -217,9 +235,11 @@ Returns T on success, NIL otherwise."
                         ;; Commit the squashed changes
                         (multiple-value-bind (_o2 _e2 code2)
                             (uiop:run-program
-                             (list "git" "-C" tmpdir "commit" "--no-edit"
-                                   "-m" (format nil "Squash merge ~A into ~A"
-                                                source-branch target-branch))
+                             (append (list "git" "-C" tmpdir) ident
+                                     (list "commit" "--no-edit"
+                                           "-m" (or message
+                                                    (format nil "Squash merge ~A into ~A"
+                                                            source-branch target-branch))))
                              :output '(:string :stripped t)
                              :error-output '(:string :stripped t)
                              :ignore-error-status t)
@@ -228,7 +248,10 @@ Returns T on success, NIL otherwise."
                       ;; Regular merge
                       (multiple-value-bind (_o _e code)
                           (uiop:run-program
-                           (list "git" "-C" tmpdir "merge" "--no-edit" source-branch)
+                           (append (list "git" "-C" tmpdir) ident
+                                   (list "merge" "--no-edit")
+                                   (when message (list "-m" message))
+                                   (list source-branch))
                            :output '(:string :stripped t)
                            :error-output '(:string :stripped t)
                            :ignore-error-status t)
@@ -241,6 +264,48 @@ Returns T on success, NIL otherwise."
                          :output :string :error-output :string)
       (when (probe-file tmpdir)
         (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
+
+(defun git-commit-file-on-branch (repo-path base-branch new-branch path content message
+                                  &key (author-name "cave-bot")
+                                       (author-email "cave-bot@localhost"))
+  "In bare REPO-PATH, branch NEW-BRANCH off BASE-BRANCH, overwrite PATH with
+   CONTENT, and commit. Returns the new commit SHA, or NIL on failure. Uses a
+   temporary worktree; the new branch ref persists in the bare repo."
+  (let ((tmp (format nil "/tmp/cave-fix-~A"
+                     (ironclad:byte-array-to-hex-string (ironclad:random-data 8)))))
+    (flet ((git* (&rest args)
+             (nth-value 2
+               (uiop:run-program (list* "git" "-C" tmp args)
+                                 :output '(:string :stripped t)
+                                 :error-output '(:string :stripped t)
+                                 :ignore-error-status t))))
+      (unwind-protect
+           (block done
+             (unless (zerop (nth-value 2
+                              (git-run repo-path "worktree" "add" "-b" new-branch
+                                       tmp base-branch)))
+               (return-from done nil))
+             (let ((file (merge-pathnames path (uiop:ensure-directory-pathname tmp))))
+               (ensure-directories-exist file)
+               (with-open-file (s file :direction :output :if-exists :supersede
+                                       :if-does-not-exist :create)
+                 (write-string content s)))
+             (unless (zerop (git* "add" "--" path)) (return-from done nil))
+             (unless (zerop (git* "-c" (format nil "user.name=~A" author-name)
+                                  "-c" (format nil "user.email=~A" author-email)
+                                  "commit" "-m" message))
+               (return-from done nil))
+             (string-trim '(#\Newline #\Space)
+                          (nth-value 0
+                            (uiop:run-program (list "git" "-C" tmp "rev-parse" "HEAD")
+                                              :output '(:string :stripped t)
+                                              :ignore-error-status t))))
+        (uiop:run-program (list "git" "-C" (namestring repo-path)
+                                "worktree" "remove" "--force" tmp)
+                          :ignore-error-status t :output :string :error-output :string)
+        (when (probe-file tmp)
+          (uiop:delete-directory-tree (pathname tmp) :validate t
+                                                     :if-does-not-exist :ignore))))))
 
 (defun inject-auth-token (url token)
   "Insert TOKEN into a URL: https://TOKEN@host/path. Returns URL unchanged if no token."

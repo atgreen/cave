@@ -1047,6 +1047,123 @@
                       (update-mirror-sync (getf m :id) :error err))))))))
     (disconnect-db)))
 
+;;; --- SYNC-ADVISORIES subcommand ---
+
+(defun make-sync-advisories-command ()
+  (clingon:make-command
+   :name "sync-advisories"
+   :description "Sync OSV security advisories for packages in the dependency graph"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "ecosystem" :key :ecosystem
+              :description "Comma-separated OSV ecosystems to limit to (e.g. npm,Go,PyPI)"))
+   :handler #'handle-sync-advisories))
+
+(defun handle-sync-advisories (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (eco (clingon:getopt cmd :ecosystem)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let ((ecosystems (when (and eco (plusp (length eco)))
+                        (mapcar (lambda (s) (string-trim " " s))
+                                (uiop:split-string eco :separator '(#\,))))))
+      (sync-osv-advisories :ecosystems ecosystems))
+    (disconnect-db)))
+
+;;; --- DEPS-SCAN subcommand ---
+
+(defun make-deps-scan-command ()
+  (clingon:make-command
+   :name "deps-scan"
+   :description "Scan a repo's dependencies into the graph (runs syft, or ingests --sbom)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "repo" :key :repo :required t
+              :description "Repo path as owner/name")
+             (clingon:make-option :string
+              :long-name "ref" :key :ref
+              :description "Branch/ref to label the scan (default: repo default branch)")
+             (clingon:make-option :string
+              :long-name "sbom" :key :sbom
+              :description "Path to a CycloneDX JSON SBOM (skip running syft)"))
+   :handler #'handle-deps-scan))
+
+(defun handle-deps-scan (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (repo-path (clingon:getopt cmd :repo))
+        (ref (clingon:getopt cmd :ref))
+        (sbom-file (clingon:getopt cmd :sbom)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
+           (owner (first parts))
+           (name (second parts))
+           (sbom-json (when sbom-file (uiop:read-file-string sbom-file)))
+           (n (scan-repo-deps owner name :ref ref :sbom-json sbom-json)))
+      (if n
+          (format t "~&Ingested ~A dependencies for ~A.~%" n repo-path)
+          (format t "~&No SBOM produced for ~A (is syft installed?).~%" repo-path)))
+    (disconnect-db)))
+
+;;; --- DEPS-FIX subcommand ---
+
+(defun make-deps-fix-command ()
+  (clingon:make-command
+   :name "deps-fix"
+   :description "Open a fix PR for a security alert (unambiguous manifest bumps)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :integer
+              :long-name "alert" :key :alert :required t
+              :description "Dependency alert id to fix"))
+   :handler #'handle-deps-fix))
+
+(defun handle-deps-fix (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (alert-id (clingon:getopt cmd :alert)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let ((result (open-dependency-fix-pr alert-id)))
+      (case (getf result :status)
+        (:opened (format t "~&Opened fix PR on branch ~A (commit ~A).~%"
+                         (getf result :branch)
+                         (subseq (getf result :commit) 0 (min 8 (length (getf result :commit))))))
+        (:manual (format t "~&Manual fix needed (~A): ~A~%"
+                         (getf result :fix-kind) (getf result :reason)))
+        (:no-fix (format t "~&No fix version available for this alert.~%"))
+        (t (format t "~&Could not open fix: ~A~%" (getf result :reason)))))
+    (disconnect-db)))
+
+;;; --- DEPS-AUTOMERGE subcommand ---
+
+(defun make-deps-automerge-command ()
+  (clingon:make-command
+   :name "deps-automerge"
+   :description "Merge eligible, CI-green dependency-fix PRs (per org/repo policy)"
+   :options (list (make-config-option))
+   :handler #'handle-deps-automerge))
+
+(defun handle-deps-automerge (cmd)
+  (let ((config-path (clingon:getopt cmd :config)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (process-dependency-automerge)
+    (disconnect-db)))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -1067,7 +1184,11 @@
                        (make-post-receive-command)
                        (make-runner-command)
                        (make-sync-mirrors-command)
-                       (make-sync-themes-command))
+                       (make-sync-themes-command)
+                       (make-sync-advisories-command)
+                       (make-deps-scan-command)
+                       (make-deps-fix-command)
+                       (make-deps-automerge-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 

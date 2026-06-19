@@ -481,6 +481,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
       :href (format nil "/~A/~A/runs" owner-name repo-name) "Runs")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :releases))
       :href (format nil "/~A/~A/releases" owner-name repo-name) "Releases")
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :security))
+      :href (format nil "/~A/~A/deps" owner-name repo-name) "Security")
      (when (and repo *current-user-id*
                 (repo-member-role (getf repo :id) *current-user-id*))
        (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
@@ -979,6 +981,52 @@ document.addEventListener('DOMContentLoaded', function() {
                (format nil " ~A" (getf iss :title)))
               (:span.badge (getf iss :status)))))
           (:p.empty "No issues found.")))))
+
+(defun %dep-severity-rank (sev)
+  "Sort key: critical highest. SEV may be a string or :null."
+  (cond ((or (null sev) (eq sev :null)) 0)
+        ((string-equal sev "critical") 4)
+        ((string-equal sev "high") 3)
+        ((string-equal sev "moderate") 2)
+        ((string-equal sev "low") 1)
+        (t 0)))
+
+(defun view-dependencies (&key owner-name repo alerts deps)
+  "Render the repo Security tab: open alerts (severity-sorted) + the graph."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Security — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :security :repo repo)
+      (:h2 (format nil "Security alerts (~A)" (length alerts)))
+      (if alerts
+          (:table.dep-alerts
+           (:thead (:tr (:th "Severity") (:th "Package") (:th "Version")
+                        (:th "Advisory") (:th "Fix")))
+           (:tbody
+            (dolist (a (sort (copy-list alerts) #'>
+                             :key (lambda (a) (%dep-severity-rank (getf a :severity)))))
+              (let ((sev (getf a :severity)) (fix (getf a :fix-version)))
+                (:tr
+                 (:td (:span.badge (if (or (null sev) (eq sev :null))
+                                       "unknown" (string-downcase sev))))
+                 (:td (format nil "~A (~A)" (getf a :package-name) (getf a :ecosystem)))
+                 (:td (:code (getf a :version)))
+                 (:td (:a :href (format nil "https://osv.dev/vulnerability/~A"
+                                        (getf a :osv-id))
+                          (getf a :osv-id)))
+                 (:td (if (or (null fix) (eq fix :null)) "—" (:code fix))))))))
+          (:p.empty "✓ No open security alerts."))
+      (:h2 (format nil "Dependencies (~A)" (length deps)))
+      (if deps
+          (:table.dep-list
+           (:thead (:tr (:th "Ecosystem") (:th "Package") (:th "Version") (:th "Scope")))
+           (:tbody
+            (dolist (d deps)
+              (:tr
+               (:td (getf d :ecosystem))
+               (:td (getf d :package-name))
+               (:td (:code (getf d :version)))
+               (:td (if (getf d :is-direct) "direct" "transitive"))))))
+          (:p.empty "No dependencies recorded. Push to the default branch to scan.")))))
 
 (defun view-new-issue (&key owner-name repo body)
   "Render the new issue form."

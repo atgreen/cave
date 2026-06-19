@@ -403,6 +403,15 @@ the results. Skips deletes and zero-sha boundaries."
           (broadcast-invalidate-cache owner repo-name))
         ;; Trigger Zoekt reindexing
         (zoekt-index-repo owner repo-name)
+        ;; Scan dependencies on default-branch pushes
+        (let ((default-branch (or (chamber-get-default-branch owner repo-name) "main")))
+          (when (find-if (lambda (r)
+                           (member (getf r :ref)
+                                   (list (format nil "refs/heads/~A" default-branch)
+                                         default-branch)
+                                   :test #'equal))
+                         refs)
+            (maybe-scan-repo-deps-async owner repo-name default-branch)))
         ;; Fire webhooks
         (dolist (r refs)
           (fire-webhooks (getf repo :id) "push"
@@ -412,6 +421,35 @@ the results. Skips deletes and zero-sha boundaries."
                            ("repository" . (("owner" . ,owner)
                                             ("name" . ,repo-name))))))))
     "ok"))
+
+(defun valid-runner-request-p ()
+  "True when the request carries a valid runner bearer token."
+  (let ((auth (hunchentoot:header-in* :authorization)))
+    (and auth (>= (length auth) 7)
+         (string-equal "Bearer " (subseq auth 0 7))
+         (authenticate-runner (subseq auth 7))
+         t)))
+
+(easy-routes:defroute internal-repo-deps
+    ("/-/internal/repos/:owner/:repo-name/deps" :method :post) (&get ref)
+  "Ingest a CycloneDX SBOM into the dependency graph. Accepts localhost (the
+   host-side scan) or a valid runner bearer token."
+  (unless (or (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+              (valid-runner-request-p))
+    (setf (hunchentoot:return-code*) 403)
+    (return-from internal-repo-deps "Forbidden"))
+  (let ((repo (find-repo owner repo-name)))
+    (unless repo
+      (setf (hunchentoot:return-code*) 404)
+      (return-from internal-repo-deps "Not found"))
+    (let ((body (hunchentoot:raw-post-data :force-text t))
+          (the-ref (or ref (chamber-get-default-branch owner repo-name) "main")))
+      (handler-case
+          (let ((n (ingest-repo-deps (getf repo :id) the-ref (sbom->deps body))))
+            (format nil "ingested ~A deps~%" n))
+        (error (e)
+          (setf (hunchentoot:return-code*) 400)
+          (format nil "Bad SBOM: ~A~%" e))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Push lock-bracket: SSH pushes acquire/release Chamber write locks via HTTP
@@ -1945,6 +1983,14 @@ the results. Skips deletes and zero-sha boundaries."
       (html-response
        (view-issues :owner-name owner :repo repo :issues issues :current-status status)))))
 
+(easy-routes:defroute deps-page ("/:owner/:repo-name/deps" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from deps-page repo))
+    (html-response
+     (view-dependencies :owner-name owner :repo repo
+                        :alerts (list-dep-alerts-detailed (getf repo :id) :state "open")
+                        :deps (list-repo-deps (getf repo :id))))))
+
 (easy-routes:defroute new-issue-page
     ("/:owner/:repo-name/issues/new" :method :get) ()
   (when (require-login)
@@ -2502,6 +2548,63 @@ the results. Skips deletes and zero-sha boundaries."
                           :description (when (and description (not (eq description 'null))) description)
                           :target-url (when (and target-url (not (eq target-url 'null))) target-url))
        :status 201))))
+
+;; ----------------------------------------------------------------------------
+;; Routes: API v1 — Dependencies & security alerts
+
+(easy-routes:defroute api-list-deps
+    ("/api/v1/repos/:owner/:repo-name/deps" :method :get) (&get ref)
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (json-response (list-repo-deps (getf repo :id) :ref ref))))
+
+(easy-routes:defroute api-list-alerts
+    ("/api/v1/repos/:owner/:repo-name/alerts" :method :get) (&get state)
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (json-response (list-dep-alerts-detailed (getf repo :id)
+                                             :state (or state "open")))))
+
+(easy-routes:defroute api-dismiss-alert
+    ("/api/v1/repos/:owner/:repo-name/alerts/:id/dismiss" :method :post) ()
+  (unless *current-user-id*
+    (return-from api-dismiss-alert (json-error "unauthorized" :status 401)))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (unless (repo-member-role (getf repo :id) *current-user-id*)
+      (return-from api-dismiss-alert (json-error "forbidden" :status 403)))
+    (let* ((alert-id (parse-integer id :junk-allowed t))
+           (alert (and alert-id (find-dep-alert-detailed alert-id))))
+      (unless (and alert (eql (getf alert :repo-id) (getf repo :id)))
+        (return-from api-dismiss-alert (json-error "not found" :status 404)))
+      (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+             (json (when (and body-text (plusp (length body-text)))
+                     (com.inuoe.jzon:parse body-text)))
+             (reason (or (and json (let ((r (gethash "reason" json)))
+                                     (when (stringp r) r)))
+                         "risk_accepted"))
+             (note (and json (let ((n (gethash "note" json)))
+                               (when (stringp n) n)))))
+        (unless (member reason '("not_used" "no_fix" "risk_accepted") :test #'equal)
+          (return-from api-dismiss-alert (json-error "invalid reason")))
+        (create-dep-suppression :repo-id (getf repo :id)
+                                :ecosystem (getf alert :ecosystem)
+                                :package-name (getf alert :package-name)
+                                :advisory-id (getf alert :advisory-id)
+                                :reason reason :note note
+                                :created-by *current-user-id*)
+        (set-dep-alert-state alert-id "dismissed")
+        (handler-case (update-dependency-dashboard (getf repo :id)) (error () nil))
+        (json-response (find-dep-alert-detailed alert-id))))))
+
+(easy-routes:defroute api-deps-usage
+    ("/api/v1/deps/usage" :method :get) (&get ecosystem package)
+  "Org-wide: repos using a package, filtered to repos visible to the caller."
+  (unless (and ecosystem package)
+    (return-from api-deps-usage (json-error "ecosystem and package required")))
+  (let ((rows (remove-if-not
+               (lambda (row)
+                 (let ((repo (find-repo-by-id (getf row :repo-id))))
+                   (and repo (repo-visible-p repo))))
+               (find-repos-using-package ecosystem package))))
+    (json-response rows)))
 
 ;; ----------------------------------------------------------------------------
 ;; Git smart HTTP transport (read-only, for runner clones)
