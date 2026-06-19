@@ -828,11 +828,12 @@
        :where (:= 'id run-id))))))
 
 (defun create-workflow-job (&key workflow-run-id name image needs runs-on
-                                (timeout-seconds 0) continue-on-error)
+                                (timeout-seconds 0) continue-on-error privileged)
   "Create a workflow job. NEEDS is a list of job name strings.
    RUNS-ON is a list of label strings the runner must have.
    TIMEOUT-SECONDS is the max job duration (0 means use default).
-   CONTINUE-ON-ERROR when true prevents dependent jobs from being skipped on failure."
+   CONTINUE-ON-ERROR when true prevents dependent jobs from being skipped on failure.
+   PRIVILEGED when true runs the job container with --privileged (nested containers)."
   (let ((needs-str (if needs (format nil "~{~A~^,~}" needs) ""))
         (runs-on-str (if runs-on (format nil "~{~A~^,~}" runs-on) "")))
     (postmodern:query
@@ -844,6 +845,7 @@
            'runs-on runs-on-str
            'timeout-seconds (or timeout-seconds 0)
            'continue-on-error (if continue-on-error t nil)
+           'privileged (if privileged t nil)
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))

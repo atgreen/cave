@@ -91,6 +91,7 @@
                      (job-timeout (let ((v (cdr (assoc "timeout" job-spec :test #'equal))))
                                     (when (integerp v) v)))
                      (job-continue-on-error (cdr (assoc "continue-on-error" job-spec :test #'equal)))
+                     (job-privileged (cdr (assoc "privileged" job-spec :test #'equal)))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
                   (let ((job (create-workflow-job
@@ -100,7 +101,8 @@
                               :needs needs
                               :runs-on runs-on
                               :timeout-seconds job-timeout
-                              :continue-on-error (eq job-continue-on-error t))))
+                              :continue-on-error (eq job-continue-on-error t)
+                              :privileged (eq job-privileged t))))
                     (llog:info "Created workflow job"
                                :job job-name :job-id (getf job :id))
                     ;; Create steps

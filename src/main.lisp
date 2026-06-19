@@ -575,6 +575,8 @@
                   (commit-sha (slot-value task 'cave::commit-sha))
                   (clone-url (slot-value task 'cave::clone-url))
                   (steps (slot-value task 'cave::steps))
+                  (privileged (handler-case (slot-value task 'cave::privileged)
+                                (error () nil)))
                   (workdir (format nil "/tmp/cave-job-~A" job-id))
                   (container-name (format nil "cave-job-~A" job-id))
                   (overall-success t))
@@ -627,13 +629,21 @@
                                       :ignore-error-status t)
                     (multiple-value-bind (_out err exit)
                         (uiop:run-program
-                         (list "podman" "create" "--name" container-name
-                               ;; :Z relabels the bind mount with a private
-                               ;; SELinux label so the container can write to it
-                               ;; on enforcing hosts (Fedora/RHEL).
-                               "-v" (format nil "~A:/workspace:Z" workdir)
-                               "-w" "/workspace"
-                               image "sleep" "infinity")
+                         (append
+                          (list "podman" "create" "--name" container-name)
+                          ;; A job opts in to privileged mode with `privileged:
+                          ;; true` in its workflow YAML.  Privileged jobs can
+                          ;; launch nested containers (podman/docker-in-podman)
+                          ;; and register QEMU binfmt for foreign-arch testing.
+                          ;; Off by default so untrusted repos can't escalate.
+                          (when privileged (list "--privileged"))
+                          (list
+                           ;; :Z relabels the bind mount with a private SELinux
+                           ;; label so the container can write to it on
+                           ;; enforcing hosts (Fedora/RHEL).
+                           "-v" (format nil "~A:/workspace:Z" workdir)
+                           "-w" "/workspace"
+                           image "sleep" "infinity"))
                          :output '(:string :stripped t)
                          :error-output '(:string :stripped t)
                          :ignore-error-status t)

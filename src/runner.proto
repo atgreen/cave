@@ -74,6 +74,7 @@ message TaskEvent {
   string image = 9;
   repeated StepSpec steps = 10;
   string clone_url = 11;
+  bool privileged = 12;
 }
 
 message StepSpec {

@@ -724,7 +724,9 @@ CREATE TABLE cave_org_dep_policy (
   security_always_on BOOLEAN NOT NULL DEFAULT TRUE,
   freeze_windows JSONB NOT NULL DEFAULT '[]',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);"))
+);")
+
+    (50 . "ALTER TABLE cave_workflow_jobs ADD COLUMN privileged BOOLEAN NOT NULL DEFAULT FALSE;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

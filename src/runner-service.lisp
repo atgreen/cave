@@ -184,6 +184,7 @@
                    :repo-name (or repo-name "")
                    :command ""
                    :image (getf job :image)
+                   :privileged (eq (getf job :privileged) t)
                    :steps step-specs
                    :commit-sha (if (and run (not (eq (getf run :commit-sha) :null)))
                                    (getf run :commit-sha) "")
