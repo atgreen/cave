@@ -1,9 +1,9 @@
 access, ghcr.io/ocicl/access@sha256:96f4ea8a447a99bf4e94de86b2134e1167d45c7a1ca961e986931f06930f1bbd, access-20250418-346e97b/access.asd
-ag-grpc, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-grpc.asd
-ag-grpc-all, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-grpc-all.asd
-ag-http2, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-http2.asd
-ag-proto, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-proto.asd
-ag-proto-cli, ghcr.io/ocicl/ag-proto-cli@sha256:fe32a6b94f4539669703646f5a755a080d95b9952bb7161efb7f3f16468c8253, ag-gRPC-20260527-973596f/ag-proto-cli.asd
+ag-grpc, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-grpc.asd
+ag-grpc-all, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-grpc-all.asd
+ag-http2, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-http2.asd
+ag-proto, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-proto.asd
+ag-proto-cli, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-proto-cli.asd
 alexandria, ghcr.io/ocicl/alexandria@sha256:e433c2e076ed3bcf8641b97b00192680db2201d305efac9293539dee88c7fbf7, alexandria-20240503-8514d8e/alexandria.asd
 anaphora, ghcr.io/ocicl/anaphora@sha256:55f1c61b7826c5451a60b4b4522e35e770504bbfa2036d8becbf21f6d654925a, anaphora-20240503-bcf0f74/anaphora.asd
 arnesi, ghcr.io/ocicl/arnesi@sha256:2608e157cb9628c624dd0f8ca41b74a87558a5f6ec56b70c330e3621b6e8063e, arnesi-20241212-93dc906/arnesi.asd
