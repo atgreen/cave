@@ -191,12 +191,30 @@ Returns T on success, NIL otherwise."
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-merge-branch (repo-path source-branch target-branch &key squash)
+(defun parse-git-author (author)
+  "Parse AUTHOR (\"Name <email>\") into (values name email). Falls back to a
+   cave-bot identity for blank/garbage input so commits never fail."
+  (let ((a (and (stringp author) (string-trim " " author))))
+    (if (and a (plusp (length a)))
+        (let ((lt (position #\< a)) (gt (position #\> a)))
+          (if (and lt gt (< lt gt))
+              (values (let ((n (string-trim " " (subseq a 0 lt))))
+                        (if (plusp (length n)) n "cave-bot"))
+                      (subseq a (1+ lt) gt))
+              (values a "cave-bot@localhost")))
+        (values "cave-bot" "cave-bot@localhost"))))
+
+(defun git-merge-branch (repo-path source-branch target-branch &key squash author message)
   "Merge SOURCE-BRANCH into TARGET-BRANCH in a bare repo.
-   If SQUASH is T, squash all commits into one.
+   If SQUASH is T, squash all commits into one. AUTHOR (\"Name <email>\") and
+   MESSAGE customize the merge/squash commit; a fallback identity is always set
+   so commits never fail for a missing committer in a clean worktree.
    Uses a temporary worktree. Returns T on success, NIL on failure."
   (let ((tmpdir (format nil "/tmp/cave-merge-~A" (ironclad:byte-array-to-hex-string
-                                                   (ironclad:random-data 8)))))
+                                                   (ironclad:random-data 8))))
+        (ident (multiple-value-bind (name email) (parse-git-author author)
+                 (list "-c" (format nil "user.name=~A" name)
+                       "-c" (format nil "user.email=~A" email)))))
     (unwind-protect
          (let ((exit-code
                 (progn
@@ -217,9 +235,11 @@ Returns T on success, NIL otherwise."
                         ;; Commit the squashed changes
                         (multiple-value-bind (_o2 _e2 code2)
                             (uiop:run-program
-                             (list "git" "-C" tmpdir "commit" "--no-edit"
-                                   "-m" (format nil "Squash merge ~A into ~A"
-                                                source-branch target-branch))
+                             (append (list "git" "-C" tmpdir) ident
+                                     (list "commit" "--no-edit"
+                                           "-m" (or message
+                                                    (format nil "Squash merge ~A into ~A"
+                                                            source-branch target-branch))))
                              :output '(:string :stripped t)
                              :error-output '(:string :stripped t)
                              :ignore-error-status t)
@@ -228,7 +248,10 @@ Returns T on success, NIL otherwise."
                       ;; Regular merge
                       (multiple-value-bind (_o _e code)
                           (uiop:run-program
-                           (list "git" "-C" tmpdir "merge" "--no-edit" source-branch)
+                           (append (list "git" "-C" tmpdir) ident
+                                   (list "merge" "--no-edit")
+                                   (when message (list "-m" message))
+                                   (list source-branch))
                            :output '(:string :stripped t)
                            :error-output '(:string :stripped t)
                            :ignore-error-status t)
