@@ -26,7 +26,10 @@ if [ ! -f "$CONFIG" ]; then
  :zoekt-enabled ${CAVE_ZOEKT_ENABLED:-nil}
  :zoekt-web-url "${CAVE_ZOEKT_WEB_URL:-http://cave-prod-zoekt-web:6070}"
  :chamber-enabled ${CAVE_CHAMBER_ENABLED:-t}
- :zoekt-index-dir "${CAVE_ZOEKT_INDEX_DIR:-/data/zoekt-index}")
+ :zoekt-index-dir "${CAVE_ZOEKT_INDEX_DIR:-/data/zoekt-index}"
+ :deps-scan-enabled ${CAVE_DEPS_SCAN_ENABLED:-nil}
+ :deps-scan-image "${CAVE_DEPS_SCAN_IMAGE:-ghcr.io/atgreen/cave-scan:main}"
+ :deps-scan-labels "${CAVE_DEPS_SCAN_LABELS:-}")
 CONF
 fi
 
