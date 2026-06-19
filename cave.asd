@@ -57,6 +57,7 @@
                 (:file "src/deps-dashboard")
                 (:file "src/osv")
                 (:file "src/sbom")
+                (:file "src/deps-fix")
                 (:file "src/workflow")
                 (:file "src/runner-service")
                 (:file "src/ssh")

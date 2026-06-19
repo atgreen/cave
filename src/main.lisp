@@ -1113,6 +1113,38 @@
           (format t "~&No SBOM produced for ~A (is syft installed?).~%" repo-path)))
     (disconnect-db)))
 
+;;; --- DEPS-FIX subcommand ---
+
+(defun make-deps-fix-command ()
+  (clingon:make-command
+   :name "deps-fix"
+   :description "Open a fix PR for a security alert (unambiguous manifest bumps)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :integer
+              :long-name "alert" :key :alert :required t
+              :description "Dependency alert id to fix"))
+   :handler #'handle-deps-fix))
+
+(defun handle-deps-fix (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (alert-id (clingon:getopt cmd :alert)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (let ((result (open-dependency-fix-pr alert-id)))
+      (case (getf result :status)
+        (:opened (format t "~&Opened fix PR on branch ~A (commit ~A).~%"
+                         (getf result :branch)
+                         (subseq (getf result :commit) 0 (min 8 (length (getf result :commit))))))
+        (:manual (format t "~&Manual fix needed (~A): ~A~%"
+                         (getf result :fix-kind) (getf result :reason)))
+        (:no-fix (format t "~&No fix version available for this alert.~%"))
+        (t (format t "~&Could not open fix: ~A~%" (getf result :reason)))))
+    (disconnect-db)))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -1135,7 +1167,8 @@
                        (make-sync-mirrors-command)
                        (make-sync-themes-command)
                        (make-sync-advisories-command)
-                       (make-deps-scan-command))
+                       (make-deps-scan-command)
+                       (make-deps-fix-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 

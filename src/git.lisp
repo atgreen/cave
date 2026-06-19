@@ -242,6 +242,48 @@ Returns T on success, NIL otherwise."
       (when (probe-file tmpdir)
         (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
 
+(defun git-commit-file-on-branch (repo-path base-branch new-branch path content message
+                                  &key (author-name "cave-bot")
+                                       (author-email "cave-bot@localhost"))
+  "In bare REPO-PATH, branch NEW-BRANCH off BASE-BRANCH, overwrite PATH with
+   CONTENT, and commit. Returns the new commit SHA, or NIL on failure. Uses a
+   temporary worktree; the new branch ref persists in the bare repo."
+  (let ((tmp (format nil "/tmp/cave-fix-~A"
+                     (ironclad:byte-array-to-hex-string (ironclad:random-data 8)))))
+    (flet ((git* (&rest args)
+             (nth-value 2
+               (uiop:run-program (list* "git" "-C" tmp args)
+                                 :output '(:string :stripped t)
+                                 :error-output '(:string :stripped t)
+                                 :ignore-error-status t))))
+      (unwind-protect
+           (block done
+             (unless (zerop (nth-value 2
+                              (git-run repo-path "worktree" "add" "-b" new-branch
+                                       tmp base-branch)))
+               (return-from done nil))
+             (let ((file (merge-pathnames path (uiop:ensure-directory-pathname tmp))))
+               (ensure-directories-exist file)
+               (with-open-file (s file :direction :output :if-exists :supersede
+                                       :if-does-not-exist :create)
+                 (write-string content s)))
+             (unless (zerop (git* "add" "--" path)) (return-from done nil))
+             (unless (zerop (git* "-c" (format nil "user.name=~A" author-name)
+                                  "-c" (format nil "user.email=~A" author-email)
+                                  "commit" "-m" message))
+               (return-from done nil))
+             (string-trim '(#\Newline #\Space)
+                          (nth-value 0
+                            (uiop:run-program (list "git" "-C" tmp "rev-parse" "HEAD")
+                                              :output '(:string :stripped t)
+                                              :ignore-error-status t))))
+        (uiop:run-program (list "git" "-C" (namestring repo-path)
+                                "worktree" "remove" "--force" tmp)
+                          :ignore-error-status t :output :string :error-output :string)
+        (when (probe-file tmp)
+          (uiop:delete-directory-tree (pathname tmp) :validate t
+                                                     :if-does-not-exist :ignore))))))
+
 (defun inject-auth-token (url token)
   "Insert TOKEN into a URL: https://TOKEN@host/path. Returns URL unchanged if no token."
   (if token

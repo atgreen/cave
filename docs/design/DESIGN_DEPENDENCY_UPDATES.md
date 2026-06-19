@@ -268,24 +268,33 @@ parallel (covers npm/crates/Go-modules, the bulk of alerts) so instant
 rematch-on-new-CVE lights up without a rescan. Add PEP 440 / Maven as demand
 warrants. The schema supports both unchanged.
 
-### Fix pipeline (`deps-fix` runner job, lazy)
+### Fix pipeline (`deps-fix`) — BUILT (spine)
 
-Triggered from the dashboard issue or an API call, not by the matcher. Classifies
-`fix_kind` (knows the ecosystem), mutates in a worktree/chamber, **runs the
-repo's own CI via the workflow runner, opens the PR only if green** via
-`create-pull-request`, stamps `fix_pr_id`, caches `fix_kind` on the alert.
+Implemented in `src/deps-fix.lisp` + `git-commit-file-on-branch` (`git.lisp`).
+`open-dependency-fix-pr (alert-id)`: classify `fix_kind` (cached on the alert),
+and for the unambiguous manifest case make a real branch+commit in the bare repo
+(temp-worktree pattern) and open a PR via `create-pull-request`, stamping
+`fix_pr_id`. Reachable via `cave-server deps-fix --alert <id>`.
 
-| `fix_kind` | situation | mutation |
+**Decision:** a correct fix usually needs package-manager/lockfile tooling (for a
+ranged dep the *resolved* version isn't even in the manifest), which is the moat
+we borrow, not hand-roll. So the bump is `safe-bump-manifest` — it edits only
+when the resolved version occurs **exactly once** in the manifest (covers exact
+pins: go.mod, `requirements.txt ==`, pinned package.json). Anything ambiguous,
+ranged, lockfile-only, or transitive is classified and returned `:manual`
+**without touching files** — never a corrupting edit.
+
+| `fix_kind` | situation | status today |
 |---|---|---|
-| `manifest` | direct, pinned in manifest | edit manifest, regen lockfile |
-| `lockfile` | direct, range already permits fix | lockfile-only bump |
-| `override` | transitive, ecosystem supports pins | inject overrides/resolutions/replace |
-| `transitive_parent` | transitive, no override | bump the parent |
-| `none` | no fixed version | alert only, no PR |
+| `manifest` | direct, resolved version pinned in manifest | **opens PR** |
+| `manifest` | direct, but ranged/absent in manifest | `:manual` (needs lockfile tooling) |
+| `transitive_parent` | transitive dep | `:manual` |
+| `none` | no fixed version | `:no-fix` |
 
-Auto-merge gate: `fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org `automerge_ceiling`
-∧ CI green ∧ historical pass-rate for that package's past bumps ≥ threshold
-(computed from `cave_workflow_runs` — cave owns this; Renovate buys it from Mend).
+Not yet: lockfile regeneration / override injection (needs a tool or runner),
+and the **CI-gated auto-merge** (`fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org
+`automerge_ceiling` ∧ CI green ∧ historical pass-rate from `cave_workflow_runs`).
+Triggering from a dashboard checkbox needs the web route (UI step).
 
 ## UI & notifications (reuse, don't reinvent)
 
@@ -321,6 +330,6 @@ Auto-merge gate: `fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org `automerge_
 3. `deps-scan` + `/-/internal/repos/.../deps` ingest — graph populated. — DONE (`src/sbom.lisp`)
 4. Matcher (osv-scanner bootstrap) + alerts + dependency-dashboard issue. — DONE (`src/deps-dashboard.lisp`)
 5. Native semver path → instant rematch-on-new-CVE. — DONE (`compare-versions`)
-6. `deps-fix` pipeline + CI-gated auto-merge.
+6. `deps-fix` pipeline + CI-gated auto-merge. — spine DONE (`src/deps-fix.lisp`); lockfile/override + auto-merge TODO
 7. Org policy + per-repo `.cave/deps.yml` (org caps repo).
 8. Dashboards, badges, reachability, metrics.

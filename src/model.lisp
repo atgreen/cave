@@ -2344,6 +2344,30 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
     WHERE al.repo_id = $1 AND al.state = $2"
    repo-id state :plists))
 
+(defun find-dep-alert-detailed (alert-id)
+  "One alert joined with its dep + advisory, for the fix pipeline."
+  (postmodern:query
+   "SELECT al.id, al.repo_id, al.state, al.fix_version, al.fix_kind, al.fix_pr_id,
+           d.ecosystem, d.package_name, d.version, d.manifest_path, d.is_direct,
+           a.osv_id, a.summary, a.severity
+    FROM cave_dep_alerts al
+    JOIN cave_repo_deps d ON d.id = al.dep_id
+    JOIN cave_advisories a ON a.id = al.advisory_id
+    WHERE al.id = $1"
+   alert-id :plist))
+
+(defun set-alert-fix-kind (alert-id fix-kind)
+  "Cache the classified fix kind on an alert."
+  (postmodern:execute
+   (:update 'cave-dep-alerts :set 'fix-kind fix-kind 'updated-at (:now)
+    :where (:= 'id alert-id))))
+
+(defun set-alert-fix-pr (alert-id pr-id)
+  "Link the fix PR (changeset id) to an alert."
+  (postmodern:execute
+   (:update 'cave-dep-alerts :set 'fix-pr-id pr-id 'updated-at (:now)
+    :where (:= 'id alert-id))))
+
 (defun find-dashboard-issue (repo-id marker)
   "The dependency-dashboard issue for REPO-ID (identified by MARKER in its body),
    or NIL."
