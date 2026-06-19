@@ -291,10 +291,14 @@ ranged, lockfile-only, or transitive is classified and returned `:manual`
 | `transitive_parent` | transitive dep | `:manual` |
 | `none` | no fixed version | `:no-fix` |
 
-Not yet: lockfile regeneration / override injection (needs a tool or runner),
-and the **CI-gated auto-merge** (`fix_kind ∈ {lockfile,manifest}` ∧ bump ≤ org
-`automerge_ceiling` ∧ CI green ∧ historical pass-rate from `cave_workflow_runs`).
-Triggering from a dashboard checkbox needs the web route (UI step).
+**CI-gated auto-merge** — BUILT (`process-dependency-automerge`,
+`cave-server deps-automerge`; see deps-policy below): merges an eligible fix PR
+(bump ≤ effective `automerge_ceiling`) once its head commit is green
+(`combined-commit-status` = `:success`). Off by default (ceiling `none`).
+
+Not yet: lockfile regeneration / override injection (needs a tool or runner);
+historical pass-rate weighting from `cave_workflow_runs`; triggering a fix from a
+dashboard checkbox (needs a web route).
 
 ## UI & notifications (reuse, don't reinvent)
 
@@ -306,10 +310,17 @@ Triggering from a dashboard checkbox needs the web route (UI step).
   and advisory sync (`refresh-dependency-dashboards`); kept and shown as "no open
   alerts" once clean. TODO: per-update checkboxes to trigger a fix (needs the fix
   pipeline). Free markdown (cl-commonmark), permissions, notifications.
-- **Digest notifications** in `notify.lisp`: a 40-dep bump round is one email.
-- **Repo Dependencies tab** + org **Insights/Security** dashboard (Spinneret in
-  `views.lisp`); inline "N behind / M CVE" badges in the manifest file view.
-- **Prometheus**: dependency freshness + open-alert counts in `metrics.lisp`.
+- **Repo Security tab** — BUILT (`view-dependencies`, `views.lisp`; route
+  `GET /:owner/:repo-name/deps`). Open alerts severity-sorted (OSV links + fix
+  versions) above the dependency graph. TODO: org Insights dashboard, inline
+  manifest badges.
+- **REST API** — BUILT (`server.lisp`): `GET …/deps`, `GET …/alerts`,
+  `POST …/alerts/:id/dismiss` (auth + member-gated), `GET /api/v1/deps/usage`
+  (org-wide, visibility-filtered).
+- **CLI** — BUILT (`cli/cave/deps.go`): `cave deps list|alerts|dismiss|who-uses`.
+- **Digest notifications** in `notify.lisp`: a 40-dep round as one email. TODO —
+  needs careful new-vs-existing diffing to avoid spam; deferred.
+- **Prometheus**: dependency freshness + open-alert counts in `metrics.lisp`. TODO.
 - **Reachability** (`reachable`): when an advisory carries affected symbols,
   query zoekt for usage; `false` sorts the alert down and dampens auto-PR
   urgency but never auto-dismisses (index miss is heuristic, not proof).
@@ -330,6 +341,25 @@ Triggering from a dashboard checkbox needs the web route (UI step).
 3. `deps-scan` + `/-/internal/repos/.../deps` ingest — graph populated. — DONE (`src/sbom.lisp`)
 4. Matcher (osv-scanner bootstrap) + alerts + dependency-dashboard issue. — DONE (`src/deps-dashboard.lisp`)
 5. Native semver path → instant rematch-on-new-CVE. — DONE (`compare-versions`)
-6. `deps-fix` pipeline + CI-gated auto-merge. — spine DONE (`src/deps-fix.lisp`); lockfile/override + auto-merge TODO
-7. Org policy + per-repo `.cave/deps.yml` (org caps repo).
-8. Dashboards, badges, reachability, metrics.
+6. `deps-fix` pipeline + CI-gated auto-merge. — DONE: spine (`src/deps-fix.lisp`)
+   + gated auto-merge (`process-dependency-automerge`, `cave-server deps-automerge`).
+   Lockfile/override regeneration still TODO.
+7. Org policy + per-repo `.cave/deps.yml` (org caps repo). — DONE
+   (`src/deps-policy.lisp`; `cave_org_dep_policy`). `ignore` globs parsed but not
+   yet enforced in matching — TODO.
+8. REST API + `cave deps` client + repo Security tab. — DONE.
+9. Remaining: lockfile/override fixes, org Insights dashboard + manifest badges,
+   metrics, reachability (zoekt), digest notifications, `ignore`-glob enforcement,
+   incremental advisory sync.
+
+## Scheduling
+
+The producers are CLI subcommands; run them periodically (cron or a systemd
+timer — no timer unit ships yet, matching how `sync-mirrors`/`sync-themes` are
+hook-driven today):
+- `cave-server sync-advisories` — refresh advisories + rematch (e.g. daily).
+- `cave-server deps-automerge` — merge eligible green fix PRs (e.g. every 30 min;
+   a no-op until an org/repo raises its automerge ceiling).
+
+`deps-scan` runs automatically on default-branch push; `cave-server deps-scan
+--repo o/n` backfills.
