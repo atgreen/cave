@@ -403,7 +403,8 @@ the results. Skips deletes and zero-sha boundaries."
           (broadcast-invalidate-cache owner repo-name))
         ;; Trigger Zoekt reindexing
         (zoekt-index-repo owner repo-name)
-        ;; Scan dependencies on default-branch pushes
+        ;; Scan dependencies on default-branch pushes (runner-based; no-op unless
+        ;; :deps-scan-enabled). Enqueues a workflow job a syft runner picks up.
         (let ((default-branch (or (chamber-get-default-branch owner repo-name) "main")))
           (when (find-if (lambda (r)
                            (member (getf r :ref)
@@ -411,7 +412,11 @@ the results. Skips deletes and zero-sha boundaries."
                                          default-branch)
                                    :test #'equal))
                          refs)
-            (maybe-scan-repo-deps-async owner repo-name default-branch)))
+            (handler-case (enqueue-deps-scan (getf repo :id) :ref default-branch)
+              (error (e)
+                (llog:warn "Dep scan enqueue failed"
+                           :repo (format nil "~A/~A" owner repo-name)
+                           :error (princ-to-string e))))))
         ;; Fire webhooks
         (dolist (r refs)
           (fire-webhooks (getf repo :id) "push"

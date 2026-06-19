@@ -23,6 +23,8 @@ jobs:
             dockerfile: Containerfile.zoekt
           - name: cave-keycloak
             dockerfile: Containerfile.keycloak
+          - name: cave-scan
+            dockerfile: Containerfile.scan
     steps:
       - uses: actions/checkout@v4
 

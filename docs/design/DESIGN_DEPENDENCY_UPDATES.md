@@ -207,39 +207,48 @@ upserts every matching advisory), `querybatch` page-token pagination, and a
 numeric CVSS score. Verified end to end against the live OSV API (npm/lodash
 returns real CVEs that match a seeded graph).
 
-### Producer B — dep extraction (per repo) — BUILT
+### Producer B — runner-based extraction — BUILT
 
-Implemented in `src/sbom.lisp`. One CycloneDX parser + one `ingest-repo-deps`
-path, reachable three ways:
+Extraction runs **on a runner**, not the server — in-process syft was dropped (a
+forge can't scan every repo on the box, and cave's repos are bare so there's no
+working tree to scan anyway). Implemented in `src/sbom.lisp` + a hook in
+`workflow.lisp`.
 
-1. **HTTP** — `POST /-/internal/repos/:owner/:repo-name/deps` (`server.lisp`),
-   body = CycloneDX JSON, auth = localhost **or** a valid runner bearer token
-   (`valid-runner-request-p` → `authenticate-runner`). For a future runner.
-2. **CLI** — `cave-server deps-scan --repo owner/name [--ref R] [--sbom FILE]`
-   (`main.lisp`): runs `syft` against the repo's working tree, or ingests a given
-   SBOM file. The verified manual/backfill/cron path.
-3. **Push** — `maybe-scan-repo-deps-async` fires from the post-receive handler on
-   **default-branch pushes only**, in a background thread guarded by
-   `:deps-scan-enabled`, mirroring `zoekt-index-repo`.
+`enqueue-deps-scan` schedules a normal **workflow run** (marker
+`workflow_name = "deps-scan"`): image `:deps-scan-image` (default
+`ghcr.io/atgreen/cave-scan:main` — alpine + bash + syft, `Containerfile.scan`),
+one step:
 
-**Decision (deviation from the original plan):** the original sketch had the
-runner emit the SBOM and POST it back. But the runner's simple-task model just
-runs `bash -c <command>` and captures stdout — it has no injected callback token
-or repo checkout, so it can't POST an authenticated SBOM without more plumbing.
-So extraction runs **host-side** (`syft` on the repo's disk path, in-process)
-for now; the HTTP endpoint stays as the contract for a future runner-based
-scanner. Requires `syft` on PATH (or `:syft-path`); degrades gracefully when
-absent (logs and skips).
+```
+syft -q dir:/workspace -o cyclonedx-json=/tmp/sbom.json >/dev/null 2>&1 && cat /tmp/sbom.json
+```
 
-`sbom->deps` parses each component's purl (`parse-purl` handles npm scopes, Go
-module paths, Maven group:artifact), maps purl type → OSV ecosystem, and pulls a
-best-effort manifest path from syft's `location` properties. `scan-repo-deps`
-obtains the SBOM and calls `ingest-repo-deps` (atomic generation-sweep replace +
-re-match).
+The runner already clones the repo into the container and streams step output to
+`cave_workflow_steps.log`. The step writes syft to a file and `cat`s it, so the
+log is clean CycloneDX JSON (the runner captures stdout+stderr combined).
 
-Not yet done: runner-based extraction (the endpoint awaits a scanner that posts
-to it), per-component direct/transitive detection (defaults to direct), and
-per-manifest grouping beyond syft's location hints.
+**SBOM return path = the step log (Option B, chosen for security):** no token is
+piped into the runner container. When the run finalizes (`check-workflow-job-
+completion` → `update-workflow-run-status`), `maybe-ingest-scan-run` reads the
+scan step's log, extracts the JSON (`%extract-json-object`, tolerant of stray
+output), and calls `ingest-sbom-json` → `ingest-repo-deps` + dashboard refresh.
+
+Triggers (all just *enqueue* a run; guarded by `:deps-scan-enabled`):
+- **Push** — post-receive enqueues a scan on default-branch pushes.
+- **CLI** — `cave-server deps-scan --repo o/n` enqueues; `--sbom FILE` instead
+  ingests a pre-built SBOM directly (no runner).
+- (cron/API can call `enqueue-deps-scan` too.)
+
+The `/-/internal/repos/.../deps` HTTP endpoint + `sbom->deps` parser remain (used
+by `--sbom` and available for other producers). `parse-purl` handles npm scopes,
+Go module paths, Maven group:artifact.
+
+**Operational requirement:** a runner must be running that can pull
+`:deps-scan-image` and run podman steps. With no runner, scans queue harmlessly.
+
+Not yet done: per-component direct/transitive detection (defaults to direct),
+per-manifest grouping beyond syft's location hints, and `cave-scan` image build
+proven end-to-end on a live runner.
 
 ### The matcher
 
