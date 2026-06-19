@@ -2097,6 +2097,15 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
             ((and bp (not ap)) 1)
             (t 0)))))
 
+(defun bump-level (from to)
+  "Classify the upgrade FROM -> TO as :patch, :minor, or :major (semver-ish)."
+  (let ((fr (%version-release-parts from))
+        (tr (%version-release-parts to)))
+    (flet ((nth0 (l n) (or (nth n l) 0)))
+      (cond ((/= (nth0 fr 0) (nth0 tr 0)) :major)
+            ((/= (nth0 fr 1) (nth0 tr 1)) :minor)
+            (t :patch)))))
+
 (defun version-in-range-p (version introduced fixed last-affected)
   "OSV range semantics: introduced is inclusive, fixed exclusive, last-affected
    inclusive. A missing upper bound means open-ended."
@@ -2375,6 +2384,35 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
   (postmodern:query
    "SELECT * FROM cave_issues WHERE repo_id = $1 AND body LIKE $2 LIMIT 1"
    repo-id (format nil "%~A%" marker) :plist))
+
+(defun get-org-dep-policy (org-id)
+  "The org's dependency policy row, or NIL."
+  (postmodern:query
+   (:select '* :from 'cave-org-dep-policy :where (:= 'org-id org-id))
+   :plist))
+
+(defun upsert-org-dep-policy (&key org-id allowed-ecosystems license-allow
+                                   license-deny (automerge-ceiling "none")
+                                   (security-always-on t) freeze-windows)
+  "Create or update an org's dependency policy."
+  (postmodern:execute
+   "INSERT INTO cave_org_dep_policy
+       (org_id, allowed_ecosystems, license_allow, license_deny,
+        automerge_ceiling, security_always_on, freeze_windows, updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb, NOW())
+    ON CONFLICT (org_id) DO UPDATE SET
+       allowed_ecosystems = EXCLUDED.allowed_ecosystems,
+       license_allow = EXCLUDED.license_allow,
+       license_deny = EXCLUDED.license_deny,
+       automerge_ceiling = EXCLUDED.automerge_ceiling,
+       security_always_on = EXCLUDED.security_always_on,
+       freeze_windows = EXCLUDED.freeze_windows,
+       updated_at = NOW()"
+   org-id
+   (if allowed-ecosystems (coerce allowed-ecosystems 'vector) :null)
+   (if license-allow (coerce license-allow 'vector) :null)
+   (if license-deny (coerce license-deny 'vector) :null)
+   automerge-ceiling security-always-on (or freeze-windows "[]")))
 
 (defun repos-needing-dashboard-refresh (marker)
   "Repo ids that either have open alerts or already have a dashboard issue."
