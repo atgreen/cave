@@ -1983,6 +1983,14 @@ the results. Skips deletes and zero-sha boundaries."
       (html-response
        (view-issues :owner-name owner :repo repo :issues issues :current-status status)))))
 
+(easy-routes:defroute deps-page ("/:owner/:repo-name/deps" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from deps-page repo))
+    (html-response
+     (view-dependencies :owner-name owner :repo repo
+                        :alerts (list-dep-alerts-detailed (getf repo :id) :state "open")
+                        :deps (list-repo-deps (getf repo :id))))))
+
 (easy-routes:defroute new-issue-page
     ("/:owner/:repo-name/issues/new" :method :get) ()
   (when (require-login)
