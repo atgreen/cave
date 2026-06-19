@@ -2366,6 +2366,20 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
     WHERE al.id = $1"
    alert-id :plist))
 
+(defun dep-automerge-candidates ()
+  "Open alerts with an open fix PR — inputs for the auto-merge processor."
+  (postmodern:query
+   "SELECT al.id AS alert_id, al.fix_version,
+           d.version, d.ecosystem, d.package_name,
+           al.repo_id, c.id AS pr_id, c.number AS pr_number,
+           c.source_branch, c.target_branch, c.head_commit
+    FROM cave_dep_alerts al
+    JOIN cave_repo_deps d ON d.id = al.dep_id
+    JOIN cave_changesets c ON c.id = al.fix_pr_id
+    WHERE al.state = 'open' AND al.fix_pr_id IS NOT NULL
+      AND c.is_merged = FALSE AND c.is_closed = FALSE"
+   :plists))
+
 (defun set-alert-fix-kind (alert-id fix-kind)
   "Cache the classified fix kind on an alert."
   (postmodern:execute

@@ -30,9 +30,10 @@
   (if (<= (%ceiling-rank a) (%ceiling-rank b)) a b))
 
 (defun parse-deps-config (yaml-string)
-  "Parse a .cave/deps.yml into a plist (:automerge CEILING :ignore LIST).
-   Defaults to automerge 'none'. Tolerant of NIL/blank/garbage input."
-  (let ((automerge "none") (ignore '()))
+  "Parse a .cave/deps.yml into a plist (:automerge CEILING-or-NIL :ignore LIST).
+   :automerge is NIL when unspecified (so the caller can inherit). Tolerant of
+   NIL/blank/garbage input."
+  (let ((automerge nil) (ignore '()))
     (handler-case
         (let ((alist (and yaml-string (plusp (length yaml-string))
                           (yaml-parse yaml-string))))
@@ -53,19 +54,72 @@
      (error () nil))))
 
 (defun effective-automerge-ceiling (repo &key config)
-  "Effective auto-merge ceiling for REPO: the org policy ceiling caps the repo's
-   .cave/deps.yml request (repo can only narrow). User repos have no org cap.
-   CONFIG (a parse-deps-config plist) may be supplied to avoid disk reads."
+  "Effective auto-merge ceiling for REPO. The org policy ceiling is the cap; the
+   repo's .cave/deps.yml can only narrow it. An org repo with no config inherits
+   the org cap; a user repo with no config is off ('none'). CONFIG (a
+   parse-deps-config plist) may be supplied to avoid disk reads.
+
+   Off by default: org cap defaults to 'none' until an org policy is set."
   (let* ((repo-cfg (or config
                        (read-repo-deps-config (repo-owner-name repo) (getf repo :name))))
-         (repo-ceiling (getf repo-cfg :automerge "none"))
+         (explicit (getf repo-cfg :automerge))      ; string, or NIL when absent
          (org-id (getf repo :org-id))
-         (org-ceiling (if (and org-id (not (eq org-id :null)))
-                          (let ((p (get-org-dep-policy org-id)))
-                            (if p (getf p :automerge-ceiling "none") "none"))
-                          "major")))            ; user repos: no org cap
-    (narrower-ceiling org-ceiling repo-ceiling)))
+         (org-repo (and org-id (not (eq org-id :null))))
+         (cap (if org-repo
+                  (let ((p (get-org-dep-policy org-id)))
+                    (if p (getf p :automerge-ceiling "none") "none"))
+                  "major"))                          ; user repos: no org cap
+         (request (or explicit (if org-repo cap "none"))))
+    (narrower-ceiling cap request)))
 
 (defun auto-merge-eligible-p (from to ceiling)
   "True when bumping FROM -> TO is within CEILING."
   (ceiling-allows-level-p ceiling (bump-level from to)))
+
+(defun process-dependency-automerge (&key (verbose t))
+  "Merge eligible, CI-green dependency-fix PRs. Off by default: each repo's
+   effective ceiling is 'none' until an org/repo opts in. Only acts on bot-opened
+   fix PRs whose head commit is green. Returns the count merged."
+  (let ((merged 0))
+    (dolist (cand (dep-automerge-candidates))
+      (handler-case
+          (let* ((repo (find-repo-by-id (getf cand :repo-id)))
+                 (owner (and repo (repo-owner-name repo)))
+                 (name (and repo (getf repo :name))))
+            (when (and repo
+                       (auto-merge-eligible-p (getf cand :version)
+                                              (getf cand :fix-version)
+                                              (effective-automerge-ceiling repo))
+                       (eq (combined-commit-status (getf cand :repo-id)
+                                                   (getf cand :head-commit))
+                           :success))
+              ;; Same call shape as the web merge route (server.lisp).
+              (multiple-value-bind (ok err)
+                  (chamber-merge-branch owner name
+                                        (getf cand :source-branch)
+                                        (getf cand :target-branch))
+                (cond
+                  (ok
+                   (merge-pull-request (getf cand :pr-id))
+                   (set-dep-alert-state (getf cand :alert-id) "auto_fixed")
+                   (log-event "pr.merged"
+                              :user-id (ensure-dependency-bot-user)
+                              :repo-id (getf cand :repo-id)
+                              :entity-type "pull_request"
+                              :entity-id (getf cand :pr-id))
+                   (let ((pr (find-pull-request-by-id (getf cand :pr-id))))
+                     (when pr (handler-case (notify-pr-merged repo owner name pr)
+                                (error () nil))))
+                   (incf merged)
+                   (when verbose
+                     (format t "  merged #~A: ~A ~A -> ~A~%"
+                             (getf cand :pr-number) (getf cand :package-name)
+                             (getf cand :version) (getf cand :fix-version))))
+                  (verbose
+                   (format t "  skip #~A: merge failed (~A)~%"
+                           (getf cand :pr-number) err))))))
+        (error (e)
+          (llog:warn "Auto-merge failed" :alert (getf cand :alert-id)
+                                         :error (princ-to-string e)))))
+    (when verbose (format t "~&Auto-merged ~A dependency PR(s).~%" merged))
+    merged))

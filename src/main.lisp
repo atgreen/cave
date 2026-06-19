@@ -1145,6 +1145,25 @@
         (t (format t "~&Could not open fix: ~A~%" (getf result :reason)))))
     (disconnect-db)))
 
+;;; --- DEPS-AUTOMERGE subcommand ---
+
+(defun make-deps-automerge-command ()
+  (clingon:make-command
+   :name "deps-automerge"
+   :description "Merge eligible, CI-green dependency-fix PRs (per org/repo policy)"
+   :options (list (make-config-option))
+   :handler #'handle-deps-automerge))
+
+(defun handle-deps-automerge (cmd)
+  (let ((config-path (clingon:getopt cmd :config)))
+    (load-config config-path)
+    (handler-case (connect-db)
+      (error (e)
+        (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
+        (uiop:quit 1)))
+    (process-dependency-automerge)
+    (disconnect-db)))
+
 ;;; --- Top-level command ---
 
 (defun make-app ()
@@ -1168,7 +1187,8 @@
                        (make-sync-themes-command)
                        (make-sync-advisories-command)
                        (make-deps-scan-command)
-                       (make-deps-fix-command))
+                       (make-deps-fix-command)
+                       (make-deps-automerge-command))
    :handler (lambda (cmd)
               (clingon:print-usage cmd *standard-output*))))
 
