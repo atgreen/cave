@@ -216,8 +216,14 @@ message GetDiffMergeBaseRequest {
   string source = 4;
 }
 
-// shared response for both diff RPCs
-// (already defined above as GetDiffResponse)
+// Shared response for both diff RPCs. GetDiffMergeBase packs the diff text into
+// base_ref. (Previously only referenced, never defined — so the generated class
+// was missing and GetDiff/GetDiffMergeBase failed at runtime with
+// "no class named CAVE::GET-DIFF-RESPONSE", falling back to direct git.)
+message GetDiffResponse {
+  string base_ref = 1;
+  string head_ref = 2;
+}
 
 message GetCommitCountRequest {
   string owner = 1;

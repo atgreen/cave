@@ -2272,19 +2272,30 @@ the results. Skips deletes and zero-sha boundaries."
         (unless (pull-request-mergeable-p eligibility)
           (setf (hunchentoot:return-code*) 422)
           (return-from merge-pull-request-submit "Pull request is not mergeable")))
-      ;; Perform the actual git merge
+      ;; Perform the actual git merge, then VERIFY the target branch actually
+      ;; advanced before marking merged / auto-deleting the source branch.
+      ;; chamber-merge-branch can report success without moving the target (e.g.
+      ;; when chamber storage is degraded); without this guard that silently
+      ;; marks the PR merged and deletes the branch while main never changes.
       (let* ((source (getf pr :source-branch))
              (target (getf pr :target-branch))
              (strategy (hunchentoot:post-parameter "strategy"))
+             (disk (repo-disk-path owner repo-name))
+             (before (nth-value 0 (git-run disk "rev-parse" target)))
              (merged (chamber-merge-branch owner repo-name source target
-                                           :squash (equal strategy "squash"))))
+                                           :squash (equal strategy "squash")))
+             (after (nth-value 0 (git-run disk "rev-parse" target))))
         (unless merged
           (setf (hunchentoot:return-code*) 409)
-          (return-from merge-pull-request-submit "Merge failed — conflicts?")))
-      (merge-pull-request (getf pr :id))
-      ;; Auto-delete source branch
-      (when (getf repo :auto-delete-branch)
-        (chamber-delete-branch owner repo-name (getf pr :source-branch)))
+          (return-from merge-pull-request-submit "Merge failed — conflicts?"))
+        (when (and before after (string= before after))
+          (setf (hunchentoot:return-code*) 409)
+          (return-from merge-pull-request-submit
+            "Merge reported success but the target branch did not advance — aborted (storage may be degraded). The source branch was left intact."))
+        (merge-pull-request (getf pr :id))
+        ;; Auto-delete source branch
+        (when (getf repo :auto-delete-branch)
+          (chamber-delete-branch owner repo-name (getf pr :source-branch))))
       (log-event "pr.merged"
                  :user-id *current-user-id*
                  :repo-id (getf repo :id)
