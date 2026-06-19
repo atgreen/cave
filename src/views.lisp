@@ -21,12 +21,18 @@
     (:img :src (gravatar-url email :size size)
      :class class :width (princ-to-string size) :height (princ-to-string size))))
 
+(defun effective-theme ()
+  "The active theme name.  Defaults to \"light\" unless the logged-in user has
+explicitly chosen another theme."
+  (let ((th (and *current-user* (getf *current-user* :theme))))
+    (if (and (stringp th) (not (uiop:emptyp th))) th "light")))
+
 (defmacro page ((&key title) &body body)
   "Wrap BODY in a full HTML page with nav and container."
   `(spinneret:with-html-string
      (:doctype)
      (:html :lang "en"
-            :data-theme (when *current-user* (getf *current-user* :theme))
+            :data-theme (effective-theme)
        (:head
         (:meta :charset "utf-8")
         (:meta :name "viewport" :content "width=device-width, initial-scale=1")
@@ -2355,7 +2361,7 @@ function caveShowCommentForm(td) {
           (:select :id "theme" :name "theme"
            (dolist (name '("terminal-warmth" "solarized-dark" "nord" "dracula" "light"))
              (:option :value name
-              :selected (equal name (getf *current-user* :theme))
+              :selected (equal name (effective-theme))
               name))
            ;; Custom themes
            (dolist (ct (list-user-themes *current-user-id*))
