@@ -1009,8 +1009,9 @@ document.addEventListener('DOMContentLoaded', function() {
       (:div.issue-meta
        (render-avatar (getf author :email) :size 16)
        (format nil " Opened by ~A" (getf author :username)))
-      (when (getf issue :body)
-        (:div.issue-body (:raw (render-markdown (getf issue :body)))))
+      (let ((ib (getf issue :body)))
+        (when (and ib (not (eq ib :null)))
+          (:div.issue-body (:raw (render-markdown ib)))))
 
       ;; Comments
       (:section
@@ -1409,8 +1410,9 @@ function caveShowCommentForm(td) {
                 (getf r :state))
                (when (getf r :is-stale) (:span.badge "stale"))
                (:span.review-version (format nil "v~A" (getf r :changeset-version))))
-              (when (getf r :body)
-                (:div.review-body (getf r :body)))
+              (let ((rb (getf r :body)))
+                (when (and rb (not (eq rb :null)))
+                  (:div.review-body rb)))
               (when (getf r :concerns)
                 (:ul.concern-list
                  (dolist (c (getf r :concerns))

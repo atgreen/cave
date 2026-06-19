@@ -1215,7 +1215,7 @@
            'number number
            'author-id author-id
            'title title
-           'body body
+           'body (or body :null)
       :returning '*)
      :plist)))
 
@@ -1474,7 +1474,7 @@
     :set 'changeset-id changeset-id
          'reviewer-id reviewer-id
          'state state
-         'body body
+         'body (or body :null)
          'changeset-version changeset-version
     :returning '*)
    :plist))
