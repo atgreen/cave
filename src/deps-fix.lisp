@@ -37,6 +37,21 @@
                      replacement
                      (subseq content (+ pos (length needle))))))))
 
+(defun %replace-all (content needle replacement)
+  "Replace every occurrence of NEEDLE in CONTENT. Returns the new string, or NIL
+   when NEEDLE is absent."
+  (when (and (stringp content) (plusp (length needle)))
+    (let ((start 0) (found nil) (out (make-string-output-stream)))
+      (loop for p = (search needle content :start2 start)
+            while p
+            do (setf found t)
+               (write-string content out :start start :end p)
+               (write-string replacement out)
+               (setf start (+ p (length needle))))
+      (when found
+        (write-string content out :start start)
+        (get-output-stream-string out)))))
+
 (defun safe-bump-manifest (content old-version new-version &key package)
   "Return CONTENT with the dependency version bumped, only when the edit is
    unambiguous (the target occurs exactly once) — never a guess that could
@@ -51,9 +66,13 @@
                                  (char/= (char new-version 0) #\v))
                             (concatenate 'string "v" new-version)
                             new-version)))
-            (%replace-if-unique content
-                                (format nil "~A@~A" package old-version)
-                                (format nil "~A@~A" package new-v))))
+            ;; The qualified PACKAGE@old token is specific to this dependency, so
+            ;; every occurrence is the same pin (e.g. an action used in several
+            ;; jobs) — bump them all, like Dependabot does.
+            (%replace-all content
+                          (format nil "~A@~A" package old-version)
+                          (format nil "~A@~A" package new-v))))
+        ;; Bare version fallback is ambiguous, so only when it occurs once.
         (when (plusp (length old-version))
           (%replace-if-unique content old-version new-version)))))
 
