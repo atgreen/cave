@@ -726,7 +726,23 @@ CREATE TABLE cave_org_dep_policy (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );")
 
-    (50 . "ALTER TABLE cave_workflow_jobs ADD COLUMN privileged BOOLEAN NOT NULL DEFAULT FALSE;"))
+    (50 . "ALTER TABLE cave_workflow_jobs ADD COLUMN privileged BOOLEAN NOT NULL DEFAULT FALSE;")
+    (51 . "CREATE TABLE cave_dep_fix_attempts (
+  id BIGSERIAL PRIMARY KEY,
+  alert_id BIGINT NOT NULL REFERENCES cave_dep_alerts(id) ON DELETE CASCADE,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  branch VARCHAR(256) NOT NULL,
+  commit_sha VARCHAR(64) NOT NULL,
+  state VARCHAR(16) NOT NULL DEFAULT 'building'
+    CHECK (state IN ('building','opened','build_failed','no_ci','error')),
+  pr_id BIGINT REFERENCES cave_changesets(id) ON DELETE SET NULL,
+  detail TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(alert_id)
+);
+CREATE INDEX idx_dep_fix_attempts_commit ON cave_dep_fix_attempts (repo_id, commit_sha)")
+    (52 . "ALTER TABLE cave_org_dep_policy ADD COLUMN auto_fix_security BOOLEAN NOT NULL DEFAULT TRUE;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

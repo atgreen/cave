@@ -300,6 +300,18 @@ ranged, lockfile-only, or transitive is classified and returned `:manual`
 | `transitive_parent` | transitive dep | `:manual` |
 | `none` | no fixed version | `:no-fix` |
 
+**Speculative-build-gated fix PRs** — BUILT (`start-speculative-fix`,
+`advance-speculative-fix-for-run`, `process-pending-fixes` in `deps-fix.lisp`;
+`cave_dep_fix_attempts`). Dependabot-style: create the fix branch + commit, run
+the repo's *pull_request* CI on that commit speculatively (push/release
+workflows don't fire), and open the PR only once that build is green; a red build
+records `build_failed` and opens nothing. Repos with no PR CI fall back to
+opening the PR directly (`no_ci`). Auto-triggered after `sync-advisories` for
+open, manifest-fixable security alerts, gated per-org by
+`auto_fix_security` (default on). `safe-bump-manifest` prefers the qualified
+`package@version` edit so shared tags (e.g. GitHub Actions `@v4`) disambiguate
+and the v-prefix is preserved.
+
 **CI-gated auto-merge** — BUILT (`process-dependency-automerge`,
 `cave-server deps-automerge`; see deps-policy below): merges an eligible fix PR
 (bump ≤ effective `automerge_ceiling`) once its head commit is green

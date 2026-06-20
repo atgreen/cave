@@ -2411,6 +2411,87 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
    (:update 'cave-dep-alerts :set 'fix-pr-id pr-id 'updated-at (:now)
     :where (:= 'id alert-id))))
 
+;;; --- Dependency fix attempts: speculative build -> PR (Dependabot-style) ---
+
+(defun workflow-runs-for-commit (repo-id commit-sha)
+  "All workflow runs for REPO-ID at COMMIT-SHA."
+  (postmodern:query
+   (:select '* :from 'cave-workflow-runs
+    :where (:and (:= 'repo-id repo-id) (:= 'commit-sha commit-sha)))
+   :plists))
+
+(defun speculative-build-status (repo-id commit-sha)
+  "Combined status of the cave workflow runs at COMMIT-SHA:
+   :none (no runs scheduled), :pending, :failure, or :success."
+  (let ((runs (workflow-runs-for-commit repo-id commit-sha)))
+    (cond
+      ((null runs) :none)
+      ((some (lambda (r) (member (getf r :status)
+                                 '("queued" "assigned" "running") :test #'equal))
+             runs) :pending)
+      ((some (lambda (r) (member (getf r :status)
+                                 '("failed" "failure" "error" "cancelled") :test #'equal))
+             runs) :failure)
+      ((every (lambda (r) (equal (getf r :status) "success")) runs) :success)
+      (t :pending))))
+
+(defun create-dep-fix-attempt (&key alert-id repo-id branch commit-sha (state "building"))
+  "Record a fix attempt for ALERT-ID."
+  (postmodern:query
+   (:insert-into 'cave-dep-fix-attempts
+    :set 'alert-id alert-id 'repo-id repo-id 'branch branch
+         'commit-sha commit-sha 'state state
+    :returning '*)
+   :plist))
+
+(defun set-dep-fix-attempt-state (id state &key pr-id detail)
+  "Update a fix attempt's state (and optionally its PR / detail)."
+  (postmodern:execute
+   (:update 'cave-dep-fix-attempts
+    :set 'state state 'pr-id (or pr-id :null) 'detail (or detail :null)
+         'updated-at (:now)
+    :where (:= 'id id))))
+
+(defun dep-fix-attempt-for-alert (alert-id)
+  "The fix attempt for ALERT-ID, or NIL."
+  (postmodern:query
+   (:select '* :from 'cave-dep-fix-attempts :where (:= 'alert-id alert-id))
+   :plist))
+
+(defun building-fix-attempts-for-commit (repo-id commit-sha)
+  "Fix attempts still 'building' whose speculative build is at COMMIT-SHA."
+  (postmodern:query
+   (:select '* :from 'cave-dep-fix-attempts
+    :where (:and (:= 'repo-id repo-id) (:= 'commit-sha commit-sha)
+                 (:= 'state "building")))
+   :plists))
+
+(defun open-fixable-alerts-without-attempt ()
+  "Open alerts on direct deps that have a fix version and no fix attempt yet.
+   Returns plists with :id and :repo-id."
+  (postmodern:query
+   "SELECT al.id, al.repo_id
+    FROM cave_dep_alerts al
+    JOIN cave_repo_deps d ON d.id = al.dep_id
+    WHERE al.state = 'open'
+      AND al.fix_version IS NOT NULL
+      AND d.is_direct = TRUE
+      AND NOT EXISTS (SELECT 1 FROM cave_dep_fix_attempts fa WHERE fa.alert_id = al.id)"
+   :plists))
+
+(defun auto-fix-security-enabled-p (repo-id)
+  "Whether to auto-open speculative security fix PRs for REPO-ID. Org repos honor
+   the org policy's auto_fix_security (default TRUE); user repos default TRUE."
+  (let* ((repo (find-repo-by-id repo-id))
+         (org-id (and repo (let ((o (getf repo :org-id))) (unless (eq o :null) o)))))
+    (if org-id
+        (let ((p (get-org-dep-policy org-id)))
+          (if p
+              (let ((v (getf p :auto-fix-security)))
+                (if (eq v :null) t v))
+              t))
+        t)))
+
 (defun find-dashboard-issue (repo-id marker)
   "The dependency-dashboard issue for REPO-ID (identified by MARKER in its body),
    or NIL."
@@ -2426,13 +2507,15 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
 
 (defun upsert-org-dep-policy (&key org-id allowed-ecosystems license-allow
                                    license-deny (automerge-ceiling "none")
-                                   (security-always-on t) freeze-windows)
+                                   (security-always-on t) freeze-windows
+                                   (auto-fix-security t))
   "Create or update an org's dependency policy."
   (postmodern:execute
    "INSERT INTO cave_org_dep_policy
        (org_id, allowed_ecosystems, license_allow, license_deny,
-        automerge_ceiling, security_always_on, freeze_windows, updated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb, NOW())
+        automerge_ceiling, security_always_on, freeze_windows,
+        auto_fix_security, updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8, NOW())
     ON CONFLICT (org_id) DO UPDATE SET
        allowed_ecosystems = EXCLUDED.allowed_ecosystems,
        license_allow = EXCLUDED.license_allow,
@@ -2440,12 +2523,14 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
        automerge_ceiling = EXCLUDED.automerge_ceiling,
        security_always_on = EXCLUDED.security_always_on,
        freeze_windows = EXCLUDED.freeze_windows,
+       auto_fix_security = EXCLUDED.auto_fix_security,
        updated_at = NOW()"
    org-id
    (if allowed-ecosystems (coerce allowed-ecosystems 'vector) :null)
    (if license-allow (coerce license-allow 'vector) :null)
    (if license-deny (coerce license-deny 'vector) :null)
-   automerge-ceiling security-always-on (or freeze-windows "[]")))
+   automerge-ceiling security-always-on (or freeze-windows "[]")
+   auto-fix-security))
 
 (defun repos-needing-dashboard-refresh (marker)
   "Repo ids that either have open alerts or already have a dashboard issue."

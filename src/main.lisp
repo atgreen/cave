@@ -1082,6 +1082,9 @@
                         (mapcar (lambda (s) (string-trim " " s))
                                 (uiop:split-string eco :separator '(#\,))))))
       (sync-osv-advisories :ecosystems ecosystems))
+    ;; Dependabot-style: speculatively build + open fix PRs for new security
+    ;; alerts (gated per-repo by auto_fix_security policy, default on).
+    (process-pending-fixes)
     (disconnect-db)))
 
 ;;; --- DEPS-SCAN subcommand ---
