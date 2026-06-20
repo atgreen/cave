@@ -30,11 +30,16 @@
 
 (defun handle-register-runner (request ctx)
   "Register a new runner."
-  (let* ((reg-token (slot-value request 'cave::registration-token))
-         (token-record (validate-registration-token reg-token)))
-    (unless token-record
-      (error "invalid registration token"))
-    (postmodern:with-connection *db-spec*
+  ;; All DB access (incl. token validation) must run inside with-connection so it
+  ;; uses a pooled, per-thread connection. Validating on the shared toplevel
+  ;; connection raced with other gRPC handlers' queries (a PostgreSQL connection
+  ;; is a single socket and not thread-safe), corrupting the result so a valid
+  ;; token read back as NIL -> spurious "invalid registration token".
+  (postmodern:with-connection *db-spec*
+    (let* ((reg-token (slot-value request 'cave::registration-token))
+           (token-record (validate-registration-token reg-token)))
+      (unless token-record
+        (error "invalid registration token"))
       (let ((runner (register-runner
                      :name (slot-value request 'cave::name)
                      :labels (slot-value request 'cave::runner-labels)
