@@ -935,6 +935,23 @@
         :returning '*)
        :plist))))
 
+(defun requeue-workflow-job (job-id)
+  "Return an ASSIGNED job to the queue — used when delivering the task to the
+   runner failed (dead stream). Otherwise the job is wedged 'assigned' to a
+   runner that never received it, which also blocks that runner forever via the
+   one-task-per-runner check."
+  (postmodern:execute
+   (:update 'cave-workflow-jobs
+    :set 'status "queued" 'runner-id :null
+    :where (:and (:= 'id job-id) (:= 'status "assigned")))))
+
+(defun requeue-automation-run (run-id)
+  "Return an ASSIGNED automation run to the queue on failed task delivery."
+  (postmodern:execute
+   (:update 'cave-automation-runs
+    :set 'status "queued" 'runner-id :null
+    :where (:and (:= 'id run-id) (:= 'status "assigned")))))
+
 (defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0) continue-on-error)
   "Create a workflow step. TIMEOUT-SECONDS is the max step duration (0 means no limit).
    CONTINUE-ON-ERROR when true allows the job to proceed even if this step fails."

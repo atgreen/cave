@@ -252,12 +252,22 @@
                                            scope scope-id))))
               (cond
                 (run
-                 (ag-grpc:stream-send stream (make-automation-task-event run)))
+                 ;; If delivery fails (dead stream), requeue so the task isn't
+                 ;; wedged 'assigned', and end this RPC so the runner reconnects.
+                 (handler-case
+                     (ag-grpc:stream-send stream (make-automation-task-event run))
+                   (error ()
+                     (requeue-automation-run (getf run :id))
+                     (return))))
                 ;; Try workflow job
                 (t
                  (let ((job (fetch-queued-workflow-job runner-id (getf runner-rec :labels) scope scope-id)))
                    (when job
-                     (ag-grpc:stream-send stream (make-workflow-task-event job)))))))))
+                     (handler-case
+                         (ag-grpc:stream-send stream (make-workflow-task-event job))
+                       (error ()
+                         (requeue-workflow-job (getf job :id))
+                         (return))))))))))
           (error (e)
             (llog:error "WatchTasks loop error" :runner-id runner-id
                                                  :error (princ-to-string e))))
