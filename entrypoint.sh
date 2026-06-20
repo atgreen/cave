@@ -17,6 +17,7 @@ if [ ! -f "$CONFIG" ]; then
  :db-password "${CAVE_DB_PASSWORD:-cave}"
  :secret-key "${CAVE_SECRET_KEY:-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
  :base-url "${CAVE_BASE_URL:-http://localhost:8080}"
+ :runner-clone-base-url "${CAVE_RUNNER_CLONE_BASE_URL:-}"
  :authorized-keys-path "/home/cave/.ssh/authorized_keys"
  :cave-shell "/usr/bin/cave-shell.sh"
  :oidc-issuer "${CAVE_OIDC_ISSUER:-}"

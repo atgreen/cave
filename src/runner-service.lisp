@@ -197,7 +197,16 @@
                             (getf run :ref) "")
                    :clone-url (if (and owner-name repo-name)
                                   (format nil "~A/~A/~A.git"
-                                          (config-value :base-url "http://localhost:8080")
+                                          ;; Internal runners (e.g. the on-host
+                                          ;; cave-runner pod) can't reach the public
+                                          ;; base-url — it resolves to loopback inside
+                                          ;; the container. :runner-clone-base-url, when
+                                          ;; set, overrides with an internally-reachable
+                                          ;; URL (e.g. http://cave-grpc:8080).
+                                          (let ((rb (config-value :runner-clone-base-url "")))
+                                            (if (string= rb "")
+                                                (config-value :base-url "http://localhost:8080")
+                                                rb))
                                           owner-name repo-name)
                                   "")
                    :timeout-seconds (let ((t-s (getf job :timeout-seconds 0)))
