@@ -29,10 +29,27 @@
 
 ;;; --- HTTP -----------------------------------------------------------------
 
+(defparameter *osv-ecosystems*
+  '("npm" "Go" "PyPI" "crates.io" "RubyGems" "Maven" "NuGet" "Packagist"
+    "Hex" "Pub" "Alpine" "Debian" "ConanCenter" "SwiftURL" "GitHub Actions")
+  "OSV ecosystem names we query. Packages in any other ecosystem are dropped
+   before the batch — OSV rejects the entire querybatch (HTTP 400) if even one
+   query carries an unknown ecosystem, so one unsupported package must not take
+   down the whole sync.")
+
 (defun osv-querybatch (packages)
   "POST a batch of {ecosystem,name} queries to OSV. PACKAGES is a list of
    (ecosystem . name) conses (<=1000). Returns a list of vulnerability IDs
-   affecting them, or NIL on transport error (logged, never signalled)."
+   affecting them, or NIL on transport error (logged, never signalled).
+   Packages whose ecosystem OSV doesn't recognize are skipped."
+  (let* ((skipped (remove-if (lambda (p) (member (car p) *osv-ecosystems* :test #'string=))
+                             packages))
+         (packages (remove-if-not (lambda (p) (member (car p) *osv-ecosystems* :test #'string=))
+                                  packages)))
+    (when skipped
+      (llog:warn "OSV: skipping packages in unsupported ecosystem(s)"
+                 :count (length skipped)
+                 :ecosystems (remove-duplicates (mapcar #'car skipped) :test #'string=)))
   (when packages
     (handler-case
         (let* ((queries (map 'vector
@@ -67,7 +84,7 @@
                 (progn (llog:warn "OSV querybatch non-200" :status status) nil))))
       (error (e)
         (llog:warn "OSV querybatch failed" :error (princ-to-string e))
-        nil))))
+        nil)))))
 
 (defun osv-fetch-vuln (id)
   "GET /v1/vulns/ID. Returns the parsed OSV record (hash-table) or NIL."

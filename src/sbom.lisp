@@ -15,7 +15,7 @@
     ("gem" . "RubyGems") ("maven" . "Maven") ("nuget" . "NuGet")
     ("composer" . "Packagist") ("hex" . "Hex") ("pub" . "Pub")
     ("apk" . "Alpine") ("deb" . "Debian") ("conan" . "ConanCenter")
-    ("swift" . "SwiftURL"))
+    ("swift" . "SwiftURL") ("github" . "GitHub Actions"))
   "purl package type -> OSV ecosystem name. Unknown types pass through verbatim.")
 
 (defun %percent-decode (s)
