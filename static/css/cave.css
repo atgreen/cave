@@ -362,14 +362,19 @@ section { margin-bottom: var(--sp-8); }
 .repo-actions { margin-bottom: var(--sp-6); display: flex; gap: var(--sp-2); }
 
 /* --- Tables --- */
-.data-table { width: 100%; border-collapse: collapse; margin-bottom: var(--sp-4); }
-.data-table th, .data-table td {
+.data-table, .dep-alerts, .dep-list { width: 100%; border-collapse: collapse; margin-bottom: var(--sp-4); }
+.data-table th, .data-table td,
+.dep-alerts th, .dep-alerts td,
+.dep-list th, .dep-list td {
   padding: var(--sp-2) var(--sp-3);
   text-align: left;
   border-bottom: 1px solid var(--border-subtle);
   font-size: .85rem;
+  white-space: nowrap;
 }
-.data-table th {
+.data-table th,
+.dep-alerts th,
+.dep-list th {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: .75rem;
@@ -377,7 +382,9 @@ section { margin-bottom: var(--sp-8); }
   letter-spacing: 0.04em;
   font-weight: 500;
 }
-.data-table td { font-family: var(--font-mono); }
+.data-table td, .dep-alerts td, .dep-list td { font-family: var(--font-mono); }
+/* Let the package column take the slack so versions/scope don't crowd it. */
+.dep-alerts td:nth-child(2), .dep-list td:nth-child(2) { width: 100%; }
 
 /* --- Data list --- */
 .data-list { list-style: none; }
