@@ -91,10 +91,13 @@
            (t
             (let* ((disk (repo-disk-path owner name))
                    (base (or (chamber-get-default-branch owner name) "main"))
+                   ;; syft records paths rooted at the scan dir ("/.github/...");
+                   ;; git wants them repo-relative.
+                   (rel (string-left-trim "/" manifest))
                    (pkg (getf alert :package-name))
                    (from (getf alert :version))
                    (to (getf alert :fix-version))
-                   (content (handler-case (git-blob disk base manifest) (error () nil)))
+                   (content (handler-case (git-blob disk base rel) (error () nil)))
                    (new-content (safe-bump-manifest content from to :package pkg)))
               (cond
                 ((null new-content)
@@ -108,7 +111,7 @@
                         (message (format nil "deps: bump ~A from ~A to ~A (~A)~%~%Fixes ~A."
                                          pkg from to (getf alert :ecosystem)
                                          (getf alert :osv-id)))
-                        (sha (git-commit-file-on-branch disk base branch manifest
+                        (sha (git-commit-file-on-branch disk base branch rel
                                                         new-content message)))
                    (if sha
                        (list :status :ready :repo-id repo-id :branch branch
