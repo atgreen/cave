@@ -5,13 +5,7 @@ jobs:
     image: ghcr.io/atgreen/fedora-cave-builder:latest
     steps:
       - name: Install dependencies
-        # Normalize dep mtimes to the epoch so the persisted ASDF FASL cache
-        # (mounted at ~/.cache/common-lisp) is reused instead of recompiling the
-        # whole ocicl tree every build (the recompile is what wedges low-RAM
-        # hosts). Cave's own sources keep real mtimes, so they still rebuild.
-        run: |
-          ocicl install
-          find ocicl -exec touch -d @1 {} +
+        run: ocicl install && find ocicl -exec touch -d @1 {} +
       - name: List files (pre)
         run: ls -l
       - name: Build Cave
