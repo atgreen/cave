@@ -303,10 +303,11 @@ ranged, lockfile-only, or transitive is classified and returned `:manual`
 **Speculative-build-gated fix PRs** — BUILT (`start-speculative-fix`,
 `advance-speculative-fix-for-run`, `process-pending-fixes` in `deps-fix.lisp`;
 `cave_dep_fix_attempts`). Dependabot-style: create the fix branch + commit, run
-the repo's *push* CI on that commit speculatively (release/deploy workflows are
-expected to self-guard on tag/branch — cave's Release skips unless HEAD is a v*
-tag), and open the PR only once that build is green; a red build records
-`build_failed` and opens nothing. Repos with no PR CI fall back to
+the repo's *pull_request* CI on that commit speculatively (the checks that gate a
+PR — deliberately excluding push-triggered release/deploy workflows so a
+speculative build never publishes), and open the PR only once that build is
+green; a red build records `build_failed` and opens nothing. Repos with no
+pull_request CI get `no_ci` and the PR opens directly. Repos with no PR CI fall back to
 opening the PR directly (`no_ci`). Auto-triggered after `sync-advisories` for
 open, manifest-fixable security alerts, gated per-org by
 `auto_fix_security` (default on). `safe-bump-manifest` prefers the qualified

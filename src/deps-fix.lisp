@@ -178,12 +178,13 @@
             (branch (getf prep :branch))
             (base (getf prep :base))
             (sha (getf prep :commit)))
-        ;; Speculative build: run the repo's push CI on the fix commit — that's
-        ;; how cave repos define CI (on: push). Release/deploy workflows are
-        ;; expected to self-guard on tag/branch (cave's Release skips unless HEAD
-        ;; is a v* tag), so they no-op on a fix branch.
+        ;; Speculative build: run the repo's *pull_request* CI on the fix commit
+        ;; — the checks that would gate a PR. This deliberately excludes
+        ;; push-triggered release/deploy workflows (a speculative build must never
+        ;; publish). Repos whose CI only triggers on push get no speculative
+        ;; build (-> :none -> open the PR directly).
         (handler-case
-            (parse-and-schedule-workflows repo-id "post_receive"
+            (parse-and-schedule-workflows repo-id "changeset_opened"
                                           :commit-sha sha :ref branch
                                           :triggered-by-id (or actor-id (ensure-dependency-bot-user)))
           (error (e) (llog:warn "speculative build scheduling failed"

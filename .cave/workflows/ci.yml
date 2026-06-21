@@ -1,5 +1,5 @@
 name: CI
-on: [push]
+on: [push, pull_request]
 jobs:
   build:
     image: ghcr.io/atgreen/fedora-cave-builder:latest
