@@ -579,6 +579,11 @@
                                 (error () nil)))
                   (workdir (format nil "/tmp/cave-job-~A" job-id))
                   (container-name (format nil "cave-job-~A" job-id))
+                  ;; Persisted across jobs so Lisp builds reuse compiled FASLs
+                  ;; instead of recompiling the whole ocicl tree every run (the
+                  ;; recompile is what drives the memory spike that wedges the
+                  ;; build — see issue #9). Harmless for non-Lisp jobs.
+                  (fasl-cache "/var/cache/cave-runner/common-lisp")
                   (overall-success t))
              (format t "~&Workflow job #~A: ~A/~A [~A] (~A steps)~%"
                      job-id repo-owner repo-name image (length steps))
@@ -627,6 +632,9 @@
                     (uiop:run-program (list "podman" "rm" "-f" container-name)
                                       :output :string :error-output :string
                                       :ignore-error-status t)
+                    ;; Make sure the shared FASL cache dir exists before mounting.
+                    (ignore-errors
+                     (ensure-directories-exist (concatenate 'string fasl-cache "/")))
                     (multiple-value-bind (_out err exit)
                         (uiop:run-program
                          (append
@@ -642,6 +650,10 @@
                            ;; label so the container can write to it on
                            ;; enforcing hosts (Fedora/RHEL).
                            "-v" (format nil "~A:/workspace:Z" workdir)
+                           ;; Shared (:z) so successive job containers reuse the
+                           ;; FASL cache without relabeling the whole (growing)
+                           ;; tree each run.
+                           "-v" (format nil "~A:/root/.cache/common-lisp:z" fasl-cache)
                            "-w" "/workspace"
                            image "sleep" "infinity"))
                          :output '(:string :stripped t)
