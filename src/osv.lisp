@@ -407,3 +407,29 @@
       (format t "~&Resolved ~A new ocicl project(s) to upstream repos (~A cached).~%"
               n skipped))
     n))
+
+(defun configured-advisory-feeds ()
+  "The :advisory-feeds config value parsed into a list of URLs."
+  (let ((s (config-value :advisory-feeds "")))
+    (when (and (stringp s) (plusp (length s)))
+      (remove "" (mapcar (lambda (x) (string-trim " " x))
+                         (uiop:split-string s :separator '(#\,)))
+              :test #'string=))))
+
+(defun run-advisory-sync (&key ecosystems feeds (verbose t))
+  "The advisory-sync pipeline shared by the CLI and the scheduler: pull OSV
+   advisories for graph packages, resolve ocicl projects, ingest URL feeds,
+   re-match the existing graph against everything, and dispatch fix PRs.
+   Assumes an active DB connection."
+  (sync-osv-advisories :ecosystems ecosystems :verbose verbose)
+  (handler-case (sync-ocicl-projects :verbose verbose)
+    (error (e) (llog:warn "ocicl project sync failed" :error (princ-to-string e))))
+  (dolist (url (remove-duplicates feeds :test #'string=))
+    (handler-case (sync-feed-advisories url :verbose verbose)
+      (error (e) (llog:warn "Feed sync failed" :url url :error (princ-to-string e)))))
+  (when feeds
+    (handler-case (rematch-ocicl-repos)
+      (error (e) (llog:warn "ocicl rematch failed" :error (princ-to-string e))))
+    (handler-case (refresh-dependency-dashboards) (error () nil)))
+  ;; Speculatively open fix PRs for any new alerts (gated per-repo).
+  (process-pending-fixes))

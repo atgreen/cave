@@ -31,7 +31,9 @@ if [ ! -f "$CONFIG" ]; then
  :deps-scan-enabled ${CAVE_DEPS_SCAN_ENABLED:-nil}
  :deps-scan-image "${CAVE_DEPS_SCAN_IMAGE:-ghcr.io/atgreen/cave-scan:main}"
  :deps-scan-labels "${CAVE_DEPS_SCAN_LABELS:-}"
- :advisory-feeds "${CAVE_ADVISORY_FEEDS:-}")
+ :advisory-feeds "${CAVE_ADVISORY_FEEDS:-}"
+ :scheduler-enabled ${CAVE_SCHEDULER_ENABLED:-t}
+ :advisory-sync-interval-hours ${CAVE_ADVISORY_SYNC_INTERVAL_HOURS:-24})
 CONF
 fi
 
