@@ -24,6 +24,8 @@
                 :flexi-streams
                 ;; HTTP client (for OIDC token exchange)
                 :dexador
+                ;; URI parsing (SSRF validation of remote URLs)
+                :quri
                 ;; JSON
                 :com.inuoe.jzon
                 ;; HTML generation

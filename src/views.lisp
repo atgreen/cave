@@ -905,7 +905,7 @@ require(['vs/editor/editor.main'], function() {
 });"
                   (json-for-script content)
                   (json-for-script content)
-                  (com.inuoe.jzon:stringify (or language "plaintext"))
+                  (json-for-script (or language "plaintext"))
                   (format nil "/~A/~A" owner-name repo-name)))))))))
 
 ;;; ========================== COMMIT PAGE ==========================
@@ -927,7 +927,7 @@ document.addEventListener('DOMContentLoaded', function() {
   ui.draw();
   ui.highlightCode();
 });
-" (com.inuoe.jzon:stringify (or raw-diff "")))))))
+" (json-for-script (or raw-diff "")))))))
 
 (defun view-commit (&key owner-name repo commit diff-raw diff-stat
                          signature trailers)

@@ -555,8 +555,17 @@
 (defvar *chamber-server* nil)
 
 (defun start-chamber (port)
-  "Start the Chamber gRPC service."
-  (setf *chamber-server* (ag-grpc:make-grpc-server port))
+  "Start the Chamber gRPC service.
+   Chamber RPCs are UNAUTHENTICATED and grant full read/write access to every
+   repository's git data, so the service must never be exposed to untrusted
+   networks. It binds to loopback by default; a multi-chamber deployment that
+   needs cross-node reachability must set :chamber-host explicitly AND firewall
+   the port to the chamber mesh (see deploy docs)."
+  (let ((host (or (config-value :chamber-host) "127.0.0.1")))
+    (when (and (not (equal host "127.0.0.1")) (not (equal host "::1")))
+      (llog:warn "Chamber bound to a non-loopback interface — it is unauthenticated; restrict the port to trusted hosts"
+                 :host host))
+    (setf *chamber-server* (ag-grpc:make-grpc-server port :host host)))
 
   ;; Read operations
   (ag-grpc:server-register-handler *chamber-server*

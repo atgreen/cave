@@ -90,6 +90,10 @@
           (let* ((json-body (com.inuoe.jzon:stringify payload))
                  (headers `(("Content-Type" . "application/json")
                             ("X-Cave-Event" . ,event)))
+                 ;; SSRF guard: never deliver to loopback/private/internal hosts,
+                 ;; and never follow redirects (an external 302 -> internal would
+                 ;; bypass the host check).
+                 (target-url (ensure-safe-remote-url (getf hook :url)))
                  ;; HMAC signature if secret is set
                  (secret (getf hook :secret)))
             (when (and secret (not (eq secret :null)))
@@ -103,9 +107,10 @@
                              mac)))))
                 (push (cons "X-Cave-Signature" (format nil "sha256=~A" sig)) headers)))
             (multiple-value-bind (body status)
-                (dex:post (getf hook :url)
+                (dex:post target-url
                           :content json-body
                           :headers headers
+                          :max-redirects 0
                           :connect-timeout 10
                           :read-timeout 30)
               (declare (ignore body))

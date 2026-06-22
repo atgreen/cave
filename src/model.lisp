@@ -211,8 +211,30 @@
 
 ;;; ========================== ORGS ==========================
 
+(defun valid-resource-name-p (name)
+  "True when NAME is safe to use as a single on-disk path component (a repo,
+   org, or user name). Allows alphanumerics, dot, underscore and hyphen;
+   rejects empty/overlong names, a leading dot or hyphen, any '..' sequence,
+   and anything outside the set — notably '/' — so it can never traverse out
+   of the repo storage root via REPO-DISK-PATH."
+  (and (stringp name)
+       (<= 1 (length name) 100)
+       (not (search ".." name))
+       (not (member (char name 0) '(#\. #\-)))
+       (every (lambda (c)
+                (or (alphanumericp c)
+                    (member c '(#\. #\_ #\-))))
+              name)))
+
+(defun ensure-valid-resource-name (name)
+  "Signal an error unless NAME is a valid repo/org/user name. Returns NAME."
+  (unless (valid-resource-name-p name)
+    (error "Invalid name ~S — names may contain only letters, digits, '.', '_' and '-', and may not start with '.' or '-' or contain '..'." name))
+  name)
+
 (defun create-org (&key name display-name description creator-id)
   "Create a new org and add creator as admin."
+  (ensure-valid-resource-name name)
   (let ((org (postmodern:query
               (:insert-into 'cave-orgs
                :set 'name name
@@ -280,6 +302,7 @@
 
 (defun create-repo (&key org-id owner-id name description (is-private nil))
   "Create a new repo. Must have exactly one of ORG-ID or OWNER-ID."
+  (ensure-valid-resource-name name)
   (let ((repo (postmodern:query
                (:insert-into 'cave-repos
                 :set 'org-id (or org-id :null)
@@ -807,13 +830,28 @@
      :plist)))
 
 (defun validate-registration-token (token)
-  "Validate a registration token. Returns the token record or NIL."
+  "Validate a registration token without consuming it. Returns the token record
+   or NIL. Prefer CONSUME-REGISTRATION-TOKEN on the registration path."
   (when token
     (postmodern:query
      (:select '* :from 'cave-runner-registration-tokens
       :where (:and (:= 'token token)
                    (:or (:is-null 'expires-at)
                         (:> 'expires-at (:now)))))
+     :plist)))
+
+(defun consume-registration-token (token)
+  "Atomically validate and CONSUME a registration token: the row is deleted and
+   returned in a single statement, so a token registers exactly one runner
+   (single-use) even under concurrent RegisterRunner calls. Returns the token
+   record, or NIL if the token is unknown, expired, or already used."
+  (when token
+    (postmodern:query
+     (:delete-from 'cave-runner-registration-tokens
+      :where (:and (:= 'token token)
+                   (:or (:is-null 'expires-at)
+                        (:> 'expires-at (:now))))
+      :returning '*)
      :plist)))
 
 ;;; ========================== WORKFLOWS ==========================
