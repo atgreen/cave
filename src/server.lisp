@@ -450,7 +450,8 @@ the results. Skips deletes and zero-sha boundaries."
     (let ((body (hunchentoot:raw-post-data :force-text t))
           (the-ref (or ref (chamber-get-default-branch owner repo-name) "main")))
       (handler-case
-          (let ((n (ingest-repo-deps (getf repo :id) the-ref (sbom->deps body))))
+          (let ((n (ingest-repo-deps (getf repo :id) the-ref
+                                     (scan-deps owner repo-name the-ref body))))
             (format nil "ingested ~A deps~%" n))
         (error (e)
           (setf (hunchentoot:return-code*) 400)
