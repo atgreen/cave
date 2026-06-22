@@ -2476,31 +2476,140 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
 
 ;;; --- Matcher ---------------------------------------------------------------
 
+;;; --- GIT-range matching (ocicl deps vs the cl-sec advisory feed) -----------
+;;;
+;;; cl-sec advisories identify affected software by a source repo + commit range
+;;; (introduced..fixed). An ocicl dep resolves to (upstream repo, commit) — the
+;;; repo via cave_ocicl_projects, the commit from its version — so a dep is
+;;; affected iff its commit is in an advisory's range on the same repo, decided
+;;; by commit ancestry against a cached blobless bare clone of that repo.
+
+(defun %normalize-repo-url (url)
+  "Canonical key for matching git URLs: lowercase, no scheme/userinfo, no .git,
+   no trailing slash. github.com/atgreen/ag-gRPC.git -> github.com/atgreen/ag-grpc."
+  (when (stringp url)
+    (let* ((u (string-downcase (string-trim '(#\Space) url)))
+           (u (cond ((uiop:string-prefix-p "https://" u) (subseq u 8))
+                    ((uiop:string-prefix-p "http://" u) (subseq u 7))
+                    ((uiop:string-prefix-p "git://" u) (subseq u 6))
+                    ((uiop:string-prefix-p "ssh://" u) (subseq u 6))
+                    (t u)))
+           (u (let ((at (position #\@ u))) (if at (subseq u (1+ at)) u)))
+           (u (substitute #\/ #\: u))
+           (u (string-right-trim '(#\/) u))
+           (u (if (uiop:string-suffix-p u ".git") (subseq u 0 (- (length u) 4)) u)))
+      u)))
+
+(defun list-git-affected ()
+  "All GIT-range affected rows: plists with :advisory-id :repo :introduced :fixed."
+  (postmodern:query
+   "SELECT advisory_id, repo, introduced, fixed FROM cave_advisory_affected
+    WHERE range_type = 'GIT' AND repo IS NOT NULL"
+   :plists))
+
+(defun %git-advisories-by-repo ()
+  "Hash of normalized-repo-url -> list of its GIT-range affected rows."
+  (let ((h (make-hash-table :test 'equal)))
+    (dolist (a (list-git-affected) h)
+      (push a (gethash (%normalize-repo-url (getf a :repo)) h)))))
+
+(defun %advisory-repo-cache-path (repo-url)
+  "Local bare-clone path for REPO-URL, under data-dir/advisory-repos."
+  (let ((safe (map 'string (lambda (c) (if (or (alphanumericp c) (member c '(#\- #\.))) c #\_))
+                   (or (%normalize-repo-url repo-url) "repo"))))
+    (merge-pathnames (format nil "~A.git/" safe) (data-dir "advisory-repos"))))
+
+(defun ensure-advisory-repo (repo-url commits)
+  "Ensure a local blobless bare clone of REPO-URL with COMMITS present. Returns
+   its path, or NIL if it can't be made available."
+  (let ((path (%advisory-repo-cache-path repo-url)))
+    (handler-case
+        (progn
+          (unless (probe-file (merge-pathnames "HEAD" path))
+            (ensure-directories-exist (data-dir "advisory-repos"))
+            (multiple-value-bind (ok err) (git-clone-blobless-bare repo-url (namestring path))
+              (unless ok
+                (llog:warn "advisory repo clone failed" :url repo-url :error err)
+                (return-from ensure-advisory-repo nil))))
+          (dolist (c commits)
+            (when (and c (stringp c) (not (git-has-commit-p path c)))
+              (git-fetch-commit path repo-url c)))
+          path)
+      (error (e)
+        (llog:warn "advisory repo ensure failed" :url repo-url :error (princ-to-string e))
+        nil))))
+
+(defun %commit-affected-p (repo-path commit introduced fixed)
+  "OSV GIT-range semantics: COMMIT is affected iff INTRODUCED is its ancestor (or
+   introduced is the '0' sentinel) and FIXED is NOT its ancestor. Uncertain
+   ancestry -> NIL (don't alert on what can't be determined)."
+  (let ((after-intro (if (or (null introduced) (equal introduced "0"))
+                         t
+                         (eq t (git-is-ancestor-p repo-path introduced commit))))
+        (has-fix (and fixed (not (%nullish fixed))
+                      (eq t (git-is-ancestor-p repo-path fixed commit)))))
+    (and after-intro (not has-fix))))
+
+(defun git-affected-for-dep (dep git-adv-by-repo)
+  "GIT-range affected rows that apply to ocicl DEP, using GIT-ADV-BY-REPO
+   (normalized-repo -> rows). Returns rows (:advisory-id :fixed ...), or NIL."
+  (let ((project (getf dep :ocicl-project)))
+    (when (and (equal (getf dep :ecosystem) "ocicl") project)
+      (let* ((proj (find-ocicl-project project))
+             (source-repo (getf proj :source-repo))
+             (commit (%ocicl-version-commit (getf dep :version)))
+             (advs (and source-repo
+                        (gethash (%normalize-repo-url source-repo) git-adv-by-repo))))
+        (when (and source-repo commit advs)
+          (let ((repo-path (ensure-advisory-repo
+                            source-repo
+                            (cons commit
+                                  (loop for a in advs
+                                        append (list (getf a :introduced) (getf a :fixed)))))))
+            (when repo-path
+              (loop for a in advs
+                    when (%commit-affected-p repo-path commit
+                                             (getf a :introduced) (getf a :fixed))
+                    collect a))))))))
+
 (defun rematch-repo (repo-id &optional ref)
   "Recompute REPO-ID's alerts against the advisory DB. Suppressed matches become
-   'dismissed'; live alerts that no longer match become 'fixed'. Returns the
-   number of current matches."
+   'dismissed'; live alerts that no longer match become 'fixed'. Covers both
+   version-range and GIT-range (ocicl) matches. Returns the match count."
   (let ((deps (list-repo-deps repo-id :ref ref))
         (desired (make-hash-table :test 'equal))
+        (git-adv-by-repo (%git-advisories-by-repo))
         (matches 0))
-    (dolist (dep deps)
-      (dolist (aff (list-affected-for-package (getf dep :ecosystem)
-                                              (getf dep :package-name)))
-        (when (dep-affected-p dep aff)
-          (let* ((adv-id (getf aff :advisory-id))
-                 (supp (find-active-suppression repo-id (getf dep :ecosystem)
-                                                (getf dep :package-name) adv-id))
-                 (fixed (getf aff :fixed)))
-            (setf (gethash (cons (getf dep :id) adv-id) desired) t)
-            (incf matches)
-            (upsert-dep-alert :repo-id repo-id :dep-id (getf dep :id)
-                              :advisory-id adv-id
-                              :state (if supp "dismissed" "open")
-                              :fix-version (if (%nullish fixed) nil fixed))))))
-    (dolist (al (%open-or-dismissed-alerts repo-id))
-      (unless (gethash (cons (getf al :dep-id) (getf al :advisory-id)) desired)
-        (set-dep-alert-state (getf al :id) "fixed")))
-    matches))
+    (flet ((record (dep adv-id fixed)
+             (let ((supp (find-active-suppression repo-id (getf dep :ecosystem)
+                                                  (getf dep :package-name) adv-id)))
+               (setf (gethash (cons (getf dep :id) adv-id) desired) t)
+               (incf matches)
+               (upsert-dep-alert :repo-id repo-id :dep-id (getf dep :id)
+                                 :advisory-id adv-id
+                                 :state (if supp "dismissed" "open")
+                                 :fix-version (if (%nullish fixed) nil fixed)))))
+      (dolist (dep deps)
+        (dolist (aff (list-affected-for-package (getf dep :ecosystem)
+                                                (getf dep :package-name)))
+          (when (dep-affected-p dep aff)
+            (record dep (getf aff :advisory-id) (getf aff :fixed))))
+        (dolist (aff (git-affected-for-dep dep git-adv-by-repo))
+          (record dep (getf aff :advisory-id) (getf aff :fixed))))
+      (dolist (al (%open-or-dismissed-alerts repo-id))
+        (unless (gethash (cons (getf al :dep-id) (getf al :advisory-id)) desired)
+          (set-dep-alert-state (getf al :id) "fixed")))
+      matches)))
+
+(defun rematch-ocicl-repos ()
+  "Re-match every (repo, ref) carrying ocicl deps. Used after syncing GIT-range
+   advisory feeds, which don't map to packages rematch-advisory can target.
+   Returns the number of (repo, ref) pairs re-matched."
+  (let ((pairs (postmodern:query
+                "SELECT DISTINCT repo_id, ref FROM cave_repo_deps WHERE ecosystem = 'ocicl'"
+                :plists)))
+    (dolist (rr pairs (length pairs))
+      (rematch-repo (getf rr :repo-id) (getf rr :ref)))))
 
 (defun rematch-advisory (advisory-id)
   "Re-match the stored graph for every package this advisory affects — the

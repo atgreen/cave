@@ -391,6 +391,45 @@ Returns T on success, NIL otherwise."
       (declare (ignore output))
       (values (zerop exit-code) err))))
 
+(defun git-clone-blobless-bare (url dest-path)
+  "Bare clone of URL into DEST-PATH with --filter=blob:none — the full commit
+   graph (enough for ancestry) without file blobs. Returns (VALUES success-p err)."
+  (ensure-safe-remote-url url)
+  (multiple-value-bind (output err exit-code)
+      (uiop:run-program (list "git" "clone" "--bare" "--filter=blob:none"
+                              url (namestring dest-path))
+                        :output '(:string :stripped t)
+                        :error-output '(:string :stripped t)
+                        :ignore-error-status t)
+    (declare (ignore output))
+    (values (zerop exit-code) err)))
+
+(defun git-has-commit-p (repo-path commit)
+  "True if COMMIT resolves to a commit object in REPO-PATH."
+  (multiple-value-bind (_o _e exit)
+      (git-run repo-path "cat-file" "-e" (format nil "~A^{commit}" commit))
+    (declare (ignore _o _e))
+    (zerop exit)))
+
+(defun git-fetch-commit (repo-path url commit)
+  "Best-effort fetch of COMMIT (and ancestors) from URL into bare REPO-PATH."
+  (ensure-safe-remote-url url)
+  (multiple-value-bind (_o _e exit)
+      (git-run repo-path "fetch" "--quiet" "--filter=blob:none" url commit)
+    (declare (ignore _o _e))
+    (zerop exit)))
+
+(defun git-is-ancestor-p (repo-path ancestor descendant)
+  "Whether ANCESTOR is an ancestor of (or equal to) DESCENDANT: T, NIL, or
+   :unknown when either commit can't be resolved in REPO-PATH."
+  (if (and (git-has-commit-p repo-path ancestor)
+           (git-has-commit-p repo-path descendant))
+      (multiple-value-bind (_o _e exit)
+          (git-run repo-path "merge-base" "--is-ancestor" ancestor descendant)
+        (declare (ignore _o _e))
+        (case exit (0 t) (1 nil) (t :unknown)))
+      :unknown))
+
 (defun repo-name-from-url (url)
   "Extract a repo name from a git URL. E.g. https://github.com/foo/bar.git → bar"
   (let* ((trimmed (string-right-trim '(#\/) url))
