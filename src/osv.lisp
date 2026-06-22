@@ -392,13 +392,18 @@
         (when verbose (format t "  ~A -> ~A~%" name (or repo "?")))
         (find-ocicl-project name)))))
 
-(defun sync-ocicl-projects (&key (verbose t))
-  "Resolve every ocicl project in the dependency graph to its upstream repo,
-   caching the results. Returns the number resolved."
-  (let ((projects (list-graph-ocicl-projects)) (n 0))
-    (when verbose
-      (format t "~&Resolving ~A ocicl project(s) to upstream repos...~%"
-              (length projects)))
+(defun sync-ocicl-projects (&key (verbose t) (force nil))
+  "Resolve ocicl projects in the dependency graph to their upstream repos,
+   caching the results. Skips projects already cached with a source repo (each
+   resolution is a network fetch) unless FORCE. Returns the number resolved."
+  (let ((projects (list-graph-ocicl-projects)) (n 0) (skipped 0))
     (dolist (p projects)
-      (when (and p (resolve-ocicl-project p :verbose verbose)) (incf n)))
+      (when p
+        (let ((cached (and (not force) (find-ocicl-project p))))
+          (if (and cached (getf cached :source-repo))
+              (incf skipped)
+              (when (resolve-ocicl-project p :verbose verbose) (incf n))))))
+    (when verbose
+      (format t "~&Resolved ~A new ocicl project(s) to upstream repos (~A cached).~%"
+              n skipped))
     n))

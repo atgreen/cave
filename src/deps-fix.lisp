@@ -254,4 +254,156 @@
             (llog:info "Dependency fix triggered"
                        :alert (getf alert :id) :result (getf r :status)))
         (error (e) (llog:warn "start-speculative-fix failed"
-                              :alert (getf alert :id) :error (princ-to-string e)))))))
+                              :alert (getf alert :id) :error (princ-to-string e))))))
+  (process-pending-ocicl-fixes))
+
+;;; --- ocicl lockfile fixes (runner-based) -----------------------------------
+;;;
+;;; ocicl deps can't be fixed by editing a version string — the lockfile pins a
+;;; system to <project>-<date>-<sha> plus an OCI digest. So a cave-fix runner job
+;;; re-resolves it with `ocicl latest` (always newest, so it supersedes), returns
+;;; the regenerated ocicl.csv, and cave verifies the new commit actually clears
+;;; the advisory (ancestry) before committing it to a fix branch — one PR per
+;;; project, deduped so a repo never has two fix jobs in flight at once.
+
+(defparameter *deps-fix-workflow-name* "deps-fix")
+(defparameter *ocicl-csv-marker* "===OCICL-CSV-BELOW===")
+
+(defun enqueue-ocicl-fix (repo-id ref project systems &key triggered-by-id)
+  "Schedule a cave-fix runner job: `ocicl latest SYSTEMS` + `ocicl clean`,
+   returning the regenerated ocicl.csv via the step log. Returns the run, or NIL."
+  (let ((repo (find-repo-by-id repo-id)))
+    (when (and repo systems)
+      (let* ((labels (config-value :deps-scan-labels ""))
+             (runs-on (when (plusp (length labels))
+                        (mapcar (lambda (s) (string-trim " " s))
+                                (uiop:split-string labels :separator '(#\,)))))
+             (run (create-workflow-run
+                   :repo-id repo-id :workflow-name *deps-fix-workflow-name*
+                   :workflow-file "" :trigger-event "deps_fix"
+                   :ref ref :triggered-by-id triggered-by-id))
+             (job (create-workflow-job
+                   :workflow-run-id (getf run :id)
+                   :name (format nil "ocicl-fix:~A" project)
+                   :image (config-value :deps-fix-image "ghcr.io/atgreen/cave-fix:main")
+                   :runs-on runs-on)))
+        ;; `;` not `&&`: emit ocicl.csv even if `ocicl latest` partly fails — the
+        ;; completion hook decides per-system whether the bump cleared anything.
+        (create-workflow-step
+         :job-id (getf job :id) :step-order 1 :name "ocicl-latest"
+         :command (format nil "cd /workspace && ocicl latest ~{~A~^ ~} >/dev/null 2>&1; ocicl clean >/dev/null 2>&1; echo ~A; cat ocicl.csv"
+                          systems *ocicl-csv-marker*))
+        run))))
+
+(defun process-pending-ocicl-fixes ()
+  "Enqueue one cave-fix job per repo (its first project with open ocicl alerts)
+   when the repo allows auto-fix and has no fix job already in flight. One job
+   per repo at a time -> no duplicate PRs; `ocicl latest` -> newer supersedes."
+  (dolist (rr (repos-with-open-ocicl-alerts))
+    (let ((repo-id (getf rr :repo-id))
+          (ref (getf rr :ref)))
+      (when (and (auto-fix-security-enabled-p repo-id)
+                 (not (repo-deps-fix-in-flight-p repo-id)))
+        (handler-case
+            (let ((by-project (make-hash-table :test 'equal)))
+              (dolist (tgt (list-open-ocicl-fix-targets repo-id))
+                (when (equal (getf tgt :ref) ref)
+                  (pushnew (getf tgt :system)
+                           (gethash (getf tgt :project) by-project) :test #'equal)))
+              (let ((projects (loop for k being the hash-key of by-project collect k)))
+                (when projects
+                  (let* ((project (first projects))
+                         ;; Bump the project's whole system set together (they
+                         ;; share a dir) so the lockfile stays consistent.
+                         (systems (or (let* ((p (find-ocicl-project project))
+                                             (s (and p (getf p :systems))))
+                                        (when (and s (not (eq s :null)))
+                                          (coerce s 'list)))
+                                      (gethash project by-project))))
+                    (enqueue-ocicl-fix repo-id ref project systems)
+                    (llog:info "Enqueued ocicl fix" :repo repo-id :project project)))))
+          (error (e) (llog:warn "process-pending-ocicl-fixes failed"
+                                :repo repo-id :error (princ-to-string e))))))))
+
+(defun %ocicl-deps-by-system (deps)
+  "Hash system-name -> dep plist, from ocicl-csv->deps output."
+  (let ((h (make-hash-table :test 'equal)))
+    (dolist (d deps h) (setf (gethash (getf d :package-name) h) d))))
+
+(defun %deps-fix-new-csv (run-id)
+  "The regenerated ocicl.csv from RUN-ID's step log (everything after the marker)."
+  (let* ((log (with-output-to-string (out)
+                (dolist (job (list-workflow-jobs run-id))
+                  (dolist (step (list-workflow-steps (getf job :id)))
+                    (let ((l (getf step :log)))
+                      (when (and l (not (eq l :null))) (write-string l out)))))))
+         (pos (search *ocicl-csv-marker* log)))
+    (when pos
+      (string-trim '(#\Space #\Newline #\Return #\Tab)
+                   (subseq log (+ pos (length *ocicl-csv-marker*)))))))
+
+(defun %ocicl-bump-clears-p (adv-repo new-commit introduced fixed)
+  "True if NEW-COMMIT is no longer in the advisory's affected range on ADV-REPO
+   (the bump now includes the fix). Conservative: NIL if undeterminable."
+  (let ((path (ensure-advisory-repo adv-repo (list new-commit introduced fixed))))
+    (and path (not (%commit-affected-p path new-commit introduced fixed)))))
+
+(defun maybe-apply-ocicl-fix-run (run-id)
+  "When a deps-fix run finalizes successfully, read the regenerated ocicl.csv,
+   keep the alerts the bump actually clears (commit ancestry), and — if any —
+   commit the lockfile to a fix branch and open one PR."
+  (let ((run (find-workflow-run run-id)))
+    (when (and run
+               (equal (getf run :workflow-name) *deps-fix-workflow-name*)
+               (equal (getf run :status) "success"))
+      (handler-case (%apply-ocicl-fix-run run)
+        (error (e) (llog:warn "ocicl fix apply failed"
+                              :run run-id :error (princ-to-string e)))))))
+
+(defun %apply-ocicl-fix-run (run)
+  (let* ((repo-id (getf run :repo-id))
+         (repo (find-repo-by-id repo-id))
+         (owner (and repo (repo-owner-name repo)))
+         (name (and repo (getf repo :name)))
+         (ref (let ((r (getf run :ref)))
+                (if (eq r :null) (chamber-get-default-branch owner name) r)))
+         (new-csv (%deps-fix-new-csv (getf run :id)))
+         (new-by-system (and new-csv (%ocicl-deps-by-system (ocicl-csv->deps new-csv)))))
+    (when (and repo new-csv new-by-system)
+      (let ((cleared '()))
+        (dolist (tgt (list-open-ocicl-fix-targets repo-id))
+          (when (equal (getf tgt :ref) ref)
+            (let* ((newdep (gethash (getf tgt :system) new-by-system))
+                   (newver (and newdep (getf newdep :version)))
+                   (newcommit (and newver (%ocicl-version-commit newver))))
+              (when (and newcommit
+                         (%ocicl-bump-clears-p (getf tgt :adv-repo) newcommit
+                                               (getf tgt :introduced) (getf tgt :fixed)))
+                (push tgt cleared)))))
+        (if (null cleared)
+            (llog:info "ocicl fix: latest clears no advisory" :repo name :run (getf run :id))
+            (%commit-ocicl-fix repo-id owner name ref new-csv (nreverse cleared)))))))
+
+(defun %commit-ocicl-fix (repo-id owner name ref new-csv cleared)
+  "Commit NEW-CSV to a fix branch, open one PR, link every CLEARED alert to it,
+   and schedule the repo's PR CI on the fix commit. Auto-merge stays manual."
+  (let* ((disk (repo-disk-path owner name))
+         (systems (remove-duplicates (mapcar (lambda (a) (getf a :system)) cleared) :test #'equal))
+         (advs (remove-duplicates (mapcar (lambda (a) (getf a :osv-id)) cleared) :test #'equal))
+         (branch (format nil "cave/deps/ocicl-~A"
+                         (%sanitize-branch-component
+                          (format nil "~{~A~^-~}" (subseq systems 0 (min 3 (length systems)))))))
+         (message (format nil "deps: bump ocicl ~{~A~^, ~}~%~%Fixes ~{~A~^, ~}." systems advs))
+         (sha (git-commit-file-on-branch disk ref branch "ocicl.csv" new-csv message)))
+    (when sha
+      (let ((pr (create-pull-request
+                 :repo-id repo-id :author-id (ensure-dependency-bot-user)
+                 :source-branch branch :target-branch ref :head-commit sha)))
+        (dolist (a cleared) (set-alert-fix-pr (getf a :alert-id) (getf pr :id)))
+        (handler-case
+            (parse-and-schedule-workflows repo-id "changeset_opened"
+                                          :commit-sha sha :ref branch
+                                          :triggered-by-id (ensure-dependency-bot-user))
+          (error () nil))
+        (llog:info "Opened ocicl fix PR" :repo name :pr (getf pr :id) :branch branch)
+        pr))))

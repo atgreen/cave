@@ -2781,8 +2781,41 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
     WHERE al.state = 'open'
       AND al.fix_version IS NOT NULL
       AND d.is_direct = TRUE
+      AND d.ecosystem <> 'ocicl'
       AND NOT EXISTS (SELECT 1 FROM cave_dep_fix_attempts fa WHERE fa.alert_id = al.id)"
    :plists))
+
+(defun list-open-ocicl-fix-targets (repo-id)
+  "Open ocicl alerts in REPO-ID with a GIT-range advisory, plus everything needed
+   to bump + verify: the system, project, current version, and the advisory's
+   source repo + commit range. One row per (alert, advisory)."
+  (postmodern:query
+   "SELECT al.id AS alert_id, al.repo_id, d.ref, d.package_name AS system,
+           d.ocicl_project AS project, d.version AS cur_version,
+           a.osv_id, aa.repo AS adv_repo, aa.introduced, aa.fixed
+    FROM cave_dep_alerts al
+    JOIN cave_repo_deps d ON d.id = al.dep_id
+    JOIN cave_advisories a ON a.id = al.advisory_id
+    JOIN cave_advisory_affected aa ON aa.advisory_id = a.id AND aa.range_type = 'GIT'
+    WHERE al.state = 'open' AND al.repo_id = $1 AND d.ecosystem = 'ocicl'
+      AND d.ocicl_project IS NOT NULL AND al.fix_pr_id IS NULL"
+   repo-id :plists))
+
+(defun repos-with-open-ocicl-alerts ()
+  "Distinct (repo_id, ref) plists with open ocicl alerts lacking a fix PR."
+  (postmodern:query
+   "SELECT DISTINCT al.repo_id, d.ref FROM cave_dep_alerts al
+    JOIN cave_repo_deps d ON d.id = al.dep_id
+    WHERE al.state = 'open' AND d.ecosystem = 'ocicl' AND al.fix_pr_id IS NULL"
+   :plists))
+
+(defun repo-deps-fix-in-flight-p (repo-id)
+  "True if REPO-ID has a non-terminal deps-fix run (avoid duplicate fix jobs)."
+  (postmodern:query
+   "SELECT 1 FROM cave_workflow_runs
+    WHERE repo_id = $1 AND workflow_name = 'deps-fix'
+      AND status NOT IN ('success','failure','cancelled') LIMIT 1"
+   repo-id :single))
 
 (defun auto-fix-security-enabled-p (repo-id)
   "Whether to auto-open speculative security fix PRs for REPO-ID. Org repos honor

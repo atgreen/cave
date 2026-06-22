@@ -176,6 +176,8 @@
           (update-workflow-run-status run-id final-status)
           ;; Dependency-scan runs (Option B): ingest the SBOM from the step log.
           (maybe-ingest-scan-run run-id)
+          ;; ocicl fix runs: validate the bump cleared the advisory, then PR.
+          (maybe-apply-ocicl-fix-run run-id)
           ;; Speculative dependency-fix builds: open the PR if green, else hold.
           (advance-speculative-fix-for-run run-id))))))
 
