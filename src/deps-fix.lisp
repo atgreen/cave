@@ -16,10 +16,17 @@
 
 (defun classify-fix-kind (alert)
   "Classify how ALERT (a find-dep-alert-detailed plist) could be fixed:
-   'none' (no fix version), 'manifest' (direct dep), or 'transitive_parent'."
+   'none' (no fix version), 'lockfile' (ocicl — fixed by re-resolving the
+   lockfile, never a manifest string edit), 'manifest' (direct dep), or
+   'transitive_parent'."
   (let ((fix (getf alert :fix-version))
-        (direct (getf alert :is-direct)))
+        (direct (getf alert :is-direct))
+        (eco (getf alert :ecosystem)))
     (cond ((or (null fix) (eq fix :null)) "none")
+          ;; ocicl deps are pinned in ocicl.csv and the advisory fix is a commit,
+          ;; not a version string — a manifest edit would corrupt the lockfile.
+          ;; Re-resolving via ocicl is a separate (runner-based) path.
+          ((equal eco "ocicl") "lockfile")
           (direct "manifest")
           (t "transitive_parent"))))
 
