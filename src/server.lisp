@@ -2675,8 +2675,10 @@ the results. Skips deletes and zero-sha boundaries."
                 (write-sequence request-body s))
               (let ((exit-code (nth-value 2
                                 (uiop:run-program
-                                 (format nil "git upload-pack --stateless-rpc '~A' < '~A' > '~A'"
-                                         (namestring disk-path) in-path out-path)
+                                 (list "git" "upload-pack" "--stateless-rpc"
+                                       (namestring disk-path))
+                                 :input in-path
+                                 :output out-path
                                  :error-output :string
                                  :ignore-error-status t))))
                 (unless (zerop exit-code)
