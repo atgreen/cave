@@ -476,8 +476,13 @@
               :long-name "url" :key :url :required t
               :description "Cave gRPC server URL (e.g. grpc://localhost:9443)")
              (clingon:make-option :string
-              :long-name "token" :key :token :required t
-              :description "Registration token")
+              :long-name "token" :key :token
+              :description "Registration token (or use --token-file)")
+             (clingon:make-option :string
+              :long-name "token-file" :key :token-file
+              :description "Read the registration token from this file. Re-read on
+                           each start, so an ExecStartPre that mints a fresh token
+                           keeps a restarting runner working despite single-use tokens.")
              (clingon:make-option :string
               :long-name "name" :key :name
               :description "Runner name (default: hostname)")
@@ -488,6 +493,86 @@
               :long-name "ephemeral" :key :ephemeral
               :description "Exit after one task"))
    :handler #'handle-runner))
+
+;;; --- RUNNER-TOKEN subcommand ---
+
+(defun make-runner-token-command ()
+  (clingon:make-command
+   :name "runner-token"
+   :description "Mint a single-use runner registration token (instance/org/repo/user scope)"
+   :options (list
+             (make-config-option)
+             (clingon:make-option :string
+              :long-name "scope" :key :scope :initial-value "instance"
+              :description "Token scope: instance, org, repo, or user")
+             (clingon:make-option :string
+              :long-name "org" :key :org
+              :description "Org name (implies --scope org)")
+             (clingon:make-option :string
+              :long-name "repo" :key :repo
+              :description "Repo as owner/name (implies --scope repo)")
+             (clingon:make-option :string
+              :long-name "user" :key :user
+              :description "Username (implies --scope user)")
+             (clingon:make-option :flag
+              :long-name "quiet" :key :quiet
+              :description "Print only the token, with no trailing detail"))
+   :handler #'handle-runner-token
+   :examples '(("Mint an instance-scoped token:" . "cave-server runner-token")
+               ("Mint a repo-scoped token:" . "cave-server runner-token --repo atgreen/cave")
+               ("For a quadlet ExecStartPre:" . "cave-server runner-token --quiet"))))
+
+(defun handle-runner-token (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (scope (clingon:getopt cmd :scope))
+        (org-name (clingon:getopt cmd :org))
+        (repo-spec (clingon:getopt cmd :repo))
+        (user-name (clingon:getopt cmd :user))
+        (quiet (clingon:getopt cmd :quiet))
+        ;; Keep the real stdout for the token alone. llog's console appender is a
+        ;; synonym-stream to *standard-output*, so binding it to *error-output*
+        ;; below routes all log/config noise to stderr — leaving stdout clean
+        ;; enough to redirect straight into a --token-file.
+        (real-out *standard-output*))
+    (let ((*standard-output* *error-output*))
+    (load-config config-path)
+    (connect-db)
+    (flet ((fail (fmt &rest args)
+             ;; uiop:quit unwinds the stack, so the unwind-protect below still
+             ;; closes the DB connection.
+             (format *error-output* "~&~?~%" fmt args)
+             (uiop:quit 1)))
+      (unwind-protect
+           (let ((scope-id :null))
+             ;; A scope-bearing flag overrides --scope and resolves the id.
+             (cond
+               (org-name
+                (let ((org (find-org-by-name org-name)))
+                  (unless org (fail "No such org: ~A" org-name))
+                  (setf scope "org" scope-id (getf org :id))))
+               (repo-spec
+                (let* ((slash (position #\/ repo-spec))
+                       (owner (and slash (subseq repo-spec 0 slash)))
+                       (rname (and slash (subseq repo-spec (1+ slash))))
+                       (repo (and owner rname (find-repo owner rname))))
+                  (unless repo (fail "No such repo: ~A (use owner/name)" repo-spec))
+                  (setf scope "repo" scope-id (getf repo :id))))
+               (user-name
+                (let ((user (find-user-by-username user-name)))
+                  (unless user (fail "No such user: ~A" user-name))
+                  (setf scope "user" scope-id (getf user :id)))))
+             (unless (member scope '("instance" "org" "repo" "user") :test #'string=)
+               (fail "Invalid scope: ~A (instance, org, repo, or user)" scope))
+             (let ((record (create-registration-token
+                            :scope scope
+                            :scope-id (unless (eq scope-id :null) scope-id))))
+               (if quiet
+                   (format real-out "~A~%" (getf record :token))
+                   (format real-out "~&~A~%  scope: ~A~@[ #~A~]~%  expires: ~A~%"
+                           (getf record :token) scope
+                           (unless (eq scope-id :null) scope-id)
+                           (getf record :expires-at)))))
+        (disconnect-db))))))
 
 (defun parse-grpc-url (url)
   "Parse grpc://host:port or grpcs://host[:port] into (host port tls-p).
@@ -507,7 +592,11 @@
 
 (defun handle-runner (cmd)
   (let* ((url (clingon:getopt cmd :url))
-         (token (clingon:getopt cmd :token))
+         (token-file (clingon:getopt cmd :token-file))
+         (token (or (clingon:getopt cmd :token)
+                    (and token-file
+                         (string-trim '(#\Space #\Tab #\Newline #\Return)
+                                      (uiop:read-file-string token-file)))))
          (name (or (clingon:getopt cmd :name)
                    (machine-instance)
                    "cave-runner"))
@@ -517,6 +606,11 @@
          (host (first parsed))
          (port (second parsed))
          (tls-p (third parsed)))
+
+    (when (or (null token) (zerop (length token)))
+      (format *error-output*
+              "~&No registration token. Pass --token <value> or --token-file <path>.~%")
+      (uiop:quit 1))
 
     (format t "~&Cave Runner~%  Server: ~A:~A~A~%  Name: ~A~%  Labels: ~A~%  Ephemeral: ~A~%"
             host port (if tls-p " (TLS)" "") name runner-labels ephemeral)
@@ -1219,6 +1313,7 @@
                        (make-run-checks-command)
                        (make-post-receive-command)
                        (make-runner-command)
+                       (make-runner-token-command)
                        (make-sync-mirrors-command)
                        (make-sync-themes-command)
                        (make-sync-advisories-command)

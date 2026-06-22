@@ -137,6 +137,7 @@ Description=Cave PostgreSQL (%s)
 ContainerName=%s
 Image=%s
 Network=%s.network
+PodmanArgs=--no-hosts
 Volume=%s-pgdata.volume:/var/lib/postgresql/data
 Environment=POSTGRES_USER=cave
 Environment=POSTGRES_PASSWORD=%s
@@ -172,6 +173,7 @@ Requires=%s-pg.service
 ContainerName=%s
 Image=%s
 Network=%s.network
+PodmanArgs=--no-hosts
 PublishPort=127.0.0.1:%d:8080
 Environment=KC_DB=postgres
 Environment=KC_DB_URL=jdbc:postgresql://%s:5432/keycloak
@@ -264,6 +266,7 @@ Description=Cave Code Forge (%s)
 ContainerName=%s
 Image=%s
 Network=%s.network
+PodmanArgs=--no-hosts
 PublishPort=127.0.0.1:%d:8080
 PublishPort=%s:%d:22
 %s%s%sLabel=cave.managed-by=cavectl
@@ -288,6 +291,7 @@ Description=Cave Zoekt (%s)
 ContainerName=%s
 Image=%s
 Network=%s.network
+PodmanArgs=--no-hosts
 Volume=%s-zoekt.volume:/data/index
 Volume=%s-data.volume:/var/lib/cave:ro
 Exec=-rpc -listen :6070 -index /data/index
@@ -311,7 +315,14 @@ WantedBy=default.target
 				svc = fmt.Sprintf("runner-%d", i+1)
 			}
 			containerName := cfg.ContainerName(svc)
-			grpcURL := fmt.Sprintf("grpc://%s:9443", cfg.ContainerName("cave"))
+			caveName := cfg.ContainerName("cave")
+			grpcURL := fmt.Sprintf("grpc://%s:9443", caveName)
+			// Registration tokens are single-use and the runner re-registers on
+			// every (re)start, so a static token would only survive one start.
+			// Mint a fresh token via the cave container (which holds the DB
+			// credentials) before each start and hand it to the runner through a
+			// bind-mounted file. %t is the systemd user runtime dir.
+			tokenDir := fmt.Sprintf("%%t/%s", containerName)
 
 			units[prefix+"-"+svc+".container"] = fmt.Sprintf(`[Unit]
 Description=Cave Runner %s (%s)
@@ -322,18 +333,24 @@ Requires=%s.service
 ContainerName=%s
 Image=%s
 Network=%s.network
-Exec=cave-server runner --url %s --name %s
+PodmanArgs=--no-hosts
+Volume=%s:/run/runner:ro
+Exec=cave-server runner --url %s --name %s --token-file /run/runner/token
 Label=cave.managed-by=cavectl
 Label=cave.instance=%s
 
 [Service]
 Restart=always
+ExecStartPre=/usr/bin/install -d -m 700 %s
+ExecStartPre=/bin/sh -c '/usr/bin/podman exec %s cave-server runner-token --quiet --config /etc/cave.conf > %s/token'
 
 [Install]
 WantedBy=default.target
 `, svc, prefix, prefix, prefix,
 				containerName, cfg.Runner.Image, prefix,
-				grpcURL, containerName, prefix)
+				tokenDir,
+				grpcURL, containerName, prefix,
+				tokenDir, caveName, tokenDir)
 		}
 	}
 
