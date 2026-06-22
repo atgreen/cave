@@ -120,12 +120,20 @@
           for asd = (third fields)
           when (and name (plusp (length name)) asd (plusp (length asd)))
             collect (let* ((dir (subseq asd 0 (or (position #\/ asd) (length asd))))
-                           (version (%ocicl-dir-version dir)))
+                           (version (%ocicl-dir-version dir))
+                           ;; The dir is `<project>-<version>`; the project name
+                           ;; (== _00_OCICL_NAME) is what ocicl/<project> is keyed
+                           ;; on, so strip the trailing version to recover it.
+                           (project (if (and version (not (string= version dir))
+                                             (> (length dir) (1+ (length version))))
+                                        (subseq dir 0 (- (length dir) (length version) 1))
+                                        dir)))
                       (list :manifest-path "ocicl.csv"
                             :ecosystem "ocicl"
                             :package-name name
                             :version version
                             :purl (format nil "pkg:ocicl/~A@~A" name version)
+                            :ocicl-project project
                             :is-direct t)))))
 
 (defun scan-deps (owner repo-name ref sbom-json)

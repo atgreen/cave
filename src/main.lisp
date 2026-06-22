@@ -1173,12 +1173,18 @@
              (make-config-option)
              (clingon:make-option :string
               :long-name "ecosystem" :key :ecosystem
-              :description "Comma-separated OSV ecosystems to limit to (e.g. npm,Go,PyPI)"))
+              :description "Comma-separated OSV ecosystems to limit to (e.g. npm,Go,PyPI)")
+             (clingon:make-option :string
+              :long-name "feed" :key :feed
+              :description "Comma-separated OSV feed URL(s) to also ingest (e.g. a
+                           Common Lisp advisory feed OSV's API doesn't carry).
+                           Adds to any :advisory-feeds in config."))
    :handler #'handle-sync-advisories))
 
 (defun handle-sync-advisories (cmd)
   (let ((config-path (clingon:getopt cmd :config))
-        (eco (clingon:getopt cmd :ecosystem)))
+        (eco (clingon:getopt cmd :ecosystem))
+        (feed (clingon:getopt cmd :feed)))
     (load-config config-path)
     (handler-case (connect-db)
       (error (e)
@@ -1186,8 +1192,24 @@
         (uiop:quit 1)))
     (let ((ecosystems (when (and eco (plusp (length eco)))
                         (mapcar (lambda (s) (string-trim " " s))
-                                (uiop:split-string eco :separator '(#\,))))))
-      (sync-osv-advisories :ecosystems ecosystems))
+                                (uiop:split-string eco :separator '(#\,)))))
+          ;; Feeds: comma-separated :advisory-feeds in config, plus any --feed.
+          (feeds (flet ((split (s) (when (and (stringp s) (plusp (length s)))
+                                     (remove "" (mapcar (lambda (x) (string-trim " " x))
+                                                        (uiop:split-string s :separator '(#\,)))
+                                             :test #'string=))))
+                   (remove-duplicates
+                    (append (split (config-value :advisory-feeds ""))
+                            (split feed))
+                    :test #'string=))))
+      (sync-osv-advisories :ecosystems ecosystems)
+      ;; Link ocicl deps to their upstream repos, then pull URL-published feeds
+      ;; (e.g. the Common Lisp cl-sec feed) that OSV's API doesn't serve.
+      (handler-case (sync-ocicl-projects)
+        (error (e) (llog:warn "ocicl project sync failed" :error (princ-to-string e))))
+      (dolist (url (remove-duplicates feeds :test #'string=))
+        (handler-case (sync-feed-advisories url)
+          (error (e) (llog:warn "Feed sync failed" :url url :error (princ-to-string e))))))
     ;; Dependabot-style: speculatively build + open fix PRs for new security
     ;; alerts (gated per-repo by auto_fix_security policy, default on).
     (process-pending-fixes)

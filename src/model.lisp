@@ -2184,8 +2184,8 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
   (postmodern:execute
    "INSERT INTO cave_repo_deps
        (repo_id, ref, manifest_path, ecosystem, package_name, version, purl,
-        is_direct, scope, generation, updated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+        is_direct, scope, generation, ocicl_project, updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW())
     ON CONFLICT (repo_id, ref, manifest_path, purl) DO UPDATE
        SET version = EXCLUDED.version,
            ecosystem = EXCLUDED.ecosystem,
@@ -2193,12 +2193,14 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
            is_direct = EXCLUDED.is_direct,
            scope = EXCLUDED.scope,
            generation = EXCLUDED.generation,
+           ocicl_project = EXCLUDED.ocicl_project,
            updated_at = NOW()"
    repo-id ref (getf dep :manifest-path) (getf dep :ecosystem)
    (getf dep :package-name) (getf dep :version) (getf dep :purl)
    (if (getf dep :is-direct t) t nil)
    (or (getf dep :scope) :null)
-   generation))
+   generation
+   (or (getf dep :ocicl-project) :null)))
 
 (defun sweep-stale-deps (repo-id ref generation)
   "Delete REPO-ID/REF deps left behind by an older scan generation."
@@ -2338,13 +2340,43 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
       (postmodern:execute
        "INSERT INTO cave_advisory_affected
            (advisory_id, ecosystem, package_name, range_type,
-            introduced, fixed, last_affected)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)"
+            introduced, fixed, last_affected, repo)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
        advisory-id (getf r :ecosystem) (getf r :package-name)
        (or (getf r :range-type) "SEMVER")
        (or (getf r :introduced) :null)
        (or (getf r :fixed) :null)
-       (or (getf r :last-affected) :null)))))
+       (or (getf r :last-affected) :null)
+       (or (getf r :repo) :null)))))
+
+;;; --- ocicl project -> upstream repo cache ----------------------------------
+
+(defun list-graph-ocicl-projects ()
+  "Distinct ocicl project names present in the dependency graph."
+  (mapcar (lambda (r) (getf r :ocicl-project))
+          (postmodern:query
+           "SELECT DISTINCT ocicl_project FROM cave_repo_deps
+            WHERE ecosystem = 'ocicl' AND ocicl_project IS NOT NULL"
+           :plists)))
+
+(defun find-ocicl-project (name)
+  "The cached (name, source_repo, source_commit, systems) row, or NIL."
+  (postmodern:query
+   (:select '* :from 'cave-ocicl-projects :where (:= 'name name))
+   :plist))
+
+(defun upsert-ocicl-project (name &key source-repo source-commit systems)
+  "Cache an ocicl project's resolved upstream repo + commit + system list."
+  (postmodern:execute
+   "INSERT INTO cave_ocicl_projects (name, source_repo, source_commit, systems, resolved_at)
+    VALUES ($1,$2,$3,$4,NOW())
+    ON CONFLICT (name) DO UPDATE
+       SET source_repo = EXCLUDED.source_repo,
+           source_commit = EXCLUDED.source_commit,
+           systems = EXCLUDED.systems,
+           resolved_at = NOW()"
+   name (or source-repo :null) (or source-commit :null)
+   (coerce (or systems '()) 'vector)))
 
 (defun find-advisory (osv-id)
   "The advisory whose osv_id is exactly OSV-ID."
