@@ -2378,6 +2378,14 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
    name (or source-repo :null) (or source-commit :null)
    (coerce (or systems '()) 'vector)))
 
+(defun advisory-url (osv-id)
+  "Canonical web page for an advisory. CL-SEC ids aren't in OSV — they live on
+   the cl-sec site (a SPA that deep-links each advisory by URL hash); everything
+   else resolves on osv.dev."
+  (if (and (stringp osv-id) (uiop:string-prefix-p "CL-SEC-" osv-id))
+      (format nil "https://cl-sec.github.io/cl-sec-advisories/#~A" osv-id)
+      (format nil "https://osv.dev/vulnerability/~A" osv-id)))
+
 (defun find-advisory (osv-id)
   "The advisory whose osv_id is exactly OSV-ID."
   (postmodern:query

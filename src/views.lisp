@@ -1016,8 +1016,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                        "unknown" (string-downcase sev))))
                  (:td (format nil "~A (~A)" (getf a :package-name) (getf a :ecosystem)))
                  (:td (:code (getf a :version)))
-                 (:td (:a :href (format nil "https://osv.dev/vulnerability/~A"
-                                        (getf a :osv-id))
+                 (:td (:a :href (advisory-url (getf a :osv-id))
                           (getf a :osv-id)))
                  (:td (if (or (null fix) (eq fix :null)) "—" (:code fix))))))))
           (:p.empty "✓ No open security alerts."))
