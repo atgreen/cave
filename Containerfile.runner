@@ -1,32 +1,35 @@
-## Cave Runner — self-hosted automation runner with Podman-in-Podman
+## Cave Runner — self-hosted automation runner with rootless Podman-in-Podman.
+##
+## Based on quay.io/podman/stable, the Podman team's reference image for nested
+## rootless Podman. It ships a pre-configured `podman` user (subuid/subgid,
+## newuidmap/newgidmap with file capabilities, and a containers.conf tuned for
+## nesting), so workflow jobs run in nested containers with LEAST privilege.
+##
+## A plain fedora image does NOT work here: its newuidmap/newgidmap lose their
+## file caps in the build, /etc/subuid uses a range outside the container's own
+## userns, and the default config trips on proc-mount / sethostname. Rather than
+## patch all of that by hand, inherit the maintained reference setup.
 ##
 ## Build:  make runner-image
-## Run:    podman run --privileged cave-runner:latest \
-##           --url grpc://cave:9443 --token <registration-token>
+## Run (least privilege — no --privileged):
+##   podman run --security-opt label=disable --device /dev/fuse \
+##     cave-runner:latest --url grpc://cave:9443 --token <registration-token>
 
-FROM fedora:42
+FROM quay.io/podman/stable
 
-# Install Podman (for nested container execution), git, and build tools
-RUN dnf install -y podman fuse-overlayfs git make gcc && dnf clean all && \
-    useradd -m -s /bin/bash runner && \
-    echo "runner:100000:65536" > /etc/subuid && \
-    echo "runner:100000:65536" > /etc/subgid
+# podman/stable already provides podman, fuse-overlayfs, git, and the rootless
+# nested-podman setup. Add the build tools some workflow jobs expect.
+RUN dnf install -y make gcc && dnf clean all
 
-# Configure rootless Podman for the runner user
-RUN mkdir -p /home/runner/.config/containers && \
-    echo '[storage]' > /home/runner/.config/containers/storage.conf && \
-    echo 'driver = "overlay"' >> /home/runner/.config/containers/storage.conf && \
-    echo '[storage.options.overlay]' >> /home/runner/.config/containers/storage.conf && \
-    echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/runner/.config/containers/storage.conf && \
-    chown -R runner:runner /home/runner
+# Shared FASL cache, bind-mounted into Lisp build jobs (see main.lisp). Pre-create
+# it owned by the unprivileged `podman` user the runner runs as, so the mount
+# source exists and is writable without root.
+RUN mkdir -p /var/cache/cave-runner/common-lisp \
+    && chown -R podman:podman /var/cache/cave-runner
 
-# Copy the cave-server binary (the runner is a subcommand of cave-server)
-COPY cave-server /usr/bin/cave-server
-RUN chmod +x /usr/bin/cave-server
+# The runner is a subcommand of cave-server.
+COPY --chmod=755 cave-server /usr/bin/cave-server
 
-# Create workspace directory
-RUN mkdir -p /workspace && chown runner:runner /workspace
-WORKDIR /workspace
-
-USER runner
+USER podman
+WORKDIR /home/podman
 ENTRYPOINT ["cave-server", "runner"]

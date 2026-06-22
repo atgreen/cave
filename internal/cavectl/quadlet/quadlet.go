@@ -214,6 +214,13 @@ WantedBy=default.target
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_BASE_URL=%s\n", cfg.Cave.BaseURL))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_SECRET_KEY=%s\n", cfg.Cave.SecretKey))
 	envLines.WriteString("Environment=CAVE_CHAMBER_ENABLED=t\n")
+	if cfg.Runner.Enabled {
+		// Runners clone over the container network, where the public base_url
+		// hairpins to loopback and fails. Point them at the cave container's
+		// internal HTTP endpoint instead.
+		envLines.WriteString(fmt.Sprintf("Environment=CAVE_RUNNER_CLONE_BASE_URL=http://%s:8080\n",
+			cfg.ContainerName("cave")))
+	}
 
 	if cfg.Zoekt.Enabled {
 		envLines.WriteString("Environment=CAVE_ZOEKT_ENABLED=t\n")
@@ -334,6 +341,12 @@ ContainerName=%s
 Image=%s
 Network=%s.network
 PodmanArgs=--no-hosts
+# Rootless podman-in-podman for workflow jobs (least privilege — no --privileged).
+# The image (quay.io/podman/stable based) handles the userns/subuid/caps setup;
+# the runner container just needs /dev/fuse for fuse-overlayfs and SELinux label
+# separation disabled so the nested store can be mounted on enforcing hosts.
+AddDevice=/dev/fuse
+SecurityLabelDisable=true
 Volume=%s:/run/runner:ro,z
 Exec=cave-server runner --url %s --name %s --token-file /run/runner/token
 Label=cave.managed-by=cavectl
