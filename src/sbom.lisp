@@ -85,6 +85,57 @@
                          deps)))))
     (nreverse deps)))
 
+;;; --- ocicl lockfile -------------------------------------------------------
+;;;
+;;; syft has no Common Lisp matcher, so ocicl-managed systems are invisible to
+;;; it. Parse the committed ocicl.csv lockfile directly to surface them. Each
+;;; line is:  <system>, <oci-url>@sha256:<digest>, <dir>/<system>.asd
+;;; where <dir> (e.g. access-20250418-346e97b or postmodern-1.33.11) carries the
+;;; resolved version. We use the `ocicl` purl type, not `oci`: the registered
+;;; `oci` type means an OCI *image* keyed by digest with a repository_url
+;;; qualifier, which these are not.
+
+(defun %ocicl-dir-version (dir)
+  "Version suffix of an ocicl system directory: the first `-`-segment that looks
+   like a version (an 8-digit date or a dotted number) through the end, so both
+   `access-20250418-346e97b` -> 20250418-346e97b and `postmodern-1.33.11` ->
+   1.33.11 work regardless of how many hyphens the name has. Falls back to DIR."
+  (or (loop for tail on (uiop:split-string dir :separator '(#\-))
+            for s = (car tail)
+            when (and (plusp (length s))
+                      (digit-char-p (char s 0))
+                      (or (and (= (length s) 8) (every #'digit-char-p s))
+                          (find #\. s)))
+            return (format nil "~{~A~^-~}" tail))
+      dir))
+
+(defun ocicl-csv->deps (csv-text)
+  "Parse an ocicl.csv lockfile (string) into dep plists. OSV has no Lisp
+   ecosystem, so these are tracked for visibility, not vulnerability-matched."
+  (when (stringp csv-text)
+    (loop for line in (uiop:split-string csv-text :separator '(#\Newline))
+          for fields = (mapcar (lambda (s) (string-trim '(#\Space #\Tab #\Return) s))
+                               (uiop:split-string line :separator '(#\,)))
+          for name = (first fields)
+          for asd = (third fields)
+          when (and name (plusp (length name)) asd (plusp (length asd)))
+            collect (let* ((dir (subseq asd 0 (or (position #\/ asd) (length asd))))
+                           (version (%ocicl-dir-version dir)))
+                      (list :manifest-path "ocicl.csv"
+                            :ecosystem "ocicl"
+                            :package-name name
+                            :version version
+                            :purl (format nil "pkg:ocicl/~A@~A" name version)
+                            :is-direct t)))))
+
+(defun scan-deps (owner repo-name ref sbom-json)
+  "The full dependency list for a scan of OWNER/REPO-NAME at REF: the syft SBOM
+   components, plus the ocicl.csv lockfile's systems when present (syft can't see
+   them). Both feed the same purl-driven graph."
+  (append (sbom->deps sbom-json)
+          (let ((csv (ignore-errors (chamber-get-blob owner repo-name ref "ocicl.csv"))))
+            (when csv (ocicl-csv->deps csv)))))
+
 ;;; --- Producer: runner-based extraction (Option B) -------------------------
 ;;;
 ;;; Extraction runs on a runner, not the server: enqueue-deps-scan schedules a
@@ -101,10 +152,10 @@
    dashboard. Returns the dep count, or NIL if the repo is unknown."
   (let ((repo (find-repo owner repo-name)))
     (when repo
-      (let ((n (ingest-repo-deps
-                (getf repo :id)
-                (or ref (chamber-get-default-branch owner repo-name) "main")
-                (sbom->deps json))))
+      (let* ((the-ref (or ref (chamber-get-default-branch owner repo-name) "main"))
+             (n (ingest-repo-deps
+                 (getf repo :id) the-ref
+                 (scan-deps owner repo-name the-ref json))))
         (handler-case (update-dependency-dashboard (getf repo :id))
           (error (e)
             (llog:warn "Dashboard update failed"
