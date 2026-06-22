@@ -1,0 +1,24 @@
+# Dependency-fix image for runner-based ocicl lockfile bumps.
+#
+# The Cave runner creates the job container with `sleep infinity` and runs each
+# step via `bash -c`, cloning the repo at /workspace. The fix step runs
+#   ocicl latest <system>... && ocicl clean && cat ocicl.csv
+# and returns the regenerated lockfile through the step log; cave validates the
+# bump (the new commit must clear the advisory) and commits it server-side.
+#
+# Fedora (glibc) base on purpose: ocicl is a dynamically-linked glibc binary, so
+# the Alpine/musl cave-scan image can't host it.
+FROM fedora:42
+
+ARG OCICL_VERSION=2.16.14
+
+RUN dnf install -y git bash ca-certificates curl tar gzip && dnf clean all \
+ && curl -sSfL "https://github.com/ocicl/ocicl/releases/download/v${OCICL_VERSION}/ocicl-${OCICL_VERSION}-linux-amd64.tar.gz" \
+      | tar -xz -C /tmp \
+ && install -m 0755 "$(find /tmp -type f -name ocicl | head -1)" /usr/local/bin/ocicl \
+ && rm -rf /tmp/ocicl* \
+ && ocicl version
+
+# The runner overrides the command with `sleep infinity`; keep a sane default.
+ENTRYPOINT []
+CMD ["sleep", "infinity"]
