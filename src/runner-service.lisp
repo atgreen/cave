@@ -261,6 +261,18 @@
         (error () nil))
       (unwind-protect
        (loop
+        ;; Stop when the client is gone — otherwise this handler thread spins
+        ;; forever heartbeating a dead runner, leaving it falsely "online" so
+        ;; cleanup-offline-runners never reaps it and the scheduler may assign
+        ;; it jobs. context-check-cancelled catches a graceful cancel/deadline;
+        ;; an abruptly killed runner (the common systemd-restart case) only
+        ;; surfaces as a closed HTTP/2 connection, which the per-connection
+        ;; reader thread marks on EOF.
+        (when (or (ag-grpc:context-check-cancelled ctx)
+                  (let ((conn (ignore-errors (ag-grpc::server-stream-connection stream))))
+                    (and conn (member (ag-http2:connection-state conn)
+                                      '(:closing :closed)))))
+          (return))
         (handler-case
         (postmodern:with-connection *db-spec*
           (update-runner-heartbeat runner-id)
