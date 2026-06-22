@@ -30,7 +30,8 @@ if [ ! -f "$CONFIG" ]; then
  :zoekt-index-dir "${CAVE_ZOEKT_INDEX_DIR:-/data/zoekt-index}"
  :deps-scan-enabled ${CAVE_DEPS_SCAN_ENABLED:-nil}
  :deps-scan-image "${CAVE_DEPS_SCAN_IMAGE:-ghcr.io/atgreen/cave-scan:main}"
- :deps-scan-labels "${CAVE_DEPS_SCAN_LABELS:-}")
+ :deps-scan-labels "${CAVE_DEPS_SCAN_LABELS:-}"
+ :advisory-feeds "${CAVE_ADVISORY_FEEDS:-}")
 CONF
 fi
 

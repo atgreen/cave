@@ -742,7 +742,22 @@ CREATE TABLE cave_org_dep_policy (
   UNIQUE(alert_id)
 );
 CREATE INDEX idx_dep_fix_attempts_commit ON cave_dep_fix_attempts (repo_id, commit_sha)")
-    (52 . "ALTER TABLE cave_org_dep_policy ADD COLUMN auto_fix_security BOOLEAN NOT NULL DEFAULT TRUE;"))
+    (52 . "ALTER TABLE cave_org_dep_policy ADD COLUMN auto_fix_security BOOLEAN NOT NULL DEFAULT TRUE;")
+    (53 . "-- OSV GIT-range advisories (e.g. the cl-sec Common Lisp feed) identify
+-- affected software by a source repo plus a commit range, often with a null
+-- package. Store the repo. Also cache each ocicl project's upstream repo, and
+-- tag ocicl deps with their project so they can be linked to it (the dep
+-- version already carries the commit).
+ALTER TABLE cave_advisory_affected ADD COLUMN repo VARCHAR(512);
+CREATE INDEX idx_advisory_affected_repo ON cave_advisory_affected (repo);
+ALTER TABLE cave_repo_deps ADD COLUMN ocicl_project VARCHAR(256);
+CREATE TABLE cave_ocicl_projects (
+  name VARCHAR(256) PRIMARY KEY,
+  source_repo VARCHAR(512),
+  source_commit VARCHAR(64),
+  systems TEXT[] NOT NULL DEFAULT '{}',
+  resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
