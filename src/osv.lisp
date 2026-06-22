@@ -111,6 +111,72 @@
               ((member s '("moderate" "medium") :test #'string=) "moderate")
               (t nil))))))
 
+;;; --- CVSS v3.x base score -------------------------------------------------
+;;;
+;;; OSV records (and the cl-sec feed) carry a CVSS vector, not a qualitative
+;;; label, so without this advisories show severity "unknown". Compute the base
+;;; score per the CVSS 3.1 spec; it also drives the "ignore CVSS 0.0" filter.
+
+(defun %osv-cvss-vector (record)
+  "A CVSS v3.x vector string from RECORD's severity[] (e.g. CVSS:3.1/AV:N/...),
+   or NIL."
+  (let ((sev (%osv-get record "severity")))
+    (when (vectorp sev)
+      (loop for s across sev
+            for score = (%osv-get s "score")
+            when (and (stringp score) (uiop:string-prefix-p "CVSS:3" score))
+            return score))))
+
+(defun %cvss-metric (vec key)
+  "Value string of metric KEY (e.g. \"AV\") in a CVSS vector, or NIL."
+  (loop for part in (uiop:split-string vec :separator '(#\/))
+        for c = (position #\: part)
+        when (and c (string= (subseq part 0 c) key))
+        return (subseq part (1+ c))))
+
+(defun %cvss-roundup (x)
+  "CVSS 3.1 Roundup: X rounded up to the nearest 0.1."
+  (let ((i (round (* x 100000))))
+    (if (zerop (mod i 10000))
+        (/ i 100000.0)
+        (/ (+ (floor i 10000) 1) 10.0))))
+
+(defun cvss-base-score (vec)
+  "CVSS v3.x base score (0.0–10.0) for vector string VEC, or NIL if unparseable."
+  (when (and (stringp vec) (uiop:string-prefix-p "CVSS:3" vec))
+    (handler-case
+        (flet ((m (k tbl) (cdr (assoc (%cvss-metric vec k) tbl :test #'equal))))
+          (let* ((scope-changed (equal (%cvss-metric vec "S") "C"))
+                 (cia '(("H" . 0.56d0) ("L" . 0.22d0) ("N" . 0.0d0)))
+                 (c (m "C" cia)) (i (m "I" cia)) (a (m "A" cia))
+                 (av (m "AV" '(("N" . 0.85d0) ("A" . 0.62d0) ("L" . 0.55d0) ("P" . 0.2d0))))
+                 (ac (m "AC" '(("L" . 0.77d0) ("H" . 0.44d0))))
+                 (pr (m "PR" (if scope-changed
+                                 '(("N" . 0.85d0) ("L" . 0.68d0) ("H" . 0.5d0))
+                                 '(("N" . 0.85d0) ("L" . 0.62d0) ("H" . 0.27d0)))))
+                 (ui (m "UI" '(("N" . 0.85d0) ("R" . 0.62d0)))))
+            (when (and c i a av ac pr ui)
+              (let* ((isc (- 1d0 (* (- 1d0 c) (- 1d0 i) (- 1d0 a))))
+                     (impact (if scope-changed
+                                 (- (* 7.52d0 (- isc 0.029d0))
+                                    (* 3.25d0 (expt (- isc 0.02d0) 15)))
+                                 (* 6.42d0 isc)))
+                     (expl (* 8.22d0 av ac pr ui)))
+                (if (<= impact 0d0)
+                    0.0
+                    (%cvss-roundup (min 10d0 (* (if scope-changed 1.08d0 1d0)
+                                                (+ impact expl)))))))))
+      (error () nil))))
+
+(defun %cvss-severity-label (score)
+  "CVSS 3.1 qualitative rating for a base SCORE, in cave's vocabulary."
+  (when (numberp score)
+    (cond ((<= score 0.0) "none")
+          ((< score 4.0) "low")
+          ((< score 7.0) "moderate")
+          ((< score 9.0) "high")
+          (t "critical"))))
+
 (defun %osv-affected-rows (record)
   "Flatten RECORD's affected[].ranges[] (and a bare versions[] fallback) into a
    list of plists: :ecosystem :package-name :range-type :introduced :fixed
@@ -183,12 +249,16 @@
       (let* ((aliases (let ((a (%osv-get record "aliases")))
                         (when a (coerce a 'list))))
              (refs (%osv-get record "references"))
+             (cvss-score (cvss-base-score (%osv-cvss-vector record)))
              (adv-id (upsert-advisory
                       :osv-id id
                       :summary (%osv-get record "summary")
                       :details (%osv-get record "details")
                       :aliases aliases
-                      :severity (%osv-severity-label record)
+                      ;; GHSA-style label if present, else derive from CVSS.
+                      :severity (or (%osv-severity-label record)
+                                    (%cvss-severity-label cvss-score))
+                      :cvss-score (or cvss-score :null)
                       :refs (when refs (com.inuoe.jzon:stringify refs))
                       :published-at (%osv-get record "published")
                       :modified-at (%osv-get record "modified")
