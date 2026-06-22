@@ -334,14 +334,14 @@ ContainerName=%s
 Image=%s
 Network=%s.network
 PodmanArgs=--no-hosts
-Volume=%s:/run/runner:ro
+Volume=%s:/run/runner:ro,z
 Exec=cave-server runner --url %s --name %s --token-file /run/runner/token
 Label=cave.managed-by=cavectl
 Label=cave.instance=%s
 
 [Service]
 Restart=always
-ExecStartPre=/usr/bin/install -d -m 700 %s
+ExecStartPre=/usr/bin/install -d -m 755 %s
 ExecStartPre=/bin/sh -c '/usr/bin/podman exec %s cave-server runner-token --quiet --config /etc/cave.conf > %s/token'
 
 [Install]
