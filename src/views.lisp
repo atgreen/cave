@@ -1017,6 +1017,7 @@ document.addEventListener('DOMContentLoaded', function() {
                  (:td (format nil "~A (~A)" (getf a :package-name) (getf a :ecosystem)))
                  (:td (:code (getf a :version)))
                  (:td (:a :href (advisory-url (getf a :osv-id))
+                          :target "_blank" :rel "noopener noreferrer"
                           (getf a :osv-id)))
                  (:td (if (or (null fix) (eq fix :null)) "—" (:code fix))))))))
           (:p.empty "✓ No open security alerts."))
