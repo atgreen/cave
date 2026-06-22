@@ -46,9 +46,9 @@
                                      (unless (or (null s) (eq s :null)) s)))
                           (fix (let ((f (getf a :fix-version)))
                                  (unless (or (null f) (eq f :null)) f))))
-                      (format out "- **~A** `~A` (~A) — [~A](https://osv.dev/vulnerability/~A)~@[: ~A~]~@[ — fix: `~A`~]~%"
+                      (format out "- **~A** `~A` (~A) — [~A](~A)~@[: ~A~]~@[ — fix: `~A`~]~%"
                               (getf a :package-name) (getf a :version)
-                              (getf a :ecosystem) osv osv summary fix)))
+                              (getf a :ecosystem) osv (advisory-url osv) summary fix)))
                   (format out "~%")))))))))
 
 (defun update-dependency-dashboard (repo-id)
