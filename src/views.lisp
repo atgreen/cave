@@ -634,6 +634,63 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
           :style "display:inline-block;padding:.05rem .35rem;margin-left:.4rem;border-radius:3px;font-size:.65rem;font-family:var(--font-mono);background:var(--yellow-bg, rgba(201,160,62,.15));color:var(--yellow,#c9a03e);border:1px solid var(--yellow,#c9a03e)"
           "Unverified"))))))
 
+(defun render-ref-switcher (owner-name repo-name current-ref branches tags
+                            &key can-write)
+  "A branch/tag dropdown: filter, Branches/Tags tabs, click-to-switch (to
+   /tree/<ref>), and — for members — inline 'Create branch <name> from <current>'
+   when the filter matches no existing branch."
+  (spinneret:with-html
+    (:div.ref-switcher
+     (:button.ref-switcher-btn :type "button" :onclick "caveToggleRefMenu(this)"
+       (:span.ref-switcher-name current-ref) " ▾")
+     (:div.ref-switcher-menu :hidden t
+      (:input.ref-filter :type "text" :placeholder "Filter branches/tags…"
+        :oninput "caveFilterRefs(this)" :autocomplete "off")
+      (:div.ref-switcher-tabs
+       (:button.ref-kind-tab.active :type "button" :data-kind "branches"
+         :onclick "caveShowRefKind(this,'branches')" "Branches")
+       (:button.ref-kind-tab :type "button" :data-kind "tags"
+         :onclick "caveShowRefKind(this,'tags')" "Tags"))
+      (:ul.ref-list :data-kind "branches"
+       (dolist (b branches)
+         (:li (:a :href (format nil "/~A/~A/tree/~A" owner-name repo-name b)
+                  :class (when (equal b current-ref) "current") b))))
+      (:ul.ref-list :data-kind "tags" :hidden t
+       (if tags
+           (dolist (tg tags)
+             (:li (:a :href (format nil "/~A/~A/tree/~A" owner-name repo-name tg) tg)))
+           (:li.ref-empty "No tags")))
+      (when can-write
+        (:form.ref-create :method "post"
+          :action (format nil "/~A/~A/branches" owner-name repo-name) :hidden t
+          (:input :type "hidden" :name "from" :value current-ref)
+          (:input :type "hidden" :name "name" :class "ref-create-name")
+          (:button :type "submit"
+            "Create branch “" (:span.ref-create-label) "” from " current-ref)))))
+    (:style (:raw "
+.ref-switcher{position:relative;display:inline-block;vertical-align:middle}
+.ref-switcher-btn{cursor:pointer;font:inherit;background:#f6f6f6;border:1px solid #d0d0d0;border-radius:5px;padding:2px 10px}
+.ref-switcher-btn:hover{background:#efefef}
+.ref-switcher-name{font-weight:600}
+.ref-switcher-menu{position:absolute;left:0;z-index:30;margin-top:4px;min-width:260px;max-height:360px;overflow:auto;background:#fff;border:1px solid #d0d0d0;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
+.ref-filter{display:block;width:calc(100% - 20px);margin:8px 10px;padding:5px 8px;border:1px solid #d0d0d0;border-radius:5px;font:inherit}
+.ref-switcher-tabs{display:flex;border-bottom:1px solid #eee}
+.ref-kind-tab{flex:1;cursor:pointer;background:none;border:none;padding:7px;font:inherit;color:#555}
+.ref-kind-tab.active{color:#c2410c;box-shadow:inset 0 -2px 0 #c2410c}
+.ref-list{list-style:none;margin:0;padding:4px 0}
+.ref-list li a{display:block;padding:5px 12px;color:inherit;text-decoration:none}
+.ref-list li a:hover{background:#f4f4f4}
+.ref-list li a.current{font-weight:700}
+.ref-empty{padding:6px 12px;color:#888}
+.ref-create{padding:8px;border-top:1px solid #eee}
+.ref-create button{width:100%;cursor:pointer;font:inherit;text-align:left;background:#fff;border:1px solid #d0d0d0;border-radius:5px;padding:6px 8px}
+.ref-create button:hover{background:#f4f4f4}"))
+    (:script (:raw "
+function caveToggleRefMenu(btn){var m=btn.parentNode.querySelector('.ref-switcher-menu');var open=m.hasAttribute('hidden');document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});if(open){m.removeAttribute('hidden');var f=m.querySelector('.ref-filter');if(f)f.focus();}}
+function caveShowRefKind(btn,kind){var m=btn.closest('.ref-switcher-menu');m.querySelectorAll('.ref-kind-tab').forEach(function(t){t.classList.toggle('active',t.dataset.kind===kind);});m.querySelectorAll('.ref-list').forEach(function(l){l.hidden=(l.dataset.kind!==kind);});caveFilterRefs(m.querySelector('.ref-filter'));}
+function caveFilterRefs(input){if(!input)return;var m=input.closest('.ref-switcher-menu');var q=input.value.trim().toLowerCase();var kind=m.querySelector('.ref-kind-tab.active').dataset.kind;var list=m.querySelector('.ref-list[data-kind=\"'+kind+'\"]');var exact=false;list.querySelectorAll('li').forEach(function(li){var t=li.textContent.trim().toLowerCase();var match=t.indexOf(q)!==-1;li.hidden=!match;if(t===q)exact=true;});var form=m.querySelector('.ref-create');if(form){var show=(kind==='branches'&&q.length>0&&!exact);form.hidden=!show;if(show){form.querySelector('.ref-create-name').value=input.value.trim();form.querySelector('.ref-create-label').textContent=input.value.trim();}}}
+document.addEventListener('click',function(e){if(!e.target.closest('.ref-switcher'))document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});});"))))
+
 (defun view-code (&key owner-name repo branches tags default-branch
                        commit-count recent-commits file-tree signatures)
   "Render the repo code/file browser page."
@@ -646,7 +703,10 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
       ;; Branch/tag bar + last commit
       (:div.repo-info-bar
        (:div.repo-info-left
-        (:span.badge default-branch)
+        (render-ref-switcher org-name repo-name default-branch branches tags
+                             :can-write (and *current-user-id*
+                                             (repo-member-role (getf repo :id)
+                                                               *current-user-id*)))
         (:span.repo-info-stat
          (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
         (when tags

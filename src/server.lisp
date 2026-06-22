@@ -1151,6 +1151,40 @@ the results. Skips deletes and zero-sha boundaries."
        (view-tree :owner-name owner :repo repo :ref ref
                   :path path :file-tree file-tree)))))
 
+(defun %valid-git-ref-name-p (name)
+  "Permissive git branch/tag name check: 1–255 chars, allowed chars only, no
+   leading dash, no '..'. The git command runs argv-style (no shell), so this
+   just guards against flag-injection and obviously bad names."
+  (and (stringp name) (plusp (length name)) (<= (length name) 255)
+       (not (char= (char name 0) #\-))
+       (not (search ".." name))
+       (every (lambda (c) (or (alphanumericp c) (member c '(#\_ #\- #\. #\/)))) name)))
+
+(easy-routes:defroute create-branch-route ("/:owner/:repo-name/branches" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from create-branch-route (not-found)))
+      (unless (repo-member-role (getf repo :id) *current-user-id*)
+        (setf (hunchentoot:return-code*) 403)
+        (return-from create-branch-route "Forbidden"))
+      (let ((name (hunchentoot:post-parameter "name"))
+            (from (or (hunchentoot:post-parameter "from")
+                      (chamber-get-default-branch owner repo-name) "main")))
+        (cond
+          ((not (%valid-git-ref-name-p name))
+           (setf (hunchentoot:return-code*) 400) "Invalid branch name")
+          (t
+           (multiple-value-bind (ok err)
+               (git-create-branch (repo-disk-path owner repo-name) name from)
+             (declare (ignore err))
+             (cond
+               (ok
+                (chamber-invalidate-repo owner repo-name)
+                (hunchentoot:redirect (format nil "/~A/~A/tree/~A" owner repo-name name))
+                nil)
+               (t (setf (hunchentoot:return-code*) 400)
+                  "Could not create branch (it may already exist)")))))))))
+
 ;; Blob (file) viewing
 (easy-routes:defroute blob-page ("/:owner/:repo-name/blob/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
