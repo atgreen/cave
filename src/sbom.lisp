@@ -109,6 +109,19 @@
             return (format nil "~{~A~^-~}" tail))
       dir))
 
+(defun %ocicl-version-commit (version)
+  "The upstream git commit an ocicl date-stamped version carries, e.g.
+   `20260619-e7e8dd0` -> `e7e8dd0`. NIL for semver versions (`1.33.11`), which
+   don't encode a commit. Used to match GIT-range advisories."
+  (when (stringp version)
+    (let ((segs (uiop:split-string version :separator '(#\-))))
+      (when (and (= (length segs) 2)
+                 (= (length (first segs)) 8)
+                 (every #'digit-char-p (first segs))
+                 (plusp (length (second segs)))
+                 (every (lambda (c) (digit-char-p c 16)) (second segs)))
+        (second segs)))))
+
 (defun ocicl-csv->deps (csv-text)
   "Parse an ocicl.csv lockfile (string) into dep plists. OSV has no Lisp
    ecosystem, so these are tracked for visibility, not vulnerability-matched."

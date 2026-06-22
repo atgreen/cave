@@ -1209,7 +1209,14 @@
         (error (e) (llog:warn "ocicl project sync failed" :error (princ-to-string e))))
       (dolist (url (remove-duplicates feeds :test #'string=))
         (handler-case (sync-feed-advisories url)
-          (error (e) (llog:warn "Feed sync failed" :url url :error (princ-to-string e))))))
+          (error (e) (llog:warn "Feed sync failed" :url url :error (princ-to-string e)))))
+      ;; GIT-range advisories (the feeds) don't map to packages rematch-advisory
+      ;; can target, so re-match repos with ocicl deps against them by commit.
+      (when feeds
+        (handler-case (let ((n (rematch-ocicl-repos)))
+                        (format t "~&Re-matched ~A ocicl repo/ref pair(s) against GIT advisories.~%" n))
+          (error (e) (llog:warn "ocicl rematch failed" :error (princ-to-string e))))
+        (handler-case (refresh-dependency-dashboards) (error () nil))))
     ;; Dependabot-style: speculatively build + open fix PRs for new security
     ;; alerts (gated per-repo by auto_fix_security policy, default on).
     (process-pending-fixes)
