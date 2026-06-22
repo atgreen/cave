@@ -1395,6 +1395,21 @@
     :where (:and (:= 'repo-id repo-id) (:= 'number number)))
    :plist))
 
+(defun claim-scheduled-task (name interval-seconds)
+  "Atomically claim periodic task NAME if it hasn't run within INTERVAL-SECONDS.
+   Stamps last_run_at and returns T for the one caller that should run it now
+   (so even multiple app instances never double-run), else NIL."
+  (postmodern:execute
+   "INSERT INTO cave_scheduler_runs (task_name) VALUES ($1) ON CONFLICT DO NOTHING"
+   name)
+  (and (postmodern:query
+        "UPDATE cave_scheduler_runs SET last_run_at = NOW()
+         WHERE task_name = $1
+           AND (last_run_at IS NULL OR last_run_at < NOW() - make_interval(secs => $2::int))
+         RETURNING task_name"
+        name interval-seconds :single)
+       t))
+
 (defun count-open-issues (repo-id)
   "Number of open issues in REPO-ID."
   (or (postmodern:query

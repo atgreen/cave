@@ -225,10 +225,56 @@
                          :error (princ-to-string e)
                          :detail (with-output-to-string (s)
                                    (trivial-backtrace:print-backtrace-to-stream s))))))
+        ;; In-process periodic scheduler (advisory sync, mirror pulls). Built in
+        ;; so deployment stays self-contained — no host cron/systemd timers.
+        (when (config-value :scheduler-enabled t)
+          (bt2:make-thread
+           (lambda ()
+             (loop
+               (sleep 300)
+               (handler-case
+                   (postmodern:with-connection *db-spec* (run-scheduled-tasks))
+                 (error (e) (llog:warn "Scheduler tick failed"
+                                       :error (princ-to-string e))))))
+           :name "cave-scheduler")
+          (llog:info "Scheduler started"
+                     :advisory-sync-interval-hours
+                     (config-value :advisory-sync-interval-hours 24)))
+
         (llog:info "Cave listening" :version +version+ :port port)
 
         ;; Wait forever
         (bt2:condition-wait *shutdown-cv* *server-lock*)))))
+
+(defun %scheduled-mirror-pull ()
+  "Pull every due pull-mirror (each gated by its own interval_minutes)."
+  (dolist (m (list-due-pull-mirrors))
+    (let ((disk (repo-disk-path (getf m :owner-name) (getf m :name))))
+      (multiple-value-bind (ok err)
+          (git-pull-mirror disk (getf m :remote-url) (getf m :auth-token))
+        (if ok (update-mirror-sync (getf m :id))
+               (update-mirror-sync (getf m :id) :error err))))))
+
+(defun run-scheduled-tasks ()
+  "One scheduler tick: run any periodic task that's due, each atomically claimed
+   via the DB so concurrent instances never double-run. Called inside a DB
+   connection on the scheduler thread."
+  ;; Advisory sync: re-pull OSV + feeds, re-match the existing graph against newly
+  ;; published advisories (no rescan needed), and dispatch fix PRs.
+  (let ((hrs (config-value :advisory-sync-interval-hours 24)))
+    (when (and (numberp hrs) (plusp hrs)
+               (claim-scheduled-task "sync-advisories" (* 3600 hrs)))
+      (llog:info "Scheduled advisory sync starting")
+      (handler-case
+          (run-advisory-sync :feeds (configured-advisory-feeds) :verbose nil)
+        (error (e) (llog:warn "Scheduled advisory sync failed"
+                              :error (princ-to-string e))))
+      (llog:info "Scheduled advisory sync done")))
+  ;; Mirror pulls: cheap check every 5 min; each mirror has its own cadence.
+  (when (claim-scheduled-task "sync-mirrors" 300)
+    (handler-case (%scheduled-mirror-pull)
+      (error (e) (llog:warn "Scheduled mirror sync failed"
+                            :error (princ-to-string e))))))
 
 ;;; --- GIT-SHELL subcommand ---
 
@@ -1193,33 +1239,14 @@
     (let ((ecosystems (when (and eco (plusp (length eco)))
                         (mapcar (lambda (s) (string-trim " " s))
                                 (uiop:split-string eco :separator '(#\,)))))
-          ;; Feeds: comma-separated :advisory-feeds in config, plus any --feed.
-          (feeds (flet ((split (s) (when (and (stringp s) (plusp (length s)))
-                                     (remove "" (mapcar (lambda (x) (string-trim " " x))
-                                                        (uiop:split-string s :separator '(#\,)))
-                                             :test #'string=))))
-                   (remove-duplicates
-                    (append (split (config-value :advisory-feeds ""))
-                            (split feed))
-                    :test #'string=))))
-      (sync-osv-advisories :ecosystems ecosystems)
-      ;; Link ocicl deps to their upstream repos, then pull URL-published feeds
-      ;; (e.g. the Common Lisp cl-sec feed) that OSV's API doesn't serve.
-      (handler-case (sync-ocicl-projects)
-        (error (e) (llog:warn "ocicl project sync failed" :error (princ-to-string e))))
-      (dolist (url (remove-duplicates feeds :test #'string=))
-        (handler-case (sync-feed-advisories url)
-          (error (e) (llog:warn "Feed sync failed" :url url :error (princ-to-string e)))))
-      ;; GIT-range advisories (the feeds) don't map to packages rematch-advisory
-      ;; can target, so re-match repos with ocicl deps against them by commit.
-      (when feeds
-        (handler-case (let ((n (rematch-ocicl-repos)))
-                        (format t "~&Re-matched ~A ocicl repo/ref pair(s) against GIT advisories.~%" n))
-          (error (e) (llog:warn "ocicl rematch failed" :error (princ-to-string e))))
-        (handler-case (refresh-dependency-dashboards) (error () nil))))
-    ;; Dependabot-style: speculatively build + open fix PRs for new security
-    ;; alerts (gated per-repo by auto_fix_security policy, default on).
-    (process-pending-fixes)
+          ;; Feeds: :advisory-feeds in config, plus any --feed.
+          (feeds (remove-duplicates
+                  (append (configured-advisory-feeds)
+                          (when (and feed (plusp (length feed)))
+                            (mapcar (lambda (s) (string-trim " " s))
+                                    (uiop:split-string feed :separator '(#\,)))))
+                  :test #'string=)))
+      (run-advisory-sync :ecosystems ecosystems :feeds feeds :verbose t))
     (disconnect-db)))
 
 ;;; --- DEPS-SCAN subcommand ---

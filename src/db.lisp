@@ -757,6 +757,13 @@ CREATE TABLE cave_ocicl_projects (
   source_commit VARCHAR(64),
   systems TEXT[] NOT NULL DEFAULT '{}',
   resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);")
+    (54 . "-- Last-run timestamps for the in-process periodic scheduler. The
+-- conditional UPDATE ... RETURNING acts as an atomic lease so only one server
+-- instance runs each task per interval.
+CREATE TABLE cave_scheduler_runs (
+  task_name VARCHAR(64) PRIMARY KEY,
+  last_run_at TIMESTAMPTZ
 );"))
   "Ordered list of (version . sql) migration pairs.")
 
