@@ -1395,6 +1395,21 @@
     :where (:and (:= 'repo-id repo-id) (:= 'number number)))
    :plist))
 
+(defun count-open-issues (repo-id)
+  "Number of open issues in REPO-ID."
+  (or (postmodern:query
+       "SELECT count(*) FROM cave_issues WHERE repo_id = $1 AND status = 'open'"
+       repo-id :single)
+      0))
+
+(defun count-open-changesets (repo-id)
+  "Number of open (not merged, not closed) pull requests in REPO-ID."
+  (or (postmodern:query
+       "SELECT count(*) FROM cave_changesets
+        WHERE repo_id = $1 AND NOT is_merged AND NOT is_closed"
+       repo-id :single)
+      0))
+
 (defun list-issues (repo-id &key (status "open") (limit 50) (offset 0))
   "List issues with optional status filter."
   (if status
