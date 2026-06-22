@@ -184,6 +184,12 @@ func (r *containerRuntime) Run(opts RunOptions) error {
 	}
 	if opts.Network != "" {
 		args = append(args, "--network", opts.Network)
+		// Don't seed the container's /etc/hosts from the host's. Cave's
+		// container name ("cave") collides with the common case of a host
+		// also named "cave", whose /etc/hosts maps cave->127.0.0.1; inherited,
+		// that entry shadows aardvark's DNS record and breaks the runner's
+		// grpc://cave:9443 lookup. On a podman network, names resolve via DNS.
+		args = append(args, "--no-hosts")
 	}
 	for _, p := range opts.Ports {
 		hostIP := p.HostIP
