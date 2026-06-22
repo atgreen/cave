@@ -438,6 +438,12 @@
             (return-from repo-member-role "admin"))))))
   nil)
 
+(defun repo-reviewer-p (repo-id user-id)
+  "True when USER-ID currently has a repo role allowed to submit reviews."
+  (member (repo-member-role repo-id user-id)
+          '("reviewer" "writer" "admin")
+          :test #'equal))
+
 (defun add-repo-member (repo-id user-id &key (role "writer"))
   "Add a member to a repo."
   (postmodern:execute
@@ -587,12 +593,46 @@
        :set 'status status
        :where (:= 'id run-id))))))
 
+(defun update-run-status-for-runner (run-id runner-id status)
+  "Update an automation run only if it is assigned to RUNNER-ID."
+  (cond
+    ((equal status "running")
+     (postmodern:query
+      (:update 'cave-automation-runs
+       :set 'status status 'started-at (:now)
+       :where (:and (:= 'id run-id) (:= 'runner-id runner-id))
+       :returning '*)
+      :plist))
+    ((member status '("success" "failure" "cancelled" "timed_out") :test #'equal)
+     (postmodern:query
+      (:update 'cave-automation-runs
+       :set 'status status 'finished-at (:now)
+       :where (:and (:= 'id run-id) (:= 'runner-id runner-id))
+       :returning '*)
+      :plist))
+    (t
+     (postmodern:query
+      (:update 'cave-automation-runs
+       :set 'status status
+       :where (:and (:= 'id run-id) (:= 'runner-id runner-id))
+       :returning '*)
+      :plist))))
+
 (defun append-run-log (run-id chunk)
   "Append a log chunk to an automation run."
   (postmodern:execute
    (:update 'cave-automation-runs
     :set 'log (:|| 'log chunk)
     :where (:= 'id run-id))))
+
+(defun append-run-log-for-runner (run-id runner-id chunk)
+  "Append a log chunk only if the automation run is assigned to RUNNER-ID."
+  (postmodern:query
+   (:update 'cave-automation-runs
+    :set 'log (:|| 'log chunk)
+    :where (:and (:= 'id run-id) (:= 'runner-id runner-id))
+    :returning '*)
+   :plist))
 
 (defun fetch-queued-run (runner-id runner-labels runner-scope runner-scope-id)
   "Atomically fetch and assign a queued run to a runner.
@@ -878,6 +918,31 @@
        :set 'status status
        :where (:= 'id job-id))))))
 
+(defun update-job-status-for-runner (job-id runner-id status)
+  "Update a workflow job only if it is assigned to RUNNER-ID."
+  (cond
+    ((equal status "running")
+     (postmodern:query
+      (:update 'cave-workflow-jobs
+       :set 'status status 'started-at (:now)
+       :where (:and (:= 'id job-id) (:= 'runner-id runner-id))
+       :returning '*)
+      :plist))
+    ((member status '("success" "failure" "cancelled" "skipped") :test #'equal)
+     (postmodern:query
+      (:update 'cave-workflow-jobs
+       :set 'status status 'finished-at (:now)
+       :where (:and (:= 'id job-id) (:= 'runner-id runner-id))
+       :returning '*)
+      :plist))
+    (t
+     (postmodern:query
+      (:update 'cave-workflow-jobs
+       :set 'status status
+       :where (:and (:= 'id job-id) (:= 'runner-id runner-id))
+       :returning '*)
+      :plist))))
+
 (defun fetch-queued-workflow-job (runner-id runner-labels runner-scope runner-scope-id)
   "Fetch a queued workflow job whose dependencies are met.
    Respects runner scope, label matching, and one-task-per-runner policy.
@@ -994,12 +1059,59 @@
        :set 'status status
        :where (:= 'id step-id))))))
 
+(defun update-step-status-for-runner (step-id runner-id status &key exit-code)
+  "Update a workflow step only if its job is assigned to RUNNER-ID."
+  (cond
+    ((equal status "running")
+     (postmodern:query
+      (:update 'cave-workflow-steps
+       :set 'status status 'started-at (:now)
+       :where (:and (:= 'id step-id)
+                    (:in 'job-id
+                         (:select 'id :from 'cave-workflow-jobs
+                          :where (:= 'runner-id runner-id))))
+       :returning '*)
+      :plist))
+    ((member status '("success" "failure" "skipped") :test #'equal)
+     (postmodern:query
+      (:update 'cave-workflow-steps
+       :set 'status status 'finished-at (:now)
+            'exit-code (or exit-code :null)
+       :where (:and (:= 'id step-id)
+                    (:in 'job-id
+                         (:select 'id :from 'cave-workflow-jobs
+                          :where (:= 'runner-id runner-id))))
+       :returning '*)
+      :plist))
+    (t
+     (postmodern:query
+      (:update 'cave-workflow-steps
+       :set 'status status
+       :where (:and (:= 'id step-id)
+                    (:in 'job-id
+                         (:select 'id :from 'cave-workflow-jobs
+                          :where (:= 'runner-id runner-id))))
+       :returning '*)
+      :plist))))
+
 (defun append-step-log (step-id chunk)
   "Append log text to a workflow step."
   (postmodern:execute
    (:update 'cave-workflow-steps
     :set 'log (:|| 'log chunk)
     :where (:= 'id step-id))))
+
+(defun append-step-log-for-runner (step-id runner-id chunk)
+  "Append step log text only if the step's job is assigned to RUNNER-ID."
+  (postmodern:query
+   (:update 'cave-workflow-steps
+    :set 'log (:|| 'log chunk)
+    :where (:and (:= 'id step-id)
+                 (:in 'job-id
+                      (:select 'id :from 'cave-workflow-jobs
+                       :where (:= 'runner-id runner-id))))
+    :returning '*)
+   :plist))
 
 ;;; ========================== WEBHOOKS ==========================
 
@@ -1591,6 +1703,7 @@
                    when (and (or (equal (getf r :state) "approve")
                                  (and concerns-count
                                       (equal (getf r :state) "approve_with_concerns")))
+                             (repo-reviewer-p repo-id (getf r :reviewer-id))
                              (or allow-stale
                                  (= (getf r :changeset-version) version))
                              (or allow-self

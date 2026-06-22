@@ -26,6 +26,11 @@
       (postmodern:with-connection *db-spec*
         (authenticate-runner token)))))
 
+(defun require-runner-from-ctx (ctx)
+  "Authenticate runner metadata, or fail the RPC."
+  (or (get-runner-from-ctx ctx)
+      (error "unauthenticated runner")))
+
 ;;; --- RPC Handlers ---
 
 (defun handle-register-runner (request ctx)
@@ -104,16 +109,19 @@
 
 (defun handle-append-task-log (request ctx)
   "Append log chunk to a running task."
-  (declare (ignore ctx))
-  (postmodern:with-connection *db-spec*
-    (append-run-log (slot-value request 'cave::run-id)
-                    (slot-value request 'cave::chunk)))
+  (let ((runner (require-runner-from-ctx ctx)))
+    (postmodern:with-connection *db-spec*
+      (unless (append-run-log-for-runner (slot-value request 'cave::run-id)
+                                         (getf runner :id)
+                                         (slot-value request 'cave::chunk))
+        (error "runner is not assigned to this task"))))
   (make-instance 'cave::append-task-log-response :ok t))
 
 (defun handle-update-task-status (request ctx)
   "Update task status. Handles both automation runs and workflow jobs.
    For workflow jobs, run-id=0 and job-id is in the status field prefix."
-  (let* ((runner (get-runner-from-ctx ctx))
+  (let* ((runner (require-runner-from-ctx ctx))
+         (runner-id (getf runner :id))
          (run-id (slot-value request 'cave::run-id))
          (status (slot-value request 'cave::status))
          (terminal (member status '("success" "failure" "cancelled" "timed_out")
@@ -122,8 +130,9 @@
       (if (plusp run-id)
           ;; Simple automation run
           (progn
-            (update-run-status run-id status)
-            (when (and terminal runner (getf runner :ephemeral))
+            (unless (update-run-status-for-runner run-id runner-id status)
+              (error "runner is not assigned to this task"))
+            (when (and terminal (getf runner :ephemeral))
               (delete-runner (getf runner :id))
               (llog:info "Ephemeral runner cleaned up" :id (getf runner :id))))
           ;; Workflow job — run-id=0, status format: "job:<job-id>:<status>"
@@ -132,7 +141,8 @@
                    (job-id (parse-integer (second parts) :junk-allowed t))
                    (job-status (third parts)))
               (when (and job-id job-status)
-                (update-job-status job-id job-status)
+                (unless (update-job-status-for-runner job-id runner-id job-status)
+                  (error "runner is not assigned to this workflow job"))
                 (let ((job (postmodern:query
                             (:select '* :from 'cave-workflow-jobs :where (:= 'id job-id))
                             :plist)))
@@ -214,21 +224,24 @@
 
 (defun handle-update-step-status (request ctx)
   "Update a workflow step's status."
-  (declare (ignore ctx))
-  (postmodern:with-connection *db-spec*
-    (let ((step-id (slot-value request 'cave::step-id))
-          (status (slot-value request 'cave::status))
-          (exit-code (slot-value request 'cave::exit-code)))
-      (update-step-status step-id status
-                          :exit-code (when (plusp exit-code) exit-code))))
+  (let ((runner (require-runner-from-ctx ctx)))
+    (postmodern:with-connection *db-spec*
+      (let ((step-id (slot-value request 'cave::step-id))
+            (status (slot-value request 'cave::status))
+            (exit-code (slot-value request 'cave::exit-code)))
+        (unless (update-step-status-for-runner step-id (getf runner :id) status
+                                               :exit-code (when (plusp exit-code) exit-code))
+          (error "runner is not assigned to this workflow step")))))
   (make-instance 'cave::update-step-status-response :ok t))
 
 (defun handle-append-step-log (request ctx)
   "Append log chunk to a workflow step."
-  (declare (ignore ctx))
-  (postmodern:with-connection *db-spec*
-    (append-step-log (slot-value request 'cave::step-id)
-                     (slot-value request 'cave::chunk)))
+  (let ((runner (require-runner-from-ctx ctx)))
+    (postmodern:with-connection *db-spec*
+      (unless (append-step-log-for-runner (slot-value request 'cave::step-id)
+                                          (getf runner :id)
+                                          (slot-value request 'cave::chunk))
+        (error "runner is not assigned to this workflow step"))))
   (make-instance 'cave::append-step-log-response :ok t))
 
 (defun handle-watch-tasks (request ctx stream)
