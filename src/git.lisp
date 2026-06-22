@@ -478,6 +478,14 @@ Returns T on success, NIL otherwise."
     (declare (ignore _out _err))
     (zerop exit-code)))
 
+(defun git-create-branch (repo-path new-branch from-ref)
+  "Create NEW-BRANCH pointing at FROM-REF in a bare repo. `--` guards against a
+   name beginning with a dash being read as a flag. Returns (VALUES ok err)."
+  (multiple-value-bind (_out err exit-code)
+      (git-run repo-path "branch" "--" new-branch from-ref)
+    (declare (ignore _out))
+    (values (zerop exit-code) err)))
+
 (defun git-diff (repo-path base-ref head-ref)
   "Get diff between two refs."
   (multiple-value-bind (output _err exit-code)
