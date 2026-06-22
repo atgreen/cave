@@ -307,6 +307,65 @@ Returns T on success, NIL otherwise."
           (uiop:delete-directory-tree (pathname tmp) :validate t
                                                      :if-does-not-exist :ignore))))))
 
+(defun %parse-ipv4-octets (host)
+  "Return the four integer octets of HOST if it is a dotted-quad IPv4 literal,
+   else NIL."
+  (let ((parts (uiop:split-string host :separator '(#\.))))
+    (when (= (length parts) 4)
+      (let ((octets (mapcar (lambda (p) (ignore-errors (parse-integer p))) parts)))
+        (when (every (lambda (o) (and (integerp o) (<= 0 o 255))) octets)
+          octets)))))
+
+(defun blocked-remote-host-p (host)
+  "True when HOST is a loopback/link-local/private/internal target we refuse to
+   contact. Best-effort SSRF guard on the literal host (does not resolve DNS)."
+  (let ((h (string-downcase (string-trim "[]" (or host "")))))
+    (or (string= h "")
+        (string= h "localhost")
+        (uiop:string-suffix-p h ".localhost")
+        (uiop:string-suffix-p h ".internal")
+        (uiop:string-suffix-p h ".local")
+        ;; A single-label host (no dot, not IPv6) is an internal service name
+        ;; (e.g. cave-pg, cave-keycloak), never a real public remote.
+        (and (not (find #\. h)) (not (find #\: h)))
+        ;; IPv6 loopback / unspecified / unique-local (fc/fd) / link-local (fe8-feb)
+        (member h '("::1" "::") :test #'string=)
+        (and (find #\: h)
+             (or (uiop:string-prefix-p "fc" h) (uiop:string-prefix-p "fd" h)
+                 (uiop:string-prefix-p "fe8" h) (uiop:string-prefix-p "fe9" h)
+                 (uiop:string-prefix-p "fea" h) (uiop:string-prefix-p "feb" h)))
+        ;; IPv4 unspecified / loopback / private / link-local (incl. cloud metadata)
+        (let ((o (%parse-ipv4-octets h)))
+          (when o
+            (destructuring-bind (a b c d) o
+              (declare (ignore c d))
+              (or (= a 0) (= a 127) (= a 10)
+                  (and (= a 192) (= b 168))
+                  (and (= a 172) (<= 16 b 31))
+                  (and (= a 169) (= b 254)))))))))
+
+(defun safe-remote-url-p (url)
+  "True when URL is a remote we are willing to fetch from / deliver to: an
+   http(s)/git/ssh URL with a public host. Rejects file://, ext::, scp-style
+   and other local transports, and obvious SSRF targets. Best-effort — does
+   not defeat DNS rebinding; pair with disabled redirects for webhook delivery."
+  (handler-case
+      (let* ((uri (quri:uri url))
+             (scheme (quri:uri-scheme uri))
+             (host (quri:uri-host uri)))
+        (and (stringp scheme)
+             (member scheme '("http" "https" "git" "ssh") :test #'string-equal)
+             (stringp host)
+             (plusp (length host))
+             (not (blocked-remote-host-p host))))
+    (error () nil)))
+
+(defun ensure-safe-remote-url (url)
+  "Signal an error unless URL is a safe remote per SAFE-REMOTE-URL-P. Returns URL."
+  (unless (safe-remote-url-p url)
+    (error "Refusing to use remote URL ~S — only public http(s)/git/ssh URLs are allowed (no file://, ext::, loopback, or private hosts)." url))
+  url)
+
 (defun inject-auth-token (url token)
   "Insert TOKEN into a URL: https://TOKEN@host/path. Returns URL unchanged if no token."
   (if token
@@ -321,6 +380,7 @@ Returns T on success, NIL otherwise."
 
 (defun git-clone-bare-from-url (url dest-path &key auth-token)
   "Clone a bare repo from a remote URL. Returns (VALUES success-p error-string)."
+  (ensure-safe-remote-url url)
   (let ((effective-url (inject-auth-token url auth-token)))
     (multiple-value-bind (output err exit-code)
         (uiop:run-program (list "git" "clone" "--bare" effective-url
@@ -342,6 +402,7 @@ Returns T on success, NIL otherwise."
 
 (defun git-push-mirror (repo-path remote-url &optional auth-token)
   "Push all refs to a remote URL. Returns (VALUES success-p error-string)."
+  (ensure-safe-remote-url remote-url)
   (let ((url (inject-auth-token remote-url auth-token)))
     (multiple-value-bind (output err exit-code)
         (git-run repo-path "push" "--mirror" url)
@@ -351,6 +412,7 @@ Returns T on success, NIL otherwise."
 (defun git-pull-mirror (repo-path remote-url &optional auth-token)
   "Fetch all refs from a remote URL into a bare repo.
    Auto-detects default branch and updates HEAD. Returns (VALUES success-p error-string)."
+  (ensure-safe-remote-url remote-url)
   (let ((url (inject-auth-token remote-url auth-token)))
     (multiple-value-bind (output err exit-code)
         (git-run repo-path "fetch" "--prune" url "+refs/*:refs/*")

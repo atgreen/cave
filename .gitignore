@@ -17,3 +17,4 @@ test-results/
 playwright-report/
 screenshots/
 .gstack/
+security-scan/

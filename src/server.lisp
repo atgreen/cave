@@ -1740,13 +1740,24 @@ the results. Skips deletes and zero-sha boundaries."
 
 (defun handle-workflow-logs-sse (uri)
   "Handle SSE streaming for workflow run logs. Called from acceptor dispatch."
-  ;; Parse run-id from URI: /:owner/:repo/runs/w/:id/logs
+  ;; Parse owner/repo and run-id from URI: /:owner/:repo/runs/w/:id/logs
   (let* ((w-pos (search "/runs/w/" uri))
+         (prefix (subseq uri 1 w-pos))
+         (prefix-slash (position #\/ prefix))
+         (owner (when prefix-slash (subseq prefix 0 prefix-slash)))
+         (repo-name (when prefix-slash (subseq prefix (1+ prefix-slash))))
          (id-start (+ w-pos 8))
          (id-end (position #\/ uri :start id-start))
          (run-id (parse-integer (subseq uri id-start id-end) :junk-allowed t))
-         (run (when run-id (find-workflow-run run-id))))
-    (unless run (return-from handle-workflow-logs-sse nil))
+         (run (when run-id (find-workflow-run run-id)))
+         (repo (when (and owner repo-name) (find-repo owner repo-name))))
+    ;; Authorization: the run must exist, belong to a repo the caller can see,
+    ;; and actually be the run for the repo named in the URL (no cross-repo
+    ;; access by guessing run-ids). Mirrors workflow-run-detail-page.
+    (unless (and run repo
+                 (repo-visible-p repo)
+                 (= (getf run :repo-id) (getf repo :id)))
+      (return-from handle-workflow-logs-sse nil))
     ;; Send SSE headers
     (setf (hunchentoot:content-type*) "text/event-stream")
     (setf (hunchentoot:header-out "Cache-Control") "no-cache")
@@ -2039,10 +2050,10 @@ the results. Skips deletes and zero-sha boundaries."
 (easy-routes:defroute issue-comment-submit
     ("/:owner/:repo-name/issues/:number/comment" :method :post) ()
   (when (require-login)
-    (let* ((repo (find-repo owner repo-name))
+    (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
            (issue (when (and repo num) (find-issue (getf repo :id) num))))
-      (unless issue (return-from issue-comment-submit (not-found)))
+      (unless (and repo issue) (return-from issue-comment-submit (not-found)))
       (let ((body (hunchentoot:post-parameter "body"))
             (action (hunchentoot:post-parameter "action")))
         ;; Add comment if body is non-empty
@@ -2089,7 +2100,7 @@ the results. Skips deletes and zero-sha boundaries."
 (easy-routes:defroute new-pull-request-page
     ("/:owner/:repo-name/pulls/new" :method :get) ()
   (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
       (unless repo (return-from new-pull-request-page (not-found)))
       (let* ((branches (chamber-get-branches owner repo-name))
              (default-branch (or (chamber-get-default-branch owner repo-name) "main")))
@@ -2101,7 +2112,7 @@ the results. Skips deletes and zero-sha boundaries."
 (easy-routes:defroute create-pull-request-submit
     ("/:owner/:repo-name/pulls/new" :method :post) ()
   (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
       (unless repo (return-from create-pull-request-submit (not-found)))
       (let* ((source (hunchentoot:post-parameter "source_branch"))
              (target (hunchentoot:post-parameter "target_branch"))
@@ -2188,10 +2199,10 @@ the results. Skips deletes and zero-sha boundaries."
 (easy-routes:defroute diff-comment-submit
     ("/:owner/:repo-name/pulls/:number/diff-comment" :method :post) ()
   (when (require-login)
-    (let* ((repo (find-repo owner repo-name))
+    (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
            (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
-      (unless pr (return-from diff-comment-submit (not-found)))
+      (unless (and repo pr) (return-from diff-comment-submit (not-found)))
       (let ((file-path (hunchentoot:post-parameter "file_path"))
             (line-number (parse-integer (or (hunchentoot:post-parameter "line_number") "0")
                                         :junk-allowed t))
@@ -2553,6 +2564,8 @@ the results. Skips deletes and zero-sha boundaries."
   (unless *current-user-id*
     (return-from api-set-commit-status (json-error "unauthorized" :status 401)))
   (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (unless (repo-member-role (getf repo :id) *current-user-id*)
+      (return-from api-set-commit-status (json-error "forbidden" :status 403)))
     (let* ((body-text (hunchentoot:raw-post-data :force-text t))
            (json (com.inuoe.jzon:parse body-text))
            (state (gethash "state" json))
@@ -2705,7 +2718,11 @@ the results. Skips deletes and zero-sha boundaries."
 ;; Git helpers
 
 (defun repo-disk-path (owner repo-name)
-  "Return the on-disk path for a bare git repo."
+  "Return the on-disk path for a bare git repo.
+   OWNER and REPO-NAME are validated as single path components so a crafted
+   name (e.g. containing '..' or '/') can never escape the repo storage root."
+  (ensure-valid-resource-name owner)
+  (ensure-valid-resource-name repo-name)
   (merge-pathnames (format nil "~A/~A.git/" owner repo-name) (repos-dir)))
 
 (defun install-repo-hooks (path owner repo-name)

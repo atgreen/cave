@@ -42,7 +42,9 @@
   ;; token read back as NIL -> spurious "invalid registration token".
   (postmodern:with-connection *db-spec*
     (let* ((reg-token (slot-value request 'cave::registration-token))
-           (token-record (validate-registration-token reg-token)))
+           ;; Single-use: consume (delete) the token atomically so it can
+           ;; register exactly one runner, even under concurrent calls.
+           (token-record (consume-registration-token reg-token)))
       (unless token-record
         (error "invalid registration token"))
       (let ((runner (register-runner
