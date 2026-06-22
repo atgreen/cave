@@ -2405,7 +2405,8 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
   (postmodern:query
    "SELECT aa.* FROM cave_advisory_affected aa
     JOIN cave_advisories a ON a.id = aa.advisory_id
-    WHERE aa.ecosystem = $1 AND aa.package_name = $2 AND a.withdrawn_at IS NULL"
+    WHERE aa.ecosystem = $1 AND aa.package_name = $2 AND a.withdrawn_at IS NULL
+      AND a.cvss_score IS DISTINCT FROM 0"
    ecosystem package-name :plists))
 
 (defun advisory-affected-packages (advisory-id)
@@ -2509,10 +2510,14 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
       u)))
 
 (defun list-git-affected ()
-  "All GIT-range affected rows: plists with :advisory-id :repo :introduced :fixed."
+  "All GIT-range affected rows (advisory not withdrawn, CVSS not 0.0): plists
+   with :advisory-id :repo :introduced :fixed."
   (postmodern:query
-   "SELECT advisory_id, repo, introduced, fixed FROM cave_advisory_affected
-    WHERE range_type = 'GIT' AND repo IS NOT NULL"
+   "SELECT aa.advisory_id, aa.repo, aa.introduced, aa.fixed
+    FROM cave_advisory_affected aa
+    JOIN cave_advisories a ON a.id = aa.advisory_id
+    WHERE aa.range_type = 'GIT' AND aa.repo IS NOT NULL
+      AND a.withdrawn_at IS NULL AND a.cvss_score IS DISTINCT FROM 0"
    :plists))
 
 (defun %git-advisories-by-repo ()
