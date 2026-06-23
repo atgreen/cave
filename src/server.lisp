@@ -1223,13 +1223,18 @@ the results. Skips deletes and zero-sha boundaries."
              (is-binary (getf info :is-binary))
              (content (when (and (not is-binary) (<= file-size (* 2 1024 1024)))
                         (chamber-get-blob owner repo-name ref path)))
-             (language (file-language path)))
+             (language (file-language path))
+             (default-branch (or (chamber-get-default-branch owner repo-name) "main"))
+             (branches (chamber-get-branches owner repo-name))
+             (tags (chamber-get-tags owner repo-name)))
         (html-response
          (view-blob :owner-name owner :repo repo :ref ref :path path
                     :content content
                     :is-binary is-binary
                     :file-size file-size
-                    :language language))))))
+                    :language language
+                    :branches branches :tags tags
+                    :default-branch default-branch))))))
 
 (defun raw-mime-type (path)
   "Guess MIME type from file extension."
