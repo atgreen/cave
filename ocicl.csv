@@ -1,9 +1,9 @@
 access, ghcr.io/ocicl/access@sha256:96f4ea8a447a99bf4e94de86b2134e1167d45c7a1ca961e986931f06930f1bbd, access-20250418-346e97b/access.asd
-ag-grpc, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-grpc.asd
-ag-grpc-all, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-grpc-all.asd
-ag-http2, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-http2.asd
-ag-proto, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-proto.asd
-ag-proto-cli, ghcr.io/ocicl/ag-proto-cli@sha256:2b6d420f0953a9fb5e6b3a3ec66efea340b8570c3c36378c1c4aa45ddfdacbb1, ag-gRPC-20260619-e7e8dd0/ag-proto-cli.asd
+ag-grpc, ghcr.io/ocicl/ag-proto-cli@sha256:12269ab34e6e93c2928b7b0a7aa7eecc29e902744b48f4f76e7fbe112f98dcd7, ag-gRPC-20260622-c5df0e4/ag-grpc.asd
+ag-grpc-all, ghcr.io/ocicl/ag-proto-cli@sha256:12269ab34e6e93c2928b7b0a7aa7eecc29e902744b48f4f76e7fbe112f98dcd7, ag-gRPC-20260622-c5df0e4/ag-grpc-all.asd
+ag-http2, ghcr.io/ocicl/ag-proto-cli@sha256:12269ab34e6e93c2928b7b0a7aa7eecc29e902744b48f4f76e7fbe112f98dcd7, ag-gRPC-20260622-c5df0e4/ag-http2.asd
+ag-proto, ghcr.io/ocicl/ag-proto-cli@sha256:12269ab34e6e93c2928b7b0a7aa7eecc29e902744b48f4f76e7fbe112f98dcd7, ag-gRPC-20260622-c5df0e4/ag-proto.asd
+ag-proto-cli, ghcr.io/ocicl/ag-proto-cli@sha256:12269ab34e6e93c2928b7b0a7aa7eecc29e902744b48f4f76e7fbe112f98dcd7, ag-gRPC-20260622-c5df0e4/ag-proto-cli.asd
 alexandria, ghcr.io/ocicl/alexandria@sha256:e433c2e076ed3bcf8641b97b00192680db2201d305efac9293539dee88c7fbf7, alexandria-20240503-8514d8e/alexandria.asd
 anaphora, ghcr.io/ocicl/anaphora@sha256:55f1c61b7826c5451a60b4b4522e35e770504bbfa2036d8becbf21f6d654925a, anaphora-20240503-bcf0f74/anaphora.asd
 arnesi, ghcr.io/ocicl/arnesi@sha256:2608e157cb9628c624dd0f8ca41b74a87558a5f6ec56b70c330e3621b6e8063e, arnesi-20241212-93dc906/arnesi.asd
@@ -120,8 +120,8 @@ rfc2388, ghcr.io/ocicl/rfc2388@sha256:4190f6eb36b3b2f53def6eff56b44e76edf4086ada
 routes, ghcr.io/ocicl/routes@sha256:e64fe3e85f8c0f19ada40f6cbda843f63ee73c705d5c243a2b8730b6308d664e, cl-routes-20240503-1b79e85/routes.asd
 s-sql, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a578371d1125786f4f43101169e4857cdd, postmodern-1.33.11/s-sql.asd
 salza2, ghcr.io/ocicl/salza2@sha256:0f9d930524b469e1442372a6e12b26742d9e6a1144e6a455006943190d1ea71e, salza2-2.1/salza2.asd
-sanitize-html, ghcr.io/ocicl/sanitize-html@sha256:b980df2e67cd22cc91dd738bc9fcfdd4f2b0bfaff782aef1417fdd1b5b29d0ff, cl-sanitize-html-20251102-5e5b3f4/sanitize-html.asd
-serapeum, ghcr.io/ocicl/serapeum@sha256:c2d9623e8e48fa4befe99435c3c22e3470bb07bd09e4de1d04b8ebc8eca0ab2f, serapeum-20260510-c4dcbb6/serapeum.asd
+sanitize-html, ghcr.io/ocicl/sanitize-html@sha256:67b8550dd0e4b284e8f91835d6730a7ad714408661ee11366257be300cc1a619, cl-sanitize-html-20260623-e5cfbe2/sanitize-html.asd
+serapeum, ghcr.io/ocicl/serapeum@sha256:b41c8fb5e471e20bcd92f5aa41169da3a4da8de742ed9c428fcc4518ffa6d809, serapeum-20260526-f82a451/serapeum.asd
 simple-date, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a578371d1125786f4f43101169e4857cdd, postmodern-1.33.11/simple-date.asd
 slynk, ghcr.io/ocicl/slynk@sha256:3571fd2a8da88873460baae3185e7b94c80699f2c3ac6dfe675180e9f246a41c, sly-20251214-b01993c/slynk/slynk.asd
 smart-buffer, ghcr.io/ocicl/smart-buffer@sha256:b8d194f5881c415fd7f0099b88dfd9e2158405c2966de15c716b155a364bf0f7, smart-buffer-20240503-619759d/smart-buffer.asd
