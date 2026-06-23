@@ -466,9 +466,15 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
       (:h1 (format nil "New repository in ~A" org-name))
       (render-new-repo-form (format nil "/o/~A/-/new-repo" org-name) :error error))))
 
-(defun render-repo-tabs (owner-name repo-name &optional active-tab &key repo)
-  "Render the repo breadcrumb and navigation tab bar."
-  (spinneret:with-html
+(defun render-repo-tabs (owner-name repo-name &optional active-tab &key repo
+                                                                        ref default-branch)
+  "Render the repo breadcrumb and navigation tab bar. When REF is a non-default
+   ref, the Overview and Code tabs carry ?ref=<ref> so the selected branch/tag
+   persists as the user moves between those two views."
+  (let ((q (if (and ref default-branch (not (equal ref default-branch)))
+               (format nil "?ref=~A" (hunchentoot:url-encode ref))
+               "")))
+   (spinneret:with-html
     (render-breadcrumbs
      (list (list (format nil "/~A" owner-name) owner-name)
            repo-name))
@@ -476,9 +482,9 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
     (when (and repo (getf repo :is-archived)) (:span.badge "archived"))
     (:nav.repo-tabs
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :overview))
-      :href (format nil "/~A/~A" owner-name repo-name) "Overview")
+      :href (format nil "/~A/~A~A" owner-name repo-name q) "Overview")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :code))
-      :href (format nil "/~A/~A/code" owner-name repo-name) "Code")
+      :href (format nil "/~A/~A/code~A" owner-name repo-name q) "Code")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :issues))
       :href (format nil "/~A/~A/issues" owner-name repo-name)
       (let ((n (and repo (count-open-issues (getf repo :id)))))
@@ -498,7 +504,7 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
        (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
         :href (format nil "/~A/~A/pulse" owner-name repo-name) "Pulse"))
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
-      :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings"))))
+      :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings")))))
 
 (defun render-file-tree (file-tree owner-name repo-name default-branch &optional current-path)
   "Render a file tree table. Shared by view-repo and view-tree."
@@ -589,14 +595,30 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
 })();
 ")))))
 
-(defun view-repo (&key owner-name repo empty default-branch
-                       readme-html readme-filename)
+(defun view-repo (&key owner-name repo empty default-branch current-ref
+                       branches tags readme-html readme-filename)
   "Render the repo overview page (README + clone URL)."
-  (let ((org-name owner-name)
-        (repo-name (getf repo :name)))
+  (let* ((org-name owner-name)
+         (repo-name (getf repo :name))
+         (current-ref (or current-ref default-branch)))
     (page (:title (format nil "~A/~A — Cave" org-name repo-name))
-      (render-repo-tabs org-name repo-name :overview :repo repo)
+      (render-repo-tabs org-name repo-name :overview :repo repo
+                        :ref current-ref :default-branch default-branch)
       (when (getf repo :description) (:p (getf repo :description)))
+      ;; Branch/tag switcher — picking a ref re-renders the README at that ref
+      ;; (stays on the overview, preserving the selection).
+      (unless empty
+        (:div.repo-info-bar
+         (:div.repo-info-left
+          (render-ref-switcher org-name repo-name current-ref branches tags
+                               :can-write (and *current-user-id*
+                                               (repo-member-role (getf repo :id)
+                                                                 *current-user-id*))
+                               :href-fn (lambda (r)
+                                          (if (equal r default-branch)
+                                              (format nil "/~A/~A" org-name repo-name)
+                                              (format nil "/~A/~A?ref=~A" org-name repo-name
+                                                      (hunchentoot:url-encode r))))))))
       ;; Clone widget — SSH/HTTPS toggle with copy button
       (render-clone-widget org-name repo-name)
       ;; Fork button (don't show on own repos)
@@ -635,11 +657,15 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
           "Unverified"))))))
 
 (defun render-ref-switcher (owner-name repo-name current-ref branches tags
-                            &key can-write)
-  "A branch/tag dropdown: filter, Branches/Tags tabs, click-to-switch (to
-   /tree/<ref>), and — for members — inline 'Create branch <name> from <current>'
-   when the filter matches no existing branch."
-  (spinneret:with-html
+                            &key can-write href-fn)
+  "A branch/tag dropdown: filter, Branches/Tags tabs, click-to-switch, and — for
+   members — inline 'Create branch <name> from <current>' when the filter matches
+   no existing branch. HREF-FN maps a ref name to the URL to navigate to; it lets
+   the same switcher keep you on the Overview, Code, or tree page (preserving the
+   selected ref) rather than always jumping to /tree/<ref>."
+  (let ((href-fn (or href-fn
+                     (lambda (r) (format nil "/~A/~A/tree/~A" owner-name repo-name r)))))
+   (spinneret:with-html
     (:div.ref-switcher
      (:button.ref-switcher-btn :type "button" :onclick "caveToggleRefMenu(this)"
        (:span.ref-switcher-name current-ref) " ▾")
@@ -653,12 +679,13 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
          :onclick "caveShowRefKind(this,'tags')" "Tags"))
       (:ul.ref-list :data-kind "branches"
        (dolist (b branches)
-         (:li (:a :href (format nil "/~A/~A/tree/~A" owner-name repo-name b)
+         (:li (:a :href (funcall href-fn b)
                   :class (when (equal b current-ref) "current") b))))
       (:ul.ref-list :data-kind "tags" :hidden t
        (if tags
            (dolist (tg tags)
-             (:li (:a :href (format nil "/~A/~A/tree/~A" owner-name repo-name tg) tg)))
+             (:li (:a :href (funcall href-fn tg)
+                      :class (when (equal tg current-ref) "current") tg)))
            (:li.ref-empty "No tags")))
       (when can-write
         (:form.ref-create :method "post"
@@ -689,24 +716,31 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
 function caveToggleRefMenu(btn){var m=btn.parentNode.querySelector('.ref-switcher-menu');var open=m.hasAttribute('hidden');document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});if(open){m.removeAttribute('hidden');var f=m.querySelector('.ref-filter');if(f)f.focus();}}
 function caveShowRefKind(btn,kind){var m=btn.closest('.ref-switcher-menu');m.querySelectorAll('.ref-kind-tab').forEach(function(t){t.classList.toggle('active',t.dataset.kind===kind);});m.querySelectorAll('.ref-list').forEach(function(l){l.hidden=(l.dataset.kind!==kind);});caveFilterRefs(m.querySelector('.ref-filter'));}
 function caveFilterRefs(input){if(!input)return;var m=input.closest('.ref-switcher-menu');var q=input.value.trim().toLowerCase();var kind=m.querySelector('.ref-kind-tab.active').dataset.kind;var list=m.querySelector('.ref-list[data-kind=\"'+kind+'\"]');var exact=false;list.querySelectorAll('li').forEach(function(li){var t=li.textContent.trim().toLowerCase();var match=t.indexOf(q)!==-1;li.hidden=!match;if(t===q)exact=true;});var form=m.querySelector('.ref-create');if(form){var show=(kind==='branches'&&q.length>0&&!exact);form.hidden=!show;if(show){form.querySelector('.ref-create-name').value=input.value.trim();form.querySelector('.ref-create-label').textContent=input.value.trim();}}}
-document.addEventListener('click',function(e){if(!e.target.closest('.ref-switcher'))document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});});"))))
+document.addEventListener('click',function(e){if(!e.target.closest('.ref-switcher'))document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});});")))))
 
-(defun view-code (&key owner-name repo branches tags default-branch
+(defun view-code (&key owner-name repo branches tags default-branch current-ref
                        commit-count recent-commits file-tree signatures)
   "Render the repo code/file browser page."
-  (let ((org-name owner-name)
-        (repo-name (getf repo :name)))
+  (let* ((org-name owner-name)
+         (repo-name (getf repo :name))
+         (current-ref (or current-ref default-branch)))
     (page (:title (format nil "Code — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :code :repo repo)
+      (render-repo-tabs org-name repo-name :code :repo repo
+                        :ref current-ref :default-branch default-branch)
       (render-clone-widget org-name repo-name)
 
       ;; Branch/tag bar + last commit
       (:div.repo-info-bar
        (:div.repo-info-left
-        (render-ref-switcher org-name repo-name default-branch branches tags
+        (render-ref-switcher org-name repo-name current-ref branches tags
                              :can-write (and *current-user-id*
                                              (repo-member-role (getf repo :id)
-                                                               *current-user-id*)))
+                                                               *current-user-id*))
+                             :href-fn (lambda (r)
+                                        (if (equal r default-branch)
+                                            (format nil "/~A/~A/code" org-name repo-name)
+                                            (format nil "/~A/~A/code?ref=~A" org-name repo-name
+                                                    (hunchentoot:url-encode r)))))
         (:span.repo-info-stat
          (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
         (when tags
@@ -726,7 +760,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
            (:span.repo-last-author (getf last :author)))))
       ;; File tree
       (when file-tree
-        (render-file-tree file-tree org-name repo-name default-branch))
+        (render-file-tree file-tree org-name repo-name current-ref))
 
       ;; Recent commits
       (when recent-commits
@@ -745,11 +779,13 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
 
 ;;; ========================== TREE & BLOB PAGES ==========================
 
-(defun view-tree (&key owner-name repo ref path file-tree)
+(defun view-tree (&key owner-name repo ref path file-tree
+                       branches tags default-branch)
   "Render a directory listing at a path."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :code :repo repo)
+      (render-repo-tabs owner-name repo-name :code :repo repo
+                        :ref ref :default-branch default-branch)
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
@@ -767,7 +803,12 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                    (let ((reversed (nreverse crumbs)))
                      (append (butlast reversed)
                              (list (second (car (last reversed))))))))))
-      (:span.badge ref)
+      (:div.repo-info-bar
+       (:div.repo-info-left
+        (render-ref-switcher owner-name repo-name ref branches tags
+                             :can-write (and *current-user-id*
+                                             (repo-member-role (getf repo :id)
+                                                               *current-user-id*)))))
       (if file-tree
           (render-file-tree file-tree owner-name repo-name ref path)
           (:p.empty "Empty directory.")))))

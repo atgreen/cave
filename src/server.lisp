@@ -1036,16 +1036,24 @@ the results. Skips deletes and zero-sha boundaries."
     (unless repo (return-from repo-page repo))
     (let* ((empty (chamber-is-empty owner repo-name))
            (default-branch (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
-           (readme-entry (unless empty (chamber-find-readme owner repo-name :ref default-branch)))
+           (branches (unless empty (chamber-get-branches owner repo-name)))
+           (tags (unless empty (chamber-get-tags owner repo-name)))
+           ;; Honor ?ref= so the README follows the switcher selection; fall back
+           ;; to the default branch when absent or unknown.
+           (ref-param (hunchentoot:get-parameter "ref"))
+           (ref (if (and ref-param (member ref-param (append branches tags) :test #'equal))
+                    ref-param
+                    default-branch))
+           (readme-entry (unless empty (chamber-find-readme owner repo-name :ref ref)))
            (raw-base-url (when readme-entry
                            (format nil "~A/~A/~A/raw/~A?path="
                                    (config-value :base-url "http://localhost:8080")
                                    owner repo-name
-                                   (or default-branch "HEAD"))))
+                                   (or ref "HEAD"))))
            ;; Cheap pre-check: lookup the README's blob sha via get-blob-info,
            ;; then consult the rendered-HTML cache before we ever read or render.
            (readme-info (when readme-entry
-                          (chamber-get-blob-info owner repo-name default-branch
+                          (chamber-get-blob-info owner repo-name ref
                                                  (getf readme-entry :name))))
            (cache-key (when readme-info
                         (cons (getf readme-info :hash) raw-base-url)))
@@ -1053,7 +1061,7 @@ the results. Skips deletes and zero-sha boundaries."
            (readme-html
             (or cached-html
                 (let ((content (when readme-entry
-                                 (chamber-get-blob owner repo-name default-branch
+                                 (chamber-get-blob owner repo-name ref
                                                    (getf readme-entry :name)))))
                   (when content
                     (let ((html (if (search ".md" (string-downcase
@@ -1065,7 +1073,8 @@ the results. Skips deletes and zero-sha boundaries."
                       html))))))
       (html-response
        (view-repo :owner-name owner :repo repo :empty empty
-                  :default-branch default-branch
+                  :default-branch default-branch :current-ref ref
+                  :branches branches :tags tags
                   :readme-html readme-html
                   :readme-filename (when readme-entry (getf readme-entry :name)))))))
 
@@ -1077,15 +1086,20 @@ the results. Skips deletes and zero-sha boundaries."
            (default-branch (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
            (branches (unless empty (chamber-get-branches owner repo-name)))
            (tags (unless empty (chamber-get-tags owner repo-name)))
-           (commit-count (unless empty (chamber-get-commit-count owner repo-name :branch default-branch)))
-           (file-tree (unless empty (chamber-get-tree owner repo-name :ref default-branch)))
-           (recent-commits (unless empty (chamber-get-log owner repo-name :limit 10))))
+           ;; Honor ?ref= so the file browser follows the switcher selection.
+           (ref-param (hunchentoot:get-parameter "ref"))
+           (ref (if (and ref-param (member ref-param (append branches tags) :test #'equal))
+                    ref-param
+                    default-branch))
+           (commit-count (unless empty (chamber-get-commit-count owner repo-name :branch ref)))
+           (file-tree (unless empty (chamber-get-tree owner repo-name :ref ref)))
+           (recent-commits (unless empty (chamber-get-log owner repo-name :limit 10 :branch ref))))
       (if empty
           (hunchentoot:redirect (format nil "/~A/~A" owner repo-name))
           (html-response
            (view-code :owner-name owner :repo repo
                       :branches branches :tags tags
-                      :default-branch default-branch
+                      :default-branch default-branch :current-ref ref
                       :commit-count commit-count
                       :recent-commits recent-commits
                       :signatures (commit-signatures-by-sha
@@ -1146,10 +1160,15 @@ the results. Skips deletes and zero-sha boundaries."
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from tree-page repo))
     (let* ((path (or (hunchentoot:get-parameter "path") ""))
-           (file-tree (chamber-get-tree owner repo-name :ref ref :path path)))
+           (file-tree (chamber-get-tree owner repo-name :ref ref :path path))
+           (default-branch (or (chamber-get-default-branch owner repo-name) "main"))
+           (branches (chamber-get-branches owner repo-name))
+           (tags (chamber-get-tags owner repo-name)))
       (html-response
        (view-tree :owner-name owner :repo repo :ref ref
-                  :path path :file-tree file-tree)))))
+                  :path path :file-tree file-tree
+                  :branches branches :tags tags
+                  :default-branch default-branch)))))
 
 (defun %valid-git-ref-name-p (name)
   "Permissive git branch/tag name check: 1–255 chars, allowed chars only, no
