@@ -833,13 +833,27 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                (incf i))))
     (get-output-stream-string out)))
 
-(defun view-blob (&key owner-name repo ref path content is-binary file-size language)
+(defun view-blob (&key owner-name repo ref path content is-binary file-size language
+                       branches tags default-branch)
   "Render a file content page with Monaco editor."
   (let ((repo-name (getf repo :name))
         (filename (let ((slash (position #\/ path :from-end t)))
                     (if slash (subseq path (1+ slash)) path))))
     (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :code :repo repo)
+      (render-repo-tabs owner-name repo-name :code :repo repo
+                        :ref ref :default-branch default-branch)
+      ;; Branch/tag switcher — switching keeps the current file path, so you can
+      ;; view the same file across refs (as GitHub/GitLab/Gitea do).
+      (when (or branches tags)
+        (:div.repo-info-bar
+         (:div.repo-info-left
+          (render-ref-switcher owner-name repo-name ref branches tags
+                               :can-write (and *current-user-id*
+                                               (repo-member-role (getf repo :id)
+                                                                 *current-user-id*))
+                               :href-fn (lambda (r)
+                                          (format nil "/~A/~A/blob/~A?path=~A"
+                                                  owner-name repo-name r path))))))
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
