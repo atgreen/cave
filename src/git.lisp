@@ -711,6 +711,81 @@ Returns T on success, NIL otherwise."
                               (remhash child remaining))))))))))))
         result))))
 
+;; Extension/filename -> (display-name . color). Colors follow GitHub Linguist.
+(defparameter *language-by-ext*
+  '(("lisp" "Common Lisp" . "#3fb68b") ("lsp" "Common Lisp" . "#3fb68b")
+    ("cl" "Common Lisp" . "#3fb68b") ("asd" "Common Lisp" . "#3fb68b")
+    ("py" "Python" . "#3572A5") ("go" "Go" . "#00ADD8")
+    ("js" "JavaScript" . "#f1e05a") ("mjs" "JavaScript" . "#f1e05a")
+    ("cjs" "JavaScript" . "#f1e05a") ("jsx" "JavaScript" . "#f1e05a")
+    ("ts" "TypeScript" . "#3178c6") ("tsx" "TypeScript" . "#3178c6")
+    ("rs" "Rust" . "#dea584") ("c" "C" . "#555555") ("h" "C" . "#555555")
+    ("cc" "C++" . "#f34b7d") ("cpp" "C++" . "#f34b7d") ("cxx" "C++" . "#f34b7d")
+    ("hpp" "C++" . "#f34b7d") ("java" "Java" . "#b07219")
+    ("rb" "Ruby" . "#701516") ("sh" "Shell" . "#89e051") ("bash" "Shell" . "#89e051")
+    ("html" "HTML" . "#e34c26") ("htm" "HTML" . "#e34c26")
+    ("css" "CSS" . "#563d7c") ("scss" "SCSS" . "#c6538c")
+    ("md" "Markdown" . "#083fa1") ("markdown" "Markdown" . "#083fa1")
+    ("yml" "YAML" . "#cb171e") ("yaml" "YAML" . "#cb171e")
+    ("json" "JSON" . "#292929") ("nix" "Nix" . "#7e7eff")
+    ("lua" "Lua" . "#000080") ("php" "PHP" . "#4F5D95")
+    ("swift" "Swift" . "#F05138") ("kt" "Kotlin" . "#A97BFF")
+    ("scala" "Scala" . "#c22d40") ("hs" "Haskell" . "#5e5086")
+    ("ex" "Elixir" . "#6e4a7e") ("exs" "Elixir" . "#6e4a7e")
+    ("clj" "Clojure" . "#db5855") ("vue" "Vue" . "#41b883")
+    ("svelte" "Svelte" . "#ff3e00") ("sql" "SQL" . "#e38c00")
+    ("pl" "Perl" . "#0298c3") ("pm" "Perl" . "#0298c3")
+    ("vim" "Vim Script" . "#199f4b") ("dockerfile" "Dockerfile" . "#384d54")))
+
+(defparameter *language-by-name*
+  '(("makefile" "Makefile" . "#427819") ("gnumakefile" "Makefile" . "#427819")
+    ("dockerfile" "Dockerfile" . "#384d54") ("containerfile" "Dockerfile" . "#384d54")))
+
+(defun %file-basename-ext (path)
+  "Return (VALUES basename ext-lowercase) for PATH; EXT is NIL for a dotfile or
+   a name with no extension."
+  (let* ((slash (position #\/ path :from-end t))
+         (base (if slash (subseq path (1+ slash)) path))
+         (dot (position #\. base :from-end t)))
+    (values base (when (and dot (plusp dot) (< (1+ dot) (length base)))
+                   (string-downcase (subseq base (1+ dot)))))))
+
+(defun file-language-info (path)
+  "Return (VALUES name color) for PATH's language, or NIL when unrecognized."
+  (multiple-value-bind (base ext) (%file-basename-ext path)
+    (let ((by-name (cdr (assoc (string-downcase base) *language-by-name* :test #'equal))))
+      (if by-name
+          (values (car by-name) (cdr by-name))
+          (let ((by-ext (and ext (cdr (assoc ext *language-by-ext* :test #'equal)))))
+            (when by-ext (values (car by-ext) (cdr by-ext))))))))
+
+(defun git-language-stats (repo-path ref)
+  "Sum blob bytes per recognized language at REF. Returns a list of
+   (name color bytes) sorted largest first, via a single `ls-tree -r -l`."
+  (multiple-value-bind (out _err code) (git-run repo-path "ls-tree" "-r" "-l" ref)
+    (declare (ignore _err))
+    (when (zerop code)
+      (let ((totals (make-hash-table :test 'equal)))  ; name -> (color . bytes)
+        (dolist (line (uiop:split-string out :separator '(#\Newline)))
+          (unless (uiop:emptyp line)
+            ;; <mode> SP blob SP <hash> SP* <size> TAB <name>
+            (let ((tab (position #\Tab line)))
+              (when tab
+                (let* ((meta (subseq line 0 tab))
+                       (name (subseq line (1+ tab)))
+                       (parts (remove "" (uiop:split-string meta :separator '(#\Space))
+                                      :test #'equal)))
+                  (when (and (>= (length parts) 4) (string= (second parts) "blob"))
+                    (let ((size (parse-integer (fourth parts) :junk-allowed t)))
+                      (multiple-value-bind (lang color) (file-language-info name)
+                        (when (and lang size (plusp size))
+                          (let ((cur (gethash lang totals)))
+                            (setf (gethash lang totals)
+                                  (cons color (+ (if cur (cdr cur) 0) size)))))))))))))
+        (let ((rows nil))
+          (maphash (lambda (lang cc) (push (list lang (car cc) (cdr cc)) rows)) totals)
+          (sort rows #'> :key #'third))))))
+
 (defun git-blob-hash (repo-path ref path)
   "Get the git object hash for a blob at PATH under REF. Returns SHA string or NIL."
   (multiple-value-bind (output _err exit-code)
