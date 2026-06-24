@@ -1837,15 +1837,17 @@
            (pending
             (list :description (format nil "Checks pending: ~{~A~^, ~}" pending)
                   :pass nil))
-           ((not present)
-            (list :description
-                  (format nil "Required checks enabled, but no results reported for ~A"
-                          (subseq head 0 (min 7 (length head))))
-                  :pass nil))
-           (t
+           (present
             (list :description
                   (format nil "All required checks passed (~A context~:P)"
                           (+ (length statuses) (if (eq build :success) 1 0)))
+                  :pass t))
+           ;; No status or run reported for this head. Per the chosen policy
+           ;; (GitHub empty-required-set), an absent check is not a blocker —
+           ;; only checks that exist and fail/pend block. A green check that
+           ;; later goes missing therefore passes; failing CI never merges.
+           (t
+            (list :description "No checks reported for this commit"
                   :pass t)))
          rules)))
 
