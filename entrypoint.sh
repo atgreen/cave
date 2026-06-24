@@ -5,6 +5,16 @@ CONFIG="/etc/cave.conf"
 
 # Generate config if it doesn't exist
 if [ ! -f "$CONFIG" ]; then
+  # Render the optional workflow image allowlist (space-separated prefixes) as a
+  # Lisp list, or nil when unset.
+  WF_ALLOWLIST="nil"
+  if [ -n "${CAVE_WORKFLOWS_IMAGE_ALLOWLIST:-}" ]; then
+    WF_ALLOWLIST="("
+    for prefix in ${CAVE_WORKFLOWS_IMAGE_ALLOWLIST}; do
+      WF_ALLOWLIST="${WF_ALLOWLIST}\"${prefix}\" "
+    done
+    WF_ALLOWLIST="${WF_ALLOWLIST})"
+  fi
   cat > "$CONFIG" <<CONF
 (:http-port 8080
  :ssh-port 22
@@ -33,7 +43,9 @@ if [ ! -f "$CONFIG" ]; then
  :deps-scan-labels "${CAVE_DEPS_SCAN_LABELS:-}"
  :advisory-feeds "${CAVE_ADVISORY_FEEDS:-}"
  :scheduler-enabled ${CAVE_SCHEDULER_ENABLED:-t}
- :advisory-sync-interval-hours ${CAVE_ADVISORY_SYNC_INTERVAL_HOURS:-24})
+ :advisory-sync-interval-hours ${CAVE_ADVISORY_SYNC_INTERVAL_HOURS:-24}
+ :workflows-allow-privileged ${CAVE_WORKFLOWS_ALLOW_PRIVILEGED:-nil}
+ :workflows-image-allowlist ${WF_ALLOWLIST})
 CONF
 fi
 

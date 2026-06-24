@@ -4,6 +4,29 @@
 
 (in-package #:cave)
 
+;;; --- Admin runner policy (applies to repo-supplied workflow YAML only;
+;;; Cave's internal dep-scan / dep-fix jobs are created directly and bypass
+;;; this gate) ---
+
+(defun %workflow-image-allowed-p (image)
+  "True unless :workflows-image-allowlist is configured and IMAGE matches none
+   of its prefixes. An unset allowlist (the default) permits any image."
+  (let ((allow (config-value :workflows-image-allowlist)))
+    (or (null allow)
+        (and image
+             (some (lambda (prefix) (uiop:string-prefix-p prefix image)) allow)))))
+
+(defun workflow-policy-violation (image privileged)
+  "Return a human-readable reason if a job running IMAGE with PRIVILEGED is
+   disallowed by admin policy (cave.conf), or NIL when permitted. Privileged is
+   denied by default; image pinning is opt-in via :workflows-image-allowlist."
+  (cond
+    ((and privileged (not (config-value :workflows-allow-privileged)))
+     "privileged jobs are disabled by admin policy (:workflows-allow-privileged)")
+    ((not (%workflow-image-allowed-p image))
+     (format nil "image '~A' is not in the allowed registries (:workflows-image-allowlist)"
+             image))))
+
 (defun parse-and-schedule-workflows (repo-id trigger &key commit-sha ref triggered-by-id)
   "Discover and schedule workflow runs from .cave/workflows/*.yml at COMMIT-SHA.
    TRIGGER is the Cave event name (post_receive, changeset_opened, etc.)."
@@ -73,6 +96,26 @@
                    :name name :file filename :run-id (getf run :id))
         ;; Create jobs and steps
         (let ((jobs-alist (cdr (assoc "jobs" workflow :test #'equal))))
+          ;; Admin policy gate: if any job in this workflow violates policy
+          ;; (privileged when disabled, or an image outside the allowlist),
+          ;; reject the entire run — don't dispatch any job — and surface the
+          ;; reason as a failed run so the author sees why.
+          (let ((violation
+                  (when (listp jobs-alist)
+                    (loop for (job-name . job-spec) in jobs-alist
+                          for image = (cdr (assoc "image" job-spec :test #'equal))
+                          for priv = (eq (cdr (assoc "privileged" job-spec :test #'equal)) t)
+                          thereis (and job-name image
+                                       (workflow-policy-violation image priv))))))
+            (when violation
+              (let ((j (create-workflow-job :workflow-run-id (getf run :id)
+                                            :name (format nil "blocked by policy: ~A" violation)
+                                            :image "-")))
+                (update-job-status (getf j :id) "failure"))
+              (update-workflow-run-status (getf run :id) "failure")
+              (llog:warn "Workflow run blocked by admin policy"
+                         :run-id (getf run :id) :file filename :reason violation)
+              (return-from schedule-workflow-from-yaml run)))
           (when (and jobs-alist (listp jobs-alist))
             (dolist (job-entry jobs-alist)
               (let* ((job-name (car job-entry))
