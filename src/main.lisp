@@ -464,6 +464,92 @@
               :description "Repo path as owner/name"))
    :handler #'handle-run-checks))
 
+(defun %pushed-shas-from-stdin ()
+  "Read pre-receive ref updates (`<old> <new> <ref>` per line) from stdin and
+   return the distinct non-zero new shas. Git closes stdin after the ref list,
+   so this returns promptly; NIL when stdin carries none."
+  (let ((shas nil))
+    (handler-case
+        (loop for line = (read-line *standard-input* nil nil)
+              while line
+              do (let ((parts (uiop:split-string
+                               (string-trim '(#\Space #\Tab #\Return) line)
+                               :separator '(#\Space))))
+                   (when (>= (length parts) 3)
+                     (let ((new (second parts)))
+                       (unless (every (lambda (c) (char= c #\0)) new)
+                         (pushnew new shas :test #'equal))))))
+      (error () nil))
+    (nreverse shas)))
+
+(defun %git-head-sha (bare-path)
+  "Resolve HEAD of a bare repo to a sha, or NIL (e.g. empty repo)."
+  (let ((out (nth-value 0 (uiop:run-program
+                           (list "git" "-C" (namestring bare-path) "rev-parse" "HEAD")
+                           :output '(:string :stripped t) :ignore-error-status t))))
+    (when (and out (plusp (length out))) out)))
+
+(defun %make-check-workdir ()
+  "Create a private temp dir for a check worktree. Returns its path (no trailing /)."
+  (string-trim '(#\Newline #\Space)
+               (nth-value 0 (uiop:run-program
+                             (list "mktemp" "-d" "/tmp/cave-check-XXXXXX")
+                             :output '(:string :stripped t)))))
+
+(defun %extract-tree (bare-path sha dest-dir)
+  "Extract the tree at SHA from the bare repo into DEST-DIR as plain files (no
+   .git, so the check can't reach the repo or network through git). Returns T."
+  (let ((tarfile (format nil "~A.tar" dest-dir)))
+    (unwind-protect
+         (and (zerop (nth-value 2 (uiop:run-program
+                                   (list "git" "-C" (namestring bare-path)
+                                         "archive" "--format=tar" "-o" tarfile sha)
+                                   :ignore-error-status t
+                                   :output nil :error-output nil)))
+              (zerop (nth-value 2 (uiop:run-program
+                                   (list "tar" "-xf" tarfile "-C" dest-dir)
+                                   :ignore-error-status t
+                                   :output nil :error-output nil))))
+      (ignore-errors (delete-file tarfile)))))
+
+(defvar *check-net-isolation* :unprobed
+  "Cached result of probing whether `unshare -n` works in this environment.")
+
+(defun %check-net-isolation-available-p ()
+  "True when `unshare -n` succeeds here (needs root + an unmasked runtime).
+   Probed once per process."
+  (when (eq *check-net-isolation* :unprobed)
+    (setf *check-net-isolation*
+          (handler-case
+              (zerop (nth-value 2 (uiop:run-program
+                                   (list "unshare" "-n" "true")
+                                   :ignore-error-status t
+                                   :output nil :error-output nil)))
+            (error () nil))))
+  *check-net-isolation*)
+
+(defun %sandbox-argv (command workdir sha repo-path timeout isolate-net mem-mb)
+  "Build the argv to run a check COMMAND against the extracted WORKDIR under a
+   sandbox: scrubbed environment, a wall-clock TIMEOUT, an optional per-process
+   memory cap, and (when ISOLATE-NET) a network namespace. CWD is set to WORKDIR
+   by the caller. We deliberately do NOT use `ulimit -u`: RLIMIT_NPROC is
+   per-UID across the whole container, so capping it would starve the long-lived
+   cave-server threads (running as the same uid) of forks. `timeout` bounds
+   runaway/fork-bomb code instead."
+  (let ((ulimit (if mem-mb
+                    (format nil "ulimit -v ~A 2>/dev/null; " (* mem-mb 1024))
+                    "")))
+    (append
+     (when isolate-net (list "unshare" "-n"))
+     (list "env" "-i"
+           "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+           (format nil "HOME=~A" workdir)
+           "LANG=C.UTF-8"
+           (format nil "CAVE_COMMIT=~A" sha)
+           (format nil "CAVE_REPO=~A" repo-path))
+     (list "timeout" "-k" "10" (format nil "~A" timeout))
+     (list "bash" "-c" (format nil "~A~A" ulimit command)))))
+
 (defun handle-run-checks (cmd)
   (let ((config-path (clingon:getopt cmd :config))
         (repo-path (clingon:getopt cmd :repo)))
@@ -480,36 +566,83 @@
         (format *error-output* "~&cave: repo not found: ~A~%" repo-path)
         (disconnect-db)
         (uiop:quit 0)) ;; Don't block push for unknown repos
-      (let ((checks (list-check-configs (getf repo :id)))
-            (disk-path (repo-disk-path owner name))
-            (failed nil))
-        (dolist (chk checks)
-          (when (getf chk :enabled)
-            (format t "~&Running check: ~A~%" (getf chk :name))
-            (handler-case
-                (multiple-value-bind (output error-output exit-code)
-                    (uiop:run-program
-                     (list "bash" "-c" (getf chk :command))
-                     :output '(:string :stripped t)
-                     :error-output '(:string :stripped t)
-                     :ignore-error-status t
-                     :directory (namestring disk-path))
-                  (if (zerop exit-code)
-                      (format t "  ✓ ~A passed~%" (getf chk :name))
-                      (progn
-                        (format t "  ✗ ~A failed (exit ~A)~%" (getf chk :name) exit-code)
-                        (when output (format t "    ~A~%" output))
-                        (when (and error-output (not (uiop:emptyp error-output)))
-                          (format t "    ~A~%" error-output))
-                        (push (getf chk :name) failed))))
-              (error (e)
-                (format t "  ✗ ~A error: ~A~%" (getf chk :name) e)
-                (push (getf chk :name) failed)))))
-        (disconnect-db)
-        (when failed
-          (format *error-output* "~&cave: push rejected — ~A check~:P failed: ~{~A~^, ~}~%"
-                  (length failed) (nreverse failed))
-          (uiop:quit 1))))))
+      (let ((checks (remove-if-not (lambda (c) (getf c :enabled))
+                                   (list-check-configs (getf repo :id))))
+            (disk-path (repo-disk-path owner name)))
+        ;; Nothing to enforce — accept without reading stdin or building worktrees.
+        (when (null checks)
+          (disconnect-db)
+          (uiop:quit 0))
+        (let* ((shas (or (%pushed-shas-from-stdin)
+                         (let ((h (%git-head-sha disk-path))) (when h (list h)))))
+               (want-isolation (not (config-value :checks-allow-network)))
+               (isolation-ok (and want-isolation (%check-net-isolation-available-p)))
+               (mem (config-value :checks-memory-mb))  ; nil = no memory cap
+               (default-timeout (config-value :checks-timeout-seconds 120))
+               (failed nil))
+          ;; Network isolation requested but the runtime forbids `unshare -n`
+          ;; (the default cave container lacks the capability). Fail closed when
+          ;; an admin demands isolation; otherwise warn and run without it.
+          (when (and want-isolation (not isolation-ok))
+            (if (config-value :checks-require-network-isolation)
+                (progn
+                  (format *error-output*
+                          "~&cave: push rejected — network isolation required but unavailable ~
+                           (the cave container lacks unshare; grant the capability or run ~
+                           checks on a runner)~%")
+                  (disconnect-db)
+                  (uiop:quit 1))
+                (format *error-output*
+                        "~&cave: warning — network isolation unavailable; running checks without it~%")))
+          (dolist (sha shas)
+            (let ((wt (%make-check-workdir)))
+              (unwind-protect
+                   (if (not (%extract-tree disk-path sha wt))
+                       (progn
+                         (format *error-output*
+                                 "~&cave: could not extract tree ~A for checks~%" sha)
+                         (push "(tree extract)" failed))
+                       (dolist (chk checks)
+                         (let* ((to (let ((t0 (getf chk :timeout-seconds)))
+                                      (if (and t0 (plusp t0)) t0 default-timeout)))
+                                (argv (%sandbox-argv (getf chk :command) wt sha repo-path
+                                                     to isolation-ok mem)))
+                           (format t "~&Running check: ~A (~A)~%"
+                                   (getf chk :name) (subseq sha 0 (min 7 (length sha))))
+                           (handler-case
+                               (multiple-value-bind (output error-output exit-code)
+                                   (uiop:run-program
+                                    argv
+                                    :output '(:string :stripped t)
+                                    :error-output '(:string :stripped t)
+                                    :ignore-error-status t
+                                    :directory (namestring wt))
+                                 (cond
+                                   ((zerop exit-code)
+                                    (format t "  ✓ ~A passed~%" (getf chk :name)))
+                                   ((= exit-code 124)
+                                    (format t "  ✗ ~A timed out after ~As~%"
+                                            (getf chk :name) to)
+                                    (push (getf chk :name) failed))
+                                   (t
+                                    (format t "  ✗ ~A failed (exit ~A)~%"
+                                            (getf chk :name) exit-code)
+                                    (when (and output (plusp (length output)))
+                                      (format t "    ~A~%" output))
+                                    (when (and error-output (plusp (length error-output)))
+                                      (format t "    ~A~%" error-output))
+                                    (push (getf chk :name) failed))))
+                             (error (e)
+                               (format t "  ✗ ~A error: ~A~%" (getf chk :name) e)
+                               (push (getf chk :name) failed))))))
+                (ignore-errors
+                 (uiop:run-program (list "rm" "-rf" wt) :ignore-error-status t)))))
+          (disconnect-db)
+          (when failed
+            (format *error-output*
+                    "~&cave: push rejected — ~A check~:P failed: ~{~A~^, ~}~%"
+                    (length failed) (nreverse failed))
+            (uiop:quit 1)))))))
 
 ;;; --- RUNNER subcommand ---
 

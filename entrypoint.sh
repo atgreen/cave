@@ -45,7 +45,11 @@ if [ ! -f "$CONFIG" ]; then
  :scheduler-enabled ${CAVE_SCHEDULER_ENABLED:-t}
  :advisory-sync-interval-hours ${CAVE_ADVISORY_SYNC_INTERVAL_HOURS:-24}
  :workflows-allow-privileged ${CAVE_WORKFLOWS_ALLOW_PRIVILEGED:-nil}
- :workflows-image-allowlist ${WF_ALLOWLIST})
+ :workflows-image-allowlist ${WF_ALLOWLIST}
+ :checks-allow-network ${CAVE_CHECKS_ALLOW_NETWORK:-nil}
+ :checks-require-network-isolation ${CAVE_CHECKS_REQUIRE_NETWORK_ISOLATION:-nil}
+ :checks-memory-mb ${CAVE_CHECKS_MEMORY_MB:-nil}
+ :checks-timeout-seconds ${CAVE_CHECKS_TIMEOUT_SECONDS:-120})
 CONF
 fi
 

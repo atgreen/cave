@@ -43,7 +43,7 @@ are not built yet.
 
 - **Atomic stack landing** — ordered validation plus all-or-nothing merge of a stack
 - **Richer issues** — labels, assignees, filtering, and `Closes #N` auto-close (the schema exists; the UI/API don't)
-- **Sandboxed checks/runners** — pre-receive checks currently run as `bash -c` in the bare repo with no isolation; planned: a synthetic merge worktree, timeout/resource limits, a no-network option, and a runner image allowlist
+- **Fully sandboxed checks** — pre-receive checks now run against an extracted worktree of the pushed tree with a scrubbed environment and a wall-clock timeout (`:checks-*`); still missing on the default container: enforced network isolation (it can't `unshare`, so isolation is best-effort unless the deployment grants the capability or runs checks on a runner), cgroup memory/CPU limits, and dropping to an unprivileged user
 - **Repo deployment / CD** — build images, queue deploys, roll back, manage secrets
 - **Unit/integration tests** — for migrations, the REST API, and merge-policy rules (today only the end-to-end Playwright suite exists)
 
@@ -216,15 +216,28 @@ Two configs live side-by-side:
     ;; Runner policy for repo-supplied .cave/workflows (Cave's own
     ;; dep-scan/fix jobs bypass these):
     :workflows-allow-privileged nil          ; deny `privileged: true` jobs
-    :workflows-image-allowlist ("ghcr.io/" "docker.io/")) ; nil = allow any
+    :workflows-image-allowlist ("ghcr.io/" "docker.io/") ; nil = allow any
+    ;; Pre-receive check sandbox:
+    :checks-allow-network nil                 ; nil = isolate network if possible
+    :checks-require-network-isolation nil     ; t = reject push if isolation unavailable
+    :checks-memory-mb nil                     ; integer = per-process address-space cap
+    :checks-timeout-seconds 120)              ; fallback wall-clock per check
    ```
 
    `:workflows-allow-privileged` defaults to `nil` — a repo workflow that
    requests `privileged: true` is rejected (the run fails with the reason) until
    an admin flips it. `:workflows-image-allowlist` is `nil` (any image) unless
-   set to a list of allowed name prefixes. In containers these map to
-   `CAVE_WORKFLOWS_ALLOW_PRIVILEGED` (`t`/`nil`) and
-   `CAVE_WORKFLOWS_IMAGE_ALLOWLIST` (space-separated prefixes).
+   set to a list of allowed name prefixes.
+
+   Pre-receive checks run each configured command against an extracted worktree
+   of the pushed tree, with a scrubbed environment and a per-check wall-clock
+   timeout. `:checks-allow-network` nil tries to isolate the network with
+   `unshare -n` (best-effort — the default container can't, so it warns and runs
+   without unless `:checks-require-network-isolation` is `t`, which fails the
+   push closed). In containers these map to `CAVE_WORKFLOWS_ALLOW_PRIVILEGED`,
+   `CAVE_WORKFLOWS_IMAGE_ALLOWLIST`, `CAVE_CHECKS_ALLOW_NETWORK`,
+   `CAVE_CHECKS_REQUIRE_NETWORK_ISOLATION`, `CAVE_CHECKS_MEMORY_MB`, and
+   `CAVE_CHECKS_TIMEOUT_SECONDS`.
 
 2. **`cave.yaml`** — declarative deployment manifest consumed by `cavectl`:
 
