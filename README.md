@@ -6,29 +6,46 @@ Cave is built for small teams who want to own their infrastructure without the b
 
 ## Features
 
+The surface is split by maturity. **Implemented** features are in everyday use;
+**Experimental** ones work but have known gaps or sharp edges; **Planned** ones
+are not built yet.
+
+### Implemented
+
 - **Git hosting** — SSH push/clone with per-repo access control, plus anonymous read-only clone over HTTPS
-- **Pull requests** — graduated review model (approve, approve with concerns, request changes), merge eligibility rules, squash merge
-- **Stacked changesets** — first-class support for dependent PRs
-- **Issues** — with comments, close/reopen
+- **Pull requests** — graduated review model (approve, approve with concerns, request changes); enforced merge-eligibility rules: required approvals, blocking change-requests, unresolved concerns, and required status checks (failing/pending checks block the merge); squash merge
+- **Issues** — create, list, comment, close/reopen (labels, assignees, and filtering are *Planned*)
 - **Releases** — tag-backed releases with markdown body and per-asset uploads (≤ 100 MB each), download counts
-- **Pulse tab** — per-repo activity chart, total views, unique visitors, top contributors, referring sites (member-only)
+- **Commit status API** — external CI reports pass/fail per context on a commit; feeds merge eligibility
 - **Commit signature verification** — SSH-signed commits validated against registered user keys on push; "Verified" badge in the commit list
-- **Code browser** — file tree, Monaco editor, syntax-highlighted diffs via diff2html, SSH/HTTPS clone widget on every repo, click-a-line-number permalinks (`#L42`) with a per-line action menu (copy line, copy permalink, reference in new issue)
+- **Code browser** — file tree with per-file last commit and relative age, repo language breakdown, file-type icons, Monaco editor, syntax-highlighted diffs, branch/tag switcher (overview, code, tree, and file views), SSH/HTTPS clone widget, click-a-line-number permalinks (`#L42`) with a per-line action menu
 - **README rendering** — server-side Markdown with tables and fenced code blocks; rendered HTML cached by blob sha
+- **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), repo-scoped and global
+- **Repo mirroring** — push to and pull from GitHub/GitLab/Codeberg, with scheduled sync
+- **Webhooks** — HTTP callbacks on push, PR, and issue events
+- **Pulse tab** — per-repo activity chart, total views, unique visitors, top contributors, referring sites (member-only)
 - **Public landing** — anonymous visitors get a list of public repos and recent activity, no login required
+- **User themes** — built-in (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
 - **Keycloak SSO** — OIDC authentication, self-registration gated by admin approval, email verification, 2FA (TOTP)
 - **Email** — SMTP via mailpit (dev) or any external relay (Resend / Postmark / SES / Fastmail …) configured per deploy
 - **Observability** — Prometheus metrics, Grafana dashboards, SBCL runtime stats
-- **Webhooks** — HTTP callbacks on push, PR, and issue events
-- **Commit status API** — external CI reports pass/fail on PRs
-- **Automation runners + workflows** — self-hosted gRPC runners execute checks and `.cave/workflows/*.yml` jobs
-- **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), repo-scoped and global
-- **Repo mirroring** — push to and pull from GitHub/GitLab/Codeberg
-- **User themes** — built-in (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
-- **Multi-chamber storage** — Praefect-style routing across multiple git storage nodes (single-chamber is the default; multi-chamber is opt-in)
-- **Backup/restore** — one-command backup and restore of all data
+- **Backup/restore** — one-command backup and restore of Postgres + repos + config
 - **Declarative deployment** — `cavectl` reconciles containers from a single `cave.yaml`; `cavectl doctor` runs end-to-end health checks
 - **Quadlet deployment** — systemd user services for production, with rollback
+
+### Experimental
+
+- **Stacked changesets** — dependent PRs are tracked and displayed as a stack, but there is no atomic "land stack" yet; members still merge one PR at a time (see *Planned*)
+- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back. The trust model is not yet hardened: workflow YAML can request privileged containers and arbitrary images with no admin allowlist — run only trusted repos
+- **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
+
+### Planned
+
+- **Atomic stack landing** — ordered validation plus all-or-nothing merge of a stack
+- **Richer issues** — labels, assignees, filtering, and `Closes #N` auto-close (the schema exists; the UI/API don't)
+- **Sandboxed checks/runners** — pre-receive checks currently run as `bash -c` in the bare repo with no isolation; planned: a synthetic merge worktree, timeout/resource limits, a no-network option, and a runner image allowlist
+- **Repo deployment / CD** — build images, queue deploys, roll back, manage secrets
+- **Unit/integration tests** — for migrations, the REST API, and merge-policy rules (today only the end-to-end Playwright suite exists)
 
 ## Quick start
 
@@ -364,6 +381,29 @@ make prod-backup   Back up all data
 make prod-restore F=path/to/archive.tar.gz
 make prod-status   Show systemd service status
 ```
+
+## Testing
+
+End-to-end tests are Playwright browser tests in `tests/`, run against a
+running Cave stack:
+
+```bash
+npm install              # once
+npm run test:install     # install the Chromium browser (once)
+
+# Bring a stack up first (cavectl init, or make podman-up), then point the
+# tests at it:
+CAVE_URL=http://localhost:9080 \
+CAVE_ADMIN_USER=admin CAVE_ADMIN_PASSWORD=admin \
+  npm test
+```
+
+`npm test` runs `playwright test` (15 specs covering smoke pages, registration,
+org/repo flows, and the file browser). The tests assume an admin user can log
+in via Keycloak.
+
+There is not yet a unit/integration suite for migrations, the REST API, or
+merge-policy rules — see **Planned** above.
 
 ## License
 
