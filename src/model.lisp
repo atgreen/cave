@@ -1805,11 +1805,49 @@
                     :pass (zerop open-concerns))
               rules)))
 
-    ;; Rule 8: Checks passed (simplified — no check infrastructure yet)
+    ;; Rule 8: Required checks. Combine external commit statuses and cave
+    ;; workflow runs for the PR's *head commit*. Block on failed, pending, or
+    ;; missing results. Staleness is handled implicitly: results recorded
+    ;; against an older sha won't match the current head, so they read as
+    ;; missing and block until the new head reports.
     (when (getf repo :required-checks-pass)
-      (push (list :description "All checks passed (no checks configured)"
-                  :pass t)
-            rules))
+      (let* ((head (getf pr :head-commit))
+             (statuses (and head (list-commit-statuses repo-id head)))
+             (build (and head (speculative-build-status repo-id head)))
+             (failed (append
+                      (loop for s in statuses
+                            when (member (getf s :state) '("failure" "error")
+                                         :test #'equal)
+                            collect (or (getf s :context) "status"))
+                      (when (eq build :failure) (list "cave workflow"))))
+             (pending (append
+                       (loop for s in statuses
+                             when (equal (getf s :state) "pending")
+                             collect (or (getf s :context) "status"))
+                       (when (eq build :pending) (list "cave workflow"))))
+             (present (or statuses (and build (not (eq build :none))))))
+        (push
+         (cond
+           ((null head)
+            (list :description "No head commit recorded to evaluate checks"
+                  :pass nil))
+           (failed
+            (list :description (format nil "Checks failing: ~{~A~^, ~}" failed)
+                  :pass nil))
+           (pending
+            (list :description (format nil "Checks pending: ~{~A~^, ~}" pending)
+                  :pass nil))
+           ((not present)
+            (list :description
+                  (format nil "Required checks enabled, but no results reported for ~A"
+                          (subseq head 0 (min 7 (length head))))
+                  :pass nil))
+           (t
+            (list :description
+                  (format nil "All required checks passed (~A context~:P)"
+                          (+ (length statuses) (if (eq build :success) 1 0)))
+                  :pass t)))
+         rules)))
 
     (nreverse rules)))
 

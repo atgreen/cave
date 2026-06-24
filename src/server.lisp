@@ -392,7 +392,21 @@ the results. Skips deletes and zero-sha boundaries."
                                               :commit-sha (getf r :new)
                                               :ref (getf r :ref))
               (error (e)
-                (llog:error "Workflow scheduling failed" :error (princ-to-string e))))))
+                (llog:error "Workflow scheduling failed" :error (princ-to-string e))))
+            ;; Keep any open PR's head_commit in sync with its source branch tip,
+            ;; so merge checks (and approval staleness) evaluate the actual head.
+            ;; The version bump in update-pull-request-head re-stales prior
+            ;; approvals — correct, since new commits changed the PR.
+            (let* ((ref (getf r :ref))
+                   (new (getf r :new))
+                   (branch (when (and (>= (length ref) 11)
+                                      (string= ref "refs/heads/" :end1 11))
+                             (subseq ref 11))))
+              (when (and branch new
+                         (not (every (lambda (c) (char= c #\0)) new)))
+                (let ((open-pr (find-pull-request-by-branch (getf repo :id) branch)))
+                  (when (and open-pr (not (equal (getf open-pr :head-commit) new)))
+                    (update-pull-request-head (getf open-pr :id) new)))))))
         ;; Verify any signed commits in the pushed range, cache results
         (handler-case (verify-pushed-commits owner repo (repo-disk-path owner repo-name) refs)
           (error (e)
