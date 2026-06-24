@@ -2249,6 +2249,9 @@ the results. Skips deletes and zero-sha boundaries."
              ;; Diff
              (source (getf pr :source-branch))
              (target (getf pr :target-branch))
+             (source-missing (and (not (getf pr :is-merged))
+                                  (not (member source (chamber-get-branches owner repo-name)
+                                               :test #'equal))))
              (diff-raw (chamber-get-diff-merge-base owner repo-name target source))
              ;; Inline diff comments
              (raw-comments (list-diff-comments (getf pr :id)))
@@ -2271,7 +2274,7 @@ the results. Skips deletes and zero-sha boundaries."
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
                          :stack stack :stack-items stack-items
-                         :diff-raw diff-raw
+                         :diff-raw diff-raw :source-missing source-missing
                          :diff-comments-json comments-json
                          :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
                                                  owner repo-name num)
