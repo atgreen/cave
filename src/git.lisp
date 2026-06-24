@@ -759,9 +759,28 @@ Returns T on success, NIL otherwise."
           (let ((by-ext (and ext (cdr (assoc ext *language-by-ext* :test #'equal)))))
             (when by-ext (values (car by-ext) (cdr by-ext))))))))
 
+(defparameter *vendor-path-segments*
+  '("node_modules" "bower_components" "vendor" "third_party" "third-party"
+    "dist" "jspm_packages" ".yarn" "godeps" "site-packages")
+  "Directory names whose contents are vendored/generated and excluded from
+   language stats.")
+
+(defun %vendored-or-generated-p (path)
+  "Heuristic, à la GitHub Linguist: true for minified, sourcemap, or vendored
+   files, so a bundled library (e.g. mermaid.min.js) doesn't dominate the
+   language breakdown."
+  (let ((p (concatenate 'string "/" (string-downcase path))))
+    (or (uiop:string-suffix-p p ".min.js")
+        (uiop:string-suffix-p p ".min.mjs")
+        (uiop:string-suffix-p p ".min.css")
+        (uiop:string-suffix-p p ".map")
+        (some (lambda (seg) (search (format nil "/~A/" seg) p))
+              *vendor-path-segments*))))
+
 (defun git-language-stats (repo-path ref)
-  "Sum blob bytes per recognized language at REF. Returns a list of
-   (name color bytes) sorted largest first, via a single `ls-tree -r -l`."
+  "Sum blob bytes per recognized language at REF, excluding vendored/generated
+   files. Returns a list of (name color bytes) sorted largest first, via a
+   single `ls-tree -r -l`."
   (multiple-value-bind (out _err code) (git-run repo-path "ls-tree" "-r" "-l" ref)
     (declare (ignore _err))
     (when (zerop code)
@@ -775,7 +794,8 @@ Returns T on success, NIL otherwise."
                        (name (subseq line (1+ tab)))
                        (parts (remove "" (uiop:split-string meta :separator '(#\Space))
                                       :test #'equal)))
-                  (when (and (>= (length parts) 4) (string= (second parts) "blob"))
+                  (when (and (>= (length parts) 4) (string= (second parts) "blob")
+                             (not (%vendored-or-generated-p name)))
                     (let ((size (parse-integer (fourth parts) :junk-allowed t)))
                       (multiple-value-bind (lang color) (file-language-info name)
                         (when (and lang size (plusp size))
