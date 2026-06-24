@@ -99,6 +99,13 @@
   (let* ((alert-id (getf alert :id))
          (fix-kind (classify-fix-kind alert)))
     (set-alert-fix-kind alert-id fix-kind)
+    ;; Never open a fix PR on a pull-mirror: the next mirror sync prunes the
+    ;; fix branch (leaving an empty, unmergeable PR) and a fix can't land on a
+    ;; mirror anyway. Alerts still surface — we just don't auto-fix.
+    (when (pull-mirror-repo-p (getf alert :repo-id))
+      (return-from %prepare-fix-commit
+        (list :status :manual :fix-kind fix-kind
+              :reason "repo is a pull-mirror; auto-fix branches are pruned by sync")))
     (cond
       ((string= fix-kind "none") (list :status :no-fix))
       ((not (string= fix-kind "manifest"))
@@ -248,7 +255,8 @@
    has auto-fix enabled and that don't already have a fix attempt. Safe to call
    repeatedly (e.g. after sync-advisories, or on a timer)."
   (dolist (alert (open-fixable-alerts-without-attempt))
-    (when (auto-fix-security-enabled-p (getf alert :repo-id))
+    (when (and (auto-fix-security-enabled-p (getf alert :repo-id))
+               (not (pull-mirror-repo-p (getf alert :repo-id))))
       (handler-case
           (let ((r (start-speculative-fix (getf alert :id))))
             (llog:info "Dependency fix triggered"
@@ -303,6 +311,7 @@
     (let ((repo-id (getf rr :repo-id))
           (ref (getf rr :ref)))
       (when (and (auto-fix-security-enabled-p repo-id)
+                 (not (pull-mirror-repo-p repo-id))
                  (not (repo-deps-fix-in-flight-p repo-id)))
         (handler-case
             (let ((by-project (make-hash-table :test 'equal)))

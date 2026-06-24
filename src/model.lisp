@@ -1304,6 +1304,17 @@
     'direction 'created-at)
    :plists))
 
+(defun pull-mirror-repo-p (repo-id)
+  "True when REPO-ID is a pull-mirror of an upstream. Its bare repo is kept in
+   sync with `git fetch --prune +refs/*:refs/*`, which deletes any local-only
+   ref — so a cave-bot fix branch is pruned within a sync cycle and the fix
+   could never land anyway. Used to skip auto-fix PR creation on such repos."
+  (plusp (or (postmodern:query
+              (:select (:count '*) :from 'cave-repo-mirrors
+               :where (:and (:= 'repo-id repo-id) (:= 'direction "pull")))
+              :single)
+             0)))
+
 (defun delete-mirror (mirror-id repo-id)
   "Delete a mirror config."
   (postmodern:execute

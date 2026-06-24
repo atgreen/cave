@@ -1465,7 +1465,7 @@ function caveToggleCommentForm(btn) {
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge stack stack-items diff-raw
                              diff-comments-json comment-action
-                             commit-statuses)
+                             commit-statuses source-missing)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -1488,6 +1488,14 @@ function caveToggleCommentForm(btn) {
                (getf author :username))
        (when (getf pr :head-commit)
          (:code :style "margin-left:.5rem" (getf pr :head-commit))))
+
+      ;; Source branch gone (e.g. pruned by a mirror sync): the diff can't be
+      ;; computed and the PR can't be merged. Say so instead of "0 files".
+      (when (and source-missing (not (getf pr :is-merged)) (not (getf pr :is-closed)))
+        (:div.flash-error
+         :style "margin:var(--sp-3) 0;padding:.6rem .8rem;border:1px solid var(--red,#b04a4a);border-radius:var(--radius);background:var(--red-bg,rgba(176,74,74,.1))"
+         (format nil "Source branch ~A no longer exists — its commits were removed (most likely pruned by a mirror sync). This PR has nothing to merge and should be closed."
+                 (getf pr :source-branch))))
 
       ;; Stack
       (when stack
