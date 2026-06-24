@@ -1093,6 +1093,10 @@ the results. Skips deletes and zero-sha boundaries."
                     default-branch))
            (commit-count (unless empty (chamber-get-commit-count owner repo-name :branch ref)))
            (file-tree (unless empty (chamber-get-tree owner repo-name :ref ref)))
+           (last-commits (unless empty
+                           (chamber-tree-last-commits
+                            owner repo-name ref ""
+                            (mapcar (lambda (e) (getf e :name)) file-tree))))
            (recent-commits (unless empty (chamber-get-log owner repo-name :limit 10 :branch ref))))
       (if empty
           (hunchentoot:redirect (format nil "/~A/~A" owner repo-name))
@@ -1102,6 +1106,7 @@ the results. Skips deletes and zero-sha boundaries."
                       :default-branch default-branch :current-ref ref
                       :commit-count commit-count
                       :recent-commits recent-commits
+                      :last-commits last-commits
                       :signatures (commit-signatures-by-sha
                                    (getf repo :id)
                                    (mapcar (lambda (c) (getf c :hash)) recent-commits))
@@ -1163,12 +1168,16 @@ the results. Skips deletes and zero-sha boundaries."
            (file-tree (chamber-get-tree owner repo-name :ref ref :path path))
            (default-branch (or (chamber-get-default-branch owner repo-name) "main"))
            (branches (chamber-get-branches owner repo-name))
-           (tags (chamber-get-tags owner repo-name)))
+           (tags (chamber-get-tags owner repo-name))
+           (last-commits (chamber-tree-last-commits
+                          owner repo-name ref path
+                          (mapcar (lambda (e) (getf e :name)) file-tree))))
       (html-response
        (view-tree :owner-name owner :repo repo :ref ref
                   :path path :file-tree file-tree
                   :branches branches :tags tags
-                  :default-branch default-branch)))))
+                  :default-branch default-branch
+                  :last-commits last-commits)))))
 
 (defun %valid-git-ref-name-p (name)
   "Permissive git branch/tag name check: 1–255 chars, allowed chars only, no

@@ -646,6 +646,71 @@ Returns T on success, NIL otherwise."
                         (string< (getf a :name) (getf b :name))
                         a-dir)))))))))
 
+(defun git-rev-parse (repo-path ref)
+  "Resolve REF (branch, tag, or sha) to a full commit SHA. Returns the SHA
+   string, or NIL if REF does not resolve to a commit."
+  (multiple-value-bind (out _err code)
+      (git-run repo-path "rev-parse" "--verify" "--quiet"
+               (format nil "~A^{commit}" ref))
+    (declare (ignore _err))
+    (when (and (zerop code) (plusp (length out)))
+      (string-trim '(#\Newline #\Space) out))))
+
+(defun %tree-top-child (path prefix)
+  "Given a repo-relative PATH and directory PREFIX (\"\" or \"dir/\"), return the
+   immediate child segment of PREFIX that contains PATH, or NIL if PATH is not
+   under PREFIX."
+  (when (or (string= prefix "")
+            (and (>= (length path) (length prefix))
+                 (string= path prefix :end1 (length prefix))))
+    (let* ((rest (subseq path (length prefix)))
+           (slash (position #\/ rest)))
+      (if slash (subseq rest 0 slash) rest))))
+
+(defun git-tree-last-commits (repo-path ref dir entry-names)
+  "For each immediate child NAME in ENTRY-NAMES of DIR at REF, find the most
+   recent commit that touched it. DIR is \"\" for the repo root. Returns a
+   hash-table mapping name -> plist (:hash :short-hash :subject :author :time),
+   where :time is a universal-time integer. Performed as a single git-log walk
+   that stops once every entry is resolved."
+  (let ((result (make-hash-table :test 'equal)))
+    (when (null entry-names) (return-from git-tree-last-commits result))
+    (let* ((prefix (if (or (null dir) (string= dir "")) "" (concatenate 'string dir "/")))
+           (remaining (make-hash-table :test 'equal))
+           (rs (string (code-char 30)))   ; record sep, before each commit header
+           (us (code-char 31))            ; field sep within the header
+           (fmt "--format=%x1e%H%x1f%h%x1f%an%x1f%ct%x1f%s")
+           ;; No pathspec at the root (avoids bare-repo "." ambiguity); a trailing
+           ;; pathspec elsewhere both limits and simplifies history.
+           (args (if (string= prefix "")
+                     (list "log" fmt "--name-only" ref)
+                     (list "log" fmt "--name-only" ref "--" prefix))))
+      (dolist (n entry-names) (setf (gethash n remaining) t))
+      (multiple-value-bind (out _err code) (apply #'git-run repo-path args)
+        (declare (ignore _err))
+        (unless (zerop code) (return-from git-tree-last-commits result))
+        (dolist (block (uiop:split-string out :separator rs))
+          (when (zerop (hash-table-count remaining)) (return))
+          (let ((nl (position #\Newline block)))
+            (when nl
+              (let ((fields (uiop:split-string (subseq block 0 nl)
+                                               :separator (string us))))
+                (when (>= (length fields) 5)
+                  (destructuring-bind (hash short author ct subject &rest ignore) fields
+                    (declare (ignore ignore))
+                    (let ((plist (list :hash hash :short-hash short :author author
+                                       :subject subject
+                                       :time (let ((n (parse-integer ct :junk-allowed t)))
+                                               (when n (+ n 2208988800))))))
+                      (dolist (line (uiop:split-string (subseq block (1+ nl))
+                                                       :separator '(#\Newline)))
+                        (unless (uiop:emptyp line)
+                          (let ((child (%tree-top-child line prefix)))
+                            (when (and child (gethash child remaining))
+                              (setf (gethash child result) plist)
+                              (remhash child remaining))))))))))))
+        result))))
+
 (defun git-blob-hash (repo-path ref path)
   "Get the git object hash for a blob at PATH under REF. Returns SHA string or NIL."
   (multiple-value-bind (output _err exit-code)

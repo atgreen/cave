@@ -116,6 +116,34 @@ the Hunchentoot worker forever."
 
       (git-tree (repo-disk-path owner repo-name) :ref ref :path path)))
 
+;; Per-directory "last commit" info is immutable for a given tree-tip sha, so
+;; cache it keyed by (owner repo tip-sha dir). No chamber RPC exists for this
+;; yet; it runs git directly against the local bare repo and degrades to an
+;; empty table (no commit column) on any error.
+(defvar *tree-commits-cache* (make-hash-table :test 'equal))
+(defvar *tree-commits-cache-lock* (bt2:make-lock :name "tree-commits-cache"))
+(defparameter *tree-commits-cache-max* 512)
+
+(defun chamber-tree-last-commits (owner repo-name ref path entry-names)
+  "Return a hash-table mapping each immediate child NAME under PATH at REF to its
+   most-recent-touching commit plist (:hash :short-hash :subject :author :time)."
+  (handler-case
+      (let* ((disk (repo-disk-path owner repo-name))
+             (tip (git-rev-parse disk ref)))
+        (if (null tip)
+            (make-hash-table :test 'equal)
+            (let ((key (list owner repo-name tip (or path ""))))
+              (or (bt2:with-lock-held (*tree-commits-cache-lock*)
+                    (gethash key *tree-commits-cache*))
+                  (let ((res (git-tree-last-commits disk ref (or path "") entry-names)))
+                    (bt2:with-lock-held (*tree-commits-cache-lock*)
+                      (when (>= (hash-table-count *tree-commits-cache*)
+                                *tree-commits-cache-max*)
+                        (clrhash *tree-commits-cache*))
+                      (setf (gethash key *tree-commits-cache*) res))
+                    res)))))
+    (error () (make-hash-table :test 'equal))))
+
 (defun chamber-get-blob (owner repo-name ref path)
   "Get file content as string. Returns string or NIL."
   (chamber-or
