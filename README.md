@@ -36,7 +36,7 @@ are not built yet.
 ### Experimental
 
 - **Stacked changesets** — dependent PRs are tracked and displayed as a stack, but there is no atomic "land stack" yet; members still merge one PR at a time (see *Planned*)
-- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back. The trust model is not yet hardened: workflow YAML can request privileged containers and arbitrary images with no admin allowlist — run only trusted repos
+- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back. Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`). Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides, secret masking in logs, and stronger runner-side isolation — so prefer trusted repos
 - **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
 
 ### Planned
@@ -212,8 +212,19 @@ Two configs live side-by-side:
     :zoekt-enabled t
     :zoekt-web-url "http://cave-zoekt-web:6070"
     :chamber-enabled t
-    :chamber-port 9444)
+    :chamber-port 9444
+    ;; Runner policy for repo-supplied .cave/workflows (Cave's own
+    ;; dep-scan/fix jobs bypass these):
+    :workflows-allow-privileged nil          ; deny `privileged: true` jobs
+    :workflows-image-allowlist ("ghcr.io/" "docker.io/")) ; nil = allow any
    ```
+
+   `:workflows-allow-privileged` defaults to `nil` — a repo workflow that
+   requests `privileged: true` is rejected (the run fails with the reason) until
+   an admin flips it. `:workflows-image-allowlist` is `nil` (any image) unless
+   set to a list of allowed name prefixes. In containers these map to
+   `CAVE_WORKFLOWS_ALLOW_PRIVILEGED` (`t`/`nil`) and
+   `CAVE_WORKFLOWS_IMAGE_ALLOWLIST` (space-separated prefixes).
 
 2. **`cave.yaml`** — declarative deployment manifest consumed by `cavectl`:
 
@@ -343,7 +354,10 @@ Automations are configured per-repo in Settings → Automations, with triggers:
 `pre_receive`, `post_receive`, `changeset_opened`, `changeset_merged`, `manual`.
 
 Workflow files at `.cave/workflows/*.yml` are picked up on push and scheduled
-across runners.
+across runners. Repo-supplied jobs are subject to admin policy: `privileged`
+jobs are denied unless `:workflows-allow-privileged` is set, and job images can
+be restricted with `:workflows-image-allowlist`. A job that violates policy
+fails its run with the reason instead of being dispatched.
 
 ## Themes
 
