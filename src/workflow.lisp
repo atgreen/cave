@@ -167,6 +167,29 @@
                                     :continue-on-error (eq step-continue-on-error t)))))))))))
         run)))))
 
+(defun rerun-workflow (run-id)
+  "Re-create a fresh run from RUN-ID's workflow file at its commit. Reuses
+   schedule-workflow-from-yaml (same trigger the original matched), so the admin
+   policy gate still applies. Returns the new run plist, or NIL."
+  (let* ((run (find-workflow-run run-id))
+         (repo-id (and run (getf run :repo-id)))
+         (file (and run (getf run :workflow-file)))
+         (commit (and run (getf run :commit-sha)))
+         (trigger (and run (getf run :trigger-event)))
+         (repo (and repo-id (find-repo-by-id repo-id)))
+         (owner (and repo (repo-owner-name repo)))
+         (name (and repo (getf repo :name))))
+    (when (and file owner name trigger)
+      (let ((content (handler-case
+                         (git-blob (repo-disk-path owner name)
+                                   (if (and commit (not (eq commit :null))) commit "HEAD")
+                                   (format nil ".cave/workflows/~A" file))
+                       (error () nil))))
+        (when content
+          (schedule-workflow-from-yaml repo-id file content trigger
+                                       :commit-sha (and commit (not (eq commit :null)) commit)
+                                       :ref (getf run :ref)))))))
+
 (defun check-workflow-job-completion (job)
   "After a job completes, update dependent jobs and the workflow run.
    If the job failed, skip dependent jobs. If succeeded, unblock dependents.

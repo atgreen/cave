@@ -1822,6 +1822,24 @@ the results. Skips deletes and zero-sha boundaries."
                                                   :steps (list-workflow-steps (getf j :id))))
                                           jobs)))))))
 
+(easy-routes:defroute rerun-workflow-route
+    ("/:owner/:repo-name/runs/w/:run-id/rerun" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from rerun-workflow-route (not-found)))
+      (unless (repo-member-role (getf repo :id) *current-user-id*)
+        (setf (hunchentoot:return-code*) 403)
+        (return-from rerun-workflow-route "Forbidden"))
+      (let* ((rid (parse-integer run-id :junk-allowed t))
+             (run (when rid (find-workflow-run rid))))
+        (unless (and run (= (getf run :repo-id) (getf repo :id)))
+          (return-from rerun-workflow-route (not-found)))
+        (handler-case (rerun-workflow rid)
+          (error (e) (llog:warn "rerun-workflow failed"
+                                :run rid :error (princ-to-string e))))
+        (hunchentoot:redirect (format nil "/~A/~A/runs" owner repo-name))
+        nil))))
+
 (defun handle-workflow-logs-sse (uri)
   "Handle SSE streaming for workflow run logs. Called from acceptor dispatch."
   ;; Parse owner/repo and run-id from URI: /:owner/:repo/runs/w/:id/logs
