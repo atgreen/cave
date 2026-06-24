@@ -506,8 +506,11 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
       :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings")))))
 
-(defun render-file-tree (file-tree owner-name repo-name default-branch &optional current-path)
-  "Render a file tree table. Shared by view-repo and view-tree."
+(defun render-file-tree (file-tree owner-name repo-name default-branch
+                         &optional current-path &key last-commits)
+  "Render a file tree table. Shared by view-code and view-tree. When LAST-COMMITS
+   (a name -> commit-plist hash-table) is given, each row shows the most recent
+   commit that touched the entry and how long ago, like other forges."
   (spinneret:with-html
     (:table.file-tree
      (:tbody
@@ -522,13 +525,15 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                               (format nil "/~A/~A/tree/~A?path=~A"
                                       owner-name repo-name default-branch parent))
                  ".."))
-           (:td.file-size ""))))
+           (:td.file-commit "")
+           (:td.file-age ""))))
       (dolist (entry file-tree)
         (let* ((name (getf entry :name))
                (is-dir (equal (getf entry :type) "tree"))
                (entry-path (if (and current-path (not (uiop:emptyp current-path)))
                                (format nil "~A/~A" current-path name)
-                               name)))
+                               name))
+               (commit (and last-commits (gethash name last-commits))))
           (:tr :class (when is-dir "file-dir")
            (:td.file-icon (if is-dir "/" "."))
            (:td
@@ -538,13 +543,15 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                           (format nil "/~A/~A/blob/~A?path=~A"
                                   owner-name repo-name default-branch entry-path))
              name))
-           (:td.file-size
-            (let ((size (getf entry :size)))
-              (when (and size (not is-dir))
-                (cond
-                  ((>= size (* 1024 1024)) (format nil "~,1f MB" (/ size (* 1024.0 1024.0))))
-                  ((>= size 1024) (format nil "~,1f KB" (/ size 1024.0)))
-                  (t (format nil "~A B" size)))))))))))))
+           (:td.file-commit
+            (when commit
+              (:a :href (format nil "/~A/~A/commit/~A"
+                                owner-name repo-name (getf commit :hash))
+               :title (getf commit :subject)
+               (getf commit :subject))))
+           (:td.file-age
+            (when commit
+              (format-relative-time (getf commit :time)))))))))))
 
 (defun render-clone-widget (owner-name repo-name)
   "SSH/HTTPS toggle with a copy-to-clipboard button."
@@ -719,7 +726,7 @@ function caveFilterRefs(input){if(!input)return;var m=input.closest('.ref-switch
 document.addEventListener('click',function(e){if(!e.target.closest('.ref-switcher'))document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});});")))))
 
 (defun view-code (&key owner-name repo branches tags default-branch current-ref
-                       commit-count recent-commits file-tree signatures)
+                       commit-count recent-commits file-tree signatures last-commits)
   "Render the repo code/file browser page."
   (let* ((org-name owner-name)
          (repo-name (getf repo :name))
@@ -760,7 +767,8 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
            (:span.repo-last-author (getf last :author)))))
       ;; File tree
       (when file-tree
-        (render-file-tree file-tree org-name repo-name current-ref))
+        (render-file-tree file-tree org-name repo-name current-ref nil
+                          :last-commits last-commits))
 
       ;; Recent commits
       (when recent-commits
@@ -780,7 +788,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
 ;;; ========================== TREE & BLOB PAGES ==========================
 
 (defun view-tree (&key owner-name repo ref path file-tree
-                       branches tags default-branch)
+                       branches tags default-branch last-commits)
   "Render a directory listing at a path."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
@@ -810,7 +818,8 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                                              (repo-member-role (getf repo :id)
                                                                *current-user-id*)))))
       (if file-tree
-          (render-file-tree file-tree owner-name repo-name ref path)
+          (render-file-tree file-tree owner-name repo-name ref path
+                            :last-commits last-commits)
           (:p.empty "Empty directory.")))))
 
 (defun json-for-script (s)
