@@ -1097,6 +1097,7 @@ the results. Skips deletes and zero-sha boundaries."
                            (chamber-tree-last-commits
                             owner repo-name ref ""
                             (mapcar (lambda (e) (getf e :name)) file-tree))))
+           (language-stats (unless empty (chamber-language-stats owner repo-name ref)))
            (recent-commits (unless empty (chamber-get-log owner repo-name :limit 10 :branch ref))))
       (if empty
           (hunchentoot:redirect (format nil "/~A/~A" owner repo-name))
@@ -1107,6 +1108,7 @@ the results. Skips deletes and zero-sha boundaries."
                       :commit-count commit-count
                       :recent-commits recent-commits
                       :last-commits last-commits
+                      :language-stats language-stats
                       :signatures (commit-signatures-by-sha
                                    (getf repo :id)
                                    (mapcar (lambda (c) (getf c :hash)) recent-commits))

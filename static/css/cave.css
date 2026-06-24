@@ -551,6 +551,29 @@ code {
 .file-tree .file-commit a { color: var(--text-muted); }
 .file-tree .file-commit a:hover { color: var(--link); }
 .file-tree .file-age { text-align: right; color: var(--text-muted); font-size: .75rem; white-space: nowrap; }
+.file-tree .file-icon .ficon { vertical-align: text-bottom; }
+
+/* Language breakdown bar + legend */
+.lang-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: var(--sp-3) 0 var(--sp-2);
+  background: var(--surface);
+}
+.lang-seg { height: 100%; }
+.lang-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+  font-size: .8rem;
+}
+.lang-legend-item { display: inline-flex; align-items: center; gap: .35rem; }
+.lang-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.lang-name { color: var(--text); font-weight: 600; }
+.lang-pct { color: var(--text-muted); }
 
 /* --- Blob view --- */
 .blob-meta {

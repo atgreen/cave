@@ -506,6 +506,58 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
       :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings")))))
 
+(defparameter *folder-svg*
+  "<svg class=\"ficon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1Z\"/></svg>")
+
+(defparameter *file-svg-path*
+  "M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.75 16h-10A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h10a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9.5 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z")
+
+(defun render-file-icon (is-dir name)
+  "Inline SVG icon: a folder for directories, a document for files (tinted by
+   the file's language color when recognized). Emitted as raw markup; colors
+   come from the fixed language table, never from user input."
+  (spinneret:with-html
+    (if is-dir
+        (:raw *folder-svg*)
+        (multiple-value-bind (lang color) (file-language-info name)
+          (declare (ignore lang))
+          (:raw (format nil "<svg class=\"ficon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\"~@[ style=\"color:~A\"~]><path fill=\"currentColor\" d=\"~A\"/></svg>"
+                        color *file-svg-path*))))))
+
+(defun render-language-bar (stats)
+  "A thin proportional language bar + legend with percentages. STATS is a list
+   of (name color bytes), largest first."
+  (when stats
+    (let* ((total (reduce #'+ stats :key #'third))
+           (shown (subseq stats 0 (min 8 (length stats))))
+           (rest (nthcdr 8 stats))
+           (other (reduce #'+ rest :key #'third)))
+      (when (plusp total)
+        (flet ((pct (b) (* 100.0 (/ b total))))
+          (spinneret:with-html
+            (:div.lang-bar
+             (dolist (row shown)
+               (destructuring-bind (name color bytes) row
+                 (declare (ignore name))
+                 (:span.lang-seg
+                  :style (format nil "width:~,2F%;background:~A" (pct bytes) (or color "#ccc"))
+                  :title (format nil "~A ~,1F%" (first row) (pct bytes)))))
+             (when (plusp other)
+               (:span.lang-seg :style (format nil "width:~,2F%;background:#ccc" (pct other))
+                :title "Other")))
+            (:div.lang-legend
+             (dolist (row shown)
+               (destructuring-bind (name color bytes) row
+                 (:span.lang-legend-item
+                  (:span.lang-dot :style (format nil "background:~A" (or color "#ccc")))
+                  (:span.lang-name name)
+                  (:span.lang-pct (format nil "~,1F%" (pct bytes))))))
+             (when (plusp other)
+               (:span.lang-legend-item
+                (:span.lang-dot :style "background:#ccc")
+                (:span.lang-name "Other")
+                (:span.lang-pct (format nil "~,1F%" (pct other))))))))))))
+
 (defun render-file-tree (file-tree owner-name repo-name default-branch
                          &optional current-path &key last-commits)
   "Render a file tree table. Shared by view-code and view-tree. When LAST-COMMITS
@@ -535,7 +587,7 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                                name))
                (commit (and last-commits (gethash name last-commits))))
           (:tr :class (when is-dir "file-dir")
-           (:td.file-icon (if is-dir "/" "."))
+           (:td.file-icon (render-file-icon is-dir name))
            (:td
             (:a :href (if is-dir
                           (format nil "/~A/~A/tree/~A?path=~A"
@@ -726,7 +778,8 @@ function caveFilterRefs(input){if(!input)return;var m=input.closest('.ref-switch
 document.addEventListener('click',function(e){if(!e.target.closest('.ref-switcher'))document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});});")))))
 
 (defun view-code (&key owner-name repo branches tags default-branch current-ref
-                       commit-count recent-commits file-tree signatures last-commits)
+                       commit-count recent-commits file-tree signatures last-commits
+                       language-stats)
   "Render the repo code/file browser page."
   (let* ((org-name owner-name)
          (repo-name (getf repo :name))
@@ -756,6 +809,8 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
        (when commit-count
          (:span.repo-info-stat
           (format nil "~A ~:[commits~;commit~]" commit-count (= commit-count 1)))))
+      ;; Language breakdown bar
+      (render-language-bar language-stats)
       ;; Last commit bar
       (when recent-commits
         (let ((last (first recent-commits)))
@@ -1262,7 +1317,7 @@ document.addEventListener('DOMContentLoaded', function() {
 (defun view-new-pull-request (&key owner-name repo branches default-branch)
   "Render the new pull request form."
   (let ((repo-name (getf repo :name)))
-    (page (:title (format nil "New pull request — %s/%s" owner-name repo-name))
+    (page (:title (format nil "New pull request — ~A/~A" owner-name repo-name))
       (render-repo-tabs owner-name repo-name :pulls :repo repo)
       (:h1 "New pull request")
       (:form :method "post" :action (format nil "/~A/~A/pulls/new" owner-name repo-name)

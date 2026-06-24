@@ -144,6 +144,34 @@ the Hunchentoot worker forever."
                     res)))))
     (error () (make-hash-table :test 'equal))))
 
+;; Language byte totals are also immutable per tree-tip sha; same caching story.
+(defvar *language-stats-cache* (make-hash-table :test 'equal))
+(defvar *language-stats-cache-lock* (bt2:make-lock :name "language-stats-cache"))
+(defparameter *language-stats-cache-max* 512)
+
+(defun chamber-language-stats (owner repo-name ref)
+  "Return a list of (name color bytes) for recognized languages at REF, cached
+   by tree-tip sha. Empty list on any error."
+  (handler-case
+      (let* ((disk (repo-disk-path owner repo-name))
+             (tip (git-rev-parse disk ref)))
+        (if (null tip)
+            nil
+            (let ((key (list owner repo-name tip)))
+              (multiple-value-bind (hit present)
+                  (bt2:with-lock-held (*language-stats-cache-lock*)
+                    (gethash key *language-stats-cache*))
+                (if present
+                    hit
+                    (let ((res (git-language-stats disk ref)))
+                      (bt2:with-lock-held (*language-stats-cache-lock*)
+                        (when (>= (hash-table-count *language-stats-cache*)
+                                  *language-stats-cache-max*)
+                          (clrhash *language-stats-cache*))
+                        (setf (gethash key *language-stats-cache*) res))
+                      res))))))
+    (error () nil)))
+
 (defun chamber-get-blob (owner repo-name ref path)
   "Get file content as string. Returns string or NIL."
   (chamber-or
