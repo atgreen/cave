@@ -856,6 +856,31 @@
 
 ;;; ========================== WORKFLOWS ==========================
 
+(defun reap-stale-workflow-jobs (&key (max-minutes 120))
+  "Fail workflow jobs (and finalize their runs as failed) that have been
+   running/assigned past MAX-MINUTES, or whose assigned runner is gone/offline
+   (runners get a new id on restart, so a dead runner's jobs never report).
+   Without this a runner that dies mid-job leaves the run 'running' forever,
+   which blocks merges on required checks. Returns the number of runs reaped."
+  (let ((rows (postmodern:query
+               "SELECT j.id AS jid, j.workflow_run_id AS rid
+                FROM cave_workflow_jobs j
+                JOIN cave_workflow_runs w ON w.id = j.workflow_run_id
+                LEFT JOIN cave_runners r ON r.id = j.runner_id
+                WHERE j.status IN ('running','assigned')
+                  AND (w.started_at < now() - make_interval(mins => $1::int)
+                       OR r.id IS NULL
+                       OR r.status <> 'online'
+                       OR r.last_seen_at < now() - interval '3 minutes')"
+               max-minutes :plists))
+        (runs '()))
+    (dolist (row rows)
+      (update-job-status (getf row :jid) "failure")
+      (pushnew (getf row :rid) runs))
+    (dolist (rid runs)
+      (update-workflow-run-status rid "failure"))
+    (length runs)))
+
 (defun create-workflow-run (&key repo-id workflow-name workflow-file trigger-event
                                  commit-sha ref triggered-by-id)
   "Create a workflow run."

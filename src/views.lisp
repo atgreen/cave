@@ -2063,7 +2063,16 @@ function caveShowCommentForm(td) {
           (:span :style "color:var(--text-muted);font-size:.85rem"
            (getf run :ref)))
         (:span :style "color:var(--text-muted);font-size:.85rem"
-         (princ-to-string (getf run :created-at)))))
+         (princ-to-string (getf run :created-at)))
+        ;; Re-run a finished run — recovers from a zombie/failed build.
+        (when (and *current-user-id*
+                   (repo-member-role (getf repo :id) *current-user-id*)
+                   (member (getf run :status) '("success" "failure" "cancelled")
+                           :test #'equal))
+          (:form :method "post" :style "margin-left:auto"
+           :action (format nil "/~A/~A/runs/w/~A/rerun"
+                           owner-name repo-name (getf run :id))
+           (:button.btn.btn-sm :type "submit" "Re-run")))))
 
       ;; Jobs
       (dolist (job-data jobs)

@@ -274,6 +274,16 @@
   (when (claim-scheduled-task "sync-mirrors" 300)
     (handler-case (%scheduled-mirror-pull)
       (error (e) (llog:warn "Scheduled mirror sync failed"
+                            :error (princ-to-string e)))))
+  ;; Reap zombie workflow runs: a runner that dies mid-job leaves the run
+  ;; 'running' forever, which blocks merges on required checks.
+  (when (claim-scheduled-task "reap-workflows" 300)
+    (handler-case
+        (let ((n (reap-stale-workflow-jobs
+                  :max-minutes (config-value :workflow-run-max-minutes 120))))
+          (when (plusp n)
+            (llog:info "Reaped stale workflow runs" :count n)))
+      (error (e) (llog:warn "Workflow reap failed"
                             :error (princ-to-string e))))))
 
 ;;; --- GIT-SHELL subcommand ---
