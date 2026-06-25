@@ -1,0 +1,36 @@
+--- a/internal/sandbox/sandbox.go
++++ b/internal/sandbox/sandbox.go
+@@ -172,18 +172,24 @@
+ 		return nil
+ 	}
+ 
+-	// Apply all rules at once
++	// Apply all rules in a SINGLE ruleset. Calling RestrictPaths and RestrictNet
++	// separately stacks two Landlock rulesets; RestrictNet zeroes handledAccessFS
++	// and the kernel denies LANDLOCK_ACCESS_FS_REFER by default in any ruleset
++	// that does not handle it, so cross-dir rename/link fails with EXDEV. #48.
+ 	log.Debug("Applying Landlock restrictions")
+-	if !cfg.UnrestrictedFilesystem {
+-		err := llCfg.RestrictPaths(file_rules...)
+-		if err != nil {
++	switch {
++	case cfg.UnrestrictedFilesystem:
++		if err := llCfg.RestrictNet(net_rules...); err != nil {
++			return fmt.Errorf("failed to apply Landlock network restrictions: %w", err)
++		}
++	case cfg.UnrestrictedNetwork:
++		if err := llCfg.RestrictPaths(file_rules...); err != nil {
+ 			return fmt.Errorf("failed to apply Landlock filesystem restrictions: %w", err)
+ 		}
+-	}
+-	if !cfg.UnrestrictedNetwork {
+-		err := llCfg.RestrictNet(net_rules...)
+-		if err != nil {
+-			return fmt.Errorf("failed to apply Landlock network restrictions: %w", err)
++	default:
++		allRules := append(append([]landlock.Rule{}, file_rules...), net_rules...)
++		if err := llCfg.Restrict(allRules...); err != nil {
++			return fmt.Errorf("failed to apply Landlock restrictions: %w", err)
+ 		}
+ 	}
+ 

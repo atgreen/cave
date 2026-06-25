@@ -488,7 +488,12 @@
           (error "ReceivePack timed out on repo lock"))
         (unwind-protect
             (let ((proc (uiop:launch-program
-                         (list "git" "receive-pack" (namestring disk-path))
+                         ;; Wrapped: relies on the REFER-fixed landrun built in
+                         ;; the Containerfile (upstream #48 / PR #49). receive-pack's
+                         ;; quarantine migration does a cross-dir rename/link needing
+                         ;; Landlock ACCESS_FS_REFER; stock landrun denies it (EXDEV).
+                         (sandbox-wrap disk-path
+                          (list "git" "receive-pack" (namestring disk-path)))
                          :input :stream :output :stream
                          :element-type '(unsigned-byte 8))))
               (unwind-protect
@@ -531,7 +536,8 @@
         (error "UploadPack timed out on global semaphore"))
       (unwind-protect
           (let ((proc (uiop:launch-program
-                       (list "git" "upload-pack" (namestring disk-path))
+                       (sandbox-wrap disk-path
+                        (list "git" "upload-pack" (namestring disk-path)))
                        :input :stream :output :stream
                        :element-type '(unsigned-byte 8))))
             (unwind-protect

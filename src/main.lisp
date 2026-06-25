@@ -549,7 +549,11 @@
   (let ((ulimit (if mem-mb
                     (format nil "ulimit -v ~A 2>/dev/null; " (* mem-mb 1024))
                     "")))
-    (append
+    ;; Landlock filesystem confinement (landrun) around the whole check;
+    ;; `unshare -n` stays as the stronger network jail when the capability is
+    ;; present, with landrun's TCP-deny as the no-privilege fallback.
+    (sandbox-wrap workdir
+     (append
      (when isolate-net (list "unshare" "-n"))
      (list "env" "-i"
            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -558,7 +562,7 @@
            (format nil "CAVE_COMMIT=~A" sha)
            (format nil "CAVE_REPO=~A" repo-path))
      (list "timeout" "-k" "10" (format nil "~A" timeout))
-     (list "bash" "-c" (format nil "~A~A" ulimit command)))))
+     (list "bash" "-c" (format nil "~A~A" ulimit command))))))
 
 (defun handle-run-checks (cmd)
   (let ((config-path (clingon:getopt cmd :config))

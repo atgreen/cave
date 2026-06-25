@@ -41,6 +41,10 @@
     :chamber-cache-size-mb 128
     :chamber-nodes nil
     :chamber-health-interval 10
+    ;; Wrap git + check subprocesses in a landrun Landlock sandbox (filesystem
+    ;; MAC). No-op when the landrun binary is absent or the kernel lacks
+    ;; Landlock (best-effort). See SANDBOX-WRAP in git.lisp.
+    :sandbox-landlock t
     :zoekt-enabled nil
     :zoekt-web-url "http://cave-prod-zoekt-web:6070"
     :zoekt-index-dir "/data/zoekt-index"))

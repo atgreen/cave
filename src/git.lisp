@@ -8,13 +8,61 @@
 
 (defun git-run (repo-path &rest args)
   "Run a git command in REPO-PATH. Returns (VALUES output error-output exit-code)."
-  (let ((cmd (append (list "git" "-C" (namestring repo-path)) args)))
+  (let ((cmd (sandbox-wrap repo-path
+                           (append (list "git" "-C" (namestring repo-path)) args))))
     (multiple-value-bind (output error-output exit-code)
         (uiop:run-program cmd
                           :output '(:string :stripped t)
                           :error-output '(:string :stripped t)
                           :ignore-error-status t)
       (values output error-output exit-code))))
+
+(defun %resolve-exe (prog)
+  "Resolve a bare program name to an absolute path. landrun execs ARGV[0]
+   verbatim with no PATH search, so the program handed to it must be absolute.
+   Absolute names (containing a slash) pass through unchanged."
+  (if (find #\/ prog)
+      prog
+      (or (loop for dir in '("/usr/bin/" "/bin/" "/usr/sbin/" "/sbin/")
+                for cand = (concatenate 'string dir prog)
+                when (uiop:file-exists-p cand) return cand)
+          prog)))
+
+(defun sandbox-wrap (rw-path argv)
+  "Prefix ARGV with a landrun Landlock sandbox confining the subprocess to:
+   read/write under RW-PATH, /tmp, and the /dev pseudo-devices git needs;
+   read+exec under the system prefixes (/usr, /bin, /lib, /lib64); read-only
+   /etc. No --connect-tcp/--bind-tcp rules are passed, so all TCP bind/connect
+   is denied (best-effort; Landlock net restrictions require kernel >= 6.7).
+   ARGV[0] is resolved to an absolute path (landrun does no PATH search).
+
+   Returns ARGV unchanged when :sandbox-landlock is disabled or the landrun
+   binary is absent, so hosts without Landlock just run git as before.
+   --best-effort makes landrun degrade rather than fail on older kernels.
+
+   receive-pack IS supported, but ONLY against the REFER-fixed landrun built in
+   the Containerfile (upstream issue #48 / PR #49). receive-pack's quarantine
+   migration does a cross-directory rename/link needing Landlock ACCESS_FS_REFER.
+   Stock landrun calls RestrictPaths + RestrictNet separately, stacking two
+   rulesets so the kernel denies REFER (cross-dir rename/link -> EXDEV, verified
+   locally). The patched build applies all rules in one ruleset. Swapping in an
+   unpatched landrun will make pushes fail at object migration.
+
+   Filesystem MAC only (Tangled's \"Layer 1\"): cross-repo isolation comes from
+   Landlock making other repos unreachable, NOT from a per-repo UID drop."
+  (if (and (config-value :sandbox-landlock)
+           (uiop:file-exists-p "/usr/local/bin/landrun")
+           (consp argv))
+      (append
+       (list "landrun" "--best-effort"
+             "--rox" "/usr" "--rox" "/bin" "--rox" "/lib" "--rox" "/lib64"
+             "--ro"  "/etc"
+             "--rw"  "/tmp"
+             "--rw"  "/dev/null" "--rw" "/dev/urandom" "--rw" "/dev/zero"
+             "--rw"  (namestring rw-path)
+             "--")
+       (cons (%resolve-exe (first argv)) (rest argv)))
+      argv))
 
 (defun git-branches (repo-path)
   "List branches in a bare repo. Returns list of branch name strings."
@@ -830,13 +878,11 @@ Returns T on success, NIL otherwise."
 
 (defun git-blob-bytes (repo-path ref path)
   "Read file content at PATH under REF as raw octets. Returns byte vector or NIL."
-  (let* ((cmd (format nil "git -C ~A cat-file blob ~A:~A"
-                      (uiop:escape-sh-token (namestring repo-path))
-                      (uiop:escape-sh-token ref)
-                      (uiop:escape-sh-token path)))
+  (let* ((cmd (sandbox-wrap repo-path
+                            (list "git" "-C" (namestring repo-path)
+                                  "cat-file" "blob" (format nil "~A:~A" ref path))))
          (process (uiop:launch-program cmd :output :stream
-                                       :element-type '(unsigned-byte 8)
-                                       :force-shell t))
+                                       :element-type '(unsigned-byte 8)))
          (stream (uiop:process-info-output process)))
     (unwind-protect
          (let ((bytes (handler-case

@@ -2767,8 +2767,9 @@ the results. Skips deletes and zero-sha boundaries."
            (setf (hunchentoot:return-code*) 403)
            (return-from handle-git-http "Forbidden"))
          (multiple-value-bind (output _err exit-code)
-             (uiop:run-program (list "git" "upload-pack" "--stateless-rpc"
-                                     "--advertise-refs" (namestring disk-path))
+             (uiop:run-program (sandbox-wrap disk-path
+                                (list "git" "upload-pack" "--stateless-rpc"
+                                     "--advertise-refs" (namestring disk-path)))
                                :output :string
                                :error-output :string
                                :ignore-error-status t)
@@ -2798,8 +2799,9 @@ the results. Skips deletes and zero-sha boundaries."
                 (write-sequence request-body s))
               (let ((exit-code (nth-value 2
                                 (uiop:run-program
-                                 (list "git" "upload-pack" "--stateless-rpc"
-                                       (namestring disk-path))
+                                 (sandbox-wrap disk-path
+                                  (list "git" "upload-pack" "--stateless-rpc"
+                                       (namestring disk-path)))
                                  :input in-path
                                  :output out-path
                                  :error-output :string
