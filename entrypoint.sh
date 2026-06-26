@@ -49,7 +49,8 @@ if [ ! -f "$CONFIG" ]; then
  :checks-allow-network ${CAVE_CHECKS_ALLOW_NETWORK:-nil}
  :checks-require-network-isolation ${CAVE_CHECKS_REQUIRE_NETWORK_ISOLATION:-nil}
  :checks-memory-mb ${CAVE_CHECKS_MEMORY_MB:-nil}
- :checks-timeout-seconds ${CAVE_CHECKS_TIMEOUT_SECONDS:-120})
+ :checks-timeout-seconds ${CAVE_CHECKS_TIMEOUT_SECONDS:-120}
+ :sandbox-landlock ${CAVE_SANDBOX_LANDLOCK:-t})
 CONF
 fi
 

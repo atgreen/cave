@@ -18,6 +18,7 @@ are not built yet.
 - **Releases** — tag-backed releases with markdown body and per-asset uploads (≤ 100 MB each), download counts
 - **Commit status API** — external CI reports pass/fail per context on a commit; feeds merge eligibility
 - **Commit signature verification** — SSH-signed commits validated against registered user keys on push; "Verified" badge in the commit list
+- **Git subprocess sandboxing** — `git` push/clone, repo metadata reads, and pre-receive checks run inside a Landlock filesystem sandbox (via [landrun](https://github.com/Zouuup/landrun)) scoped to the target repo: a compromised git or check process can touch only its own repo plus read-only system paths — not other repos or host secrets (kernel-enforced cross-repo isolation). Gated by `:sandbox-landlock` (on by default); degrades to a no-op where the kernel lacks Landlock
 - **Code browser** — file tree with per-file last commit and relative age, repo language breakdown, file-type icons, Monaco editor, syntax-highlighted diffs, branch/tag switcher (overview, code, tree, and file views), SSH/HTTPS clone widget, click-a-line-number permalinks (`#L42`) with a per-line action menu
 - **README rendering** — server-side Markdown with tables and fenced code blocks; rendered HTML cached by blob sha
 - **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), repo-scoped and global
@@ -43,7 +44,7 @@ are not built yet.
 
 - **Atomic stack landing** — ordered validation plus all-or-nothing merge of a stack
 - **Richer issues** — labels, assignees, filtering, and `Closes #N` auto-close (the schema exists; the UI/API don't)
-- **Fully sandboxed checks** — pre-receive checks now run against an extracted worktree of the pushed tree with a scrubbed environment and a wall-clock timeout (`:checks-*`); still missing on the default container: enforced network isolation (it can't `unshare`, so isolation is best-effort unless the deployment grants the capability or runs checks on a runner), cgroup memory/CPU limits, and dropping to an unprivileged user
+- **Fully sandboxed checks** — pre-receive checks already run under a Landlock filesystem sandbox (cross-repo isolation, scoped to the extracted worktree) with a scrubbed environment, network isolation (`unshare -n` plus Landlock TCP-deny, best-effort where the container can't `unshare`), and a wall-clock timeout (`:checks-*`). Still missing for full isolation: cgroup memory/CPU limits and dropping to a per-repo unprivileged UID
 - **Repo deployment / CD** — build images, queue deploys, roll back, manage secrets
 - **Unit/integration tests** — for migrations, the REST API, and merge-policy rules (today only the end-to-end Playwright suite exists)
 
@@ -221,7 +222,9 @@ Two configs live side-by-side:
     :checks-allow-network nil                 ; nil = isolate network if possible
     :checks-require-network-isolation nil     ; t = reject push if isolation unavailable
     :checks-memory-mb nil                     ; integer = per-process address-space cap
-    :checks-timeout-seconds 120)              ; fallback wall-clock per check
+    :checks-timeout-seconds 120               ; fallback wall-clock per check
+    ;; Landlock filesystem sandbox for git + check subprocesses:
+    :sandbox-landlock t)                      ; t = confine (cross-repo isolation); no-op without Landlock
    ```
 
    `:workflows-allow-privileged` defaults to `nil` — a repo workflow that
@@ -234,10 +237,14 @@ Two configs live side-by-side:
    timeout. `:checks-allow-network` nil tries to isolate the network with
    `unshare -n` (best-effort — the default container can't, so it warns and runs
    without unless `:checks-require-network-isolation` is `t`, which fails the
-   push closed). In containers these map to `CAVE_WORKFLOWS_ALLOW_PRIVILEGED`,
-   `CAVE_WORKFLOWS_IMAGE_ALLOWLIST`, `CAVE_CHECKS_ALLOW_NETWORK`,
-   `CAVE_CHECKS_REQUIRE_NETWORK_ISOLATION`, `CAVE_CHECKS_MEMORY_MB`, and
-   `CAVE_CHECKS_TIMEOUT_SECONDS`.
+   push closed). Independently, `:sandbox-landlock` (on by default) wraps git
+   push/clone, metadata reads, and checks in a Landlock filesystem sandbox scoped
+   to the target repo — kernel-enforced cross-repo isolation, a no-op where
+   Landlock is unavailable. In containers these map to
+   `CAVE_WORKFLOWS_ALLOW_PRIVILEGED`, `CAVE_WORKFLOWS_IMAGE_ALLOWLIST`,
+   `CAVE_CHECKS_ALLOW_NETWORK`, `CAVE_CHECKS_REQUIRE_NETWORK_ISOLATION`,
+   `CAVE_CHECKS_MEMORY_MB`, `CAVE_CHECKS_TIMEOUT_SECONDS`, and
+   `CAVE_SANDBOX_LANDLOCK`.
 
 2. **`cave.yaml`** — declarative deployment manifest consumed by `cavectl`:
 
