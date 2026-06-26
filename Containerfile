@@ -14,24 +14,6 @@ RUN apk add --no-cache git && \
 WORKDIR /build/zoekt
 RUN CGO_ENABLED=0 go build -o /usr/local/bin/zoekt-git-index ./cmd/zoekt-git-index
 
-FROM golang:1.25-alpine AS landrun-builder
-
-## landrun: Landlock sandbox CLI used to confine git + check subprocesses
-## (filesystem MAC). See SANDBOX-WRAP in src/git.lisp.
-##
-## Built from the pinned v0.1.14 release WITH our REFER fix (upstream issue #48):
-## stock landrun calls RestrictPaths + RestrictNet separately, which stacks two
-## Landlock rulesets and makes the kernel deny ACCESS_FS_REFER — breaking git
-## receive-pack's quarantine migration (cross-dir rename/link → EXDEV). The fix
-## applies all rules in a single ruleset. See contrib/landrun/. Once upstream
-## merges the fix, drop the patch and switch back to `go install ...@<release>`.
-RUN apk add --no-cache git
-COPY contrib/landrun/0001-refer-single-ruleset.patch /tmp/landrun-refer.patch
-RUN git clone --depth 1 --branch v0.1.14 https://github.com/Zouuup/landrun.git /build/landrun \
- && cd /build/landrun \
- && git apply /tmp/landrun-refer.patch \
- && CGO_ENABLED=0 go build -o /usr/local/bin/landrun ./cmd/landrun
-
 FROM fedora:42 AS builder
 
 RUN dnf install -y sbcl make git gcc zlib-devel golang && dnf clean all
@@ -66,10 +48,9 @@ RUN dnf install -y openssh-server git pgbouncer && dnf clean all && \
 COPY --from=builder /build/cave-server /usr/bin/cave-server
 COPY --from=builder /build/cave /usr/bin/cave
 COPY --from=zoekt-builder /usr/local/bin/zoekt-git-index /usr/local/bin/zoekt-git-index
-COPY --from=landrun-builder /usr/local/bin/landrun /usr/local/bin/landrun
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/bin/cave-server /usr/bin/cave /usr/local/bin/landrun
+RUN chmod +x /entrypoint.sh /usr/bin/cave-server /usr/bin/cave
 
 EXPOSE 8080 22
 VOLUME /var/lib/cave

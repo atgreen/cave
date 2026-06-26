@@ -3,6 +3,22 @@
 ## Build:  make && podman build -t cave -f Containerfile.local .
 ## Run:    podman run -d --name cave -p 8080:8080 -p 2222:22 cave:latest
 
+FROM golang:1.25-alpine AS landrun-builder
+
+## landrun: Landlock sandbox CLI used by SANDBOX-WRAP (src/git.lisp) to confine
+## git + check subprocesses (filesystem MAC). Built from the pinned v0.1.14
+## release WITH our REFER fix (upstream issue #48 / PR #49): stock landrun calls
+## RestrictPaths + RestrictNet separately, stacking two Landlock rulesets so the
+## kernel denies ACCESS_FS_REFER and receive-pack's quarantine migration fails
+## with EXDEV. The patch applies all rules in one ruleset. Once upstream merges
+## the fix, drop the patch and switch to `go install ...@<release>`.
+RUN apk add --no-cache git
+COPY contrib/landrun/0001-refer-single-ruleset.patch /tmp/landrun-refer.patch
+RUN git clone --depth 1 --branch v0.1.14 https://github.com/Zouuup/landrun.git /build/landrun \
+ && cd /build/landrun \
+ && git apply /tmp/landrun-refer.patch \
+ && CGO_ENABLED=0 go build -o /usr/local/bin/landrun ./cmd/landrun
+
 FROM fedora:42
 
 RUN dnf install -y openssh-server git openssl && dnf clean all && \
@@ -21,9 +37,10 @@ COPY cave-server /usr/bin/cave-server
 COPY cave /usr/bin/cave
 COPY zoekt-git-index /usr/local/bin/zoekt-git-index
 COPY cave-shell.sh /usr/bin/cave-shell.sh
+COPY --from=landrun-builder /usr/local/bin/landrun /usr/local/bin/landrun
 COPY static/ /opt/cave/static/
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/bin/cave-server /usr/bin/cave /usr/bin/cave-shell.sh
+RUN chmod +x /entrypoint.sh /usr/bin/cave-server /usr/bin/cave /usr/bin/cave-shell.sh /usr/local/bin/landrun
 
 EXPOSE 8080 22
 VOLUME /var/lib/cave
