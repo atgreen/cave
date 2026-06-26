@@ -28,7 +28,7 @@
                 when (uiop:file-exists-p cand) return cand)
           prog)))
 
-(defun sandbox-wrap (rw-path argv &key exec network)
+(defun sandbox-wrap (rw-path argv &key exec network tmp-exec)
   "Prefix ARGV with a landrun Landlock sandbox confining the subprocess to:
    read/write under RW-PATH, /tmp, and the /dev pseudo-devices git needs;
    read+exec under the system prefixes (/usr, /bin, /lib, /lib64); read-only
@@ -37,16 +37,21 @@
    EXEC (grant --rwx on RW-PATH instead of --rw, so files under it can be
    EXECUTED — Landlock denies exec on --rw paths) and NETWORK (run landrun with
    --unrestricted-network, allowing TCP) are independent and needed by:
-     - receive-pack (:exec t :network t): git runs the repo's pre/post-receive
-       hooks as children. They live under <repo>/hooks (need exec) and call back
-       into Cave — pre-receive (`cave-server run-checks`) connects to Postgres
-       over TCP, post-receive curls the internal endpoint and runs sync-mirrors
-       (`git push` to mirror remotes) — so they need the network. Without these
-       the push is rejected (cannot exec the hook / pre-receive can't reach DB).
+     - receive-pack (:exec t :network t :tmp-exec t): git runs the repo's
+       pre/post-receive hooks as children. They live under <repo>/hooks (need
+       exec) and call back into Cave — pre-receive (`cave-server run-checks`)
+       connects to Postgres over TCP, post-receive curls the internal endpoint
+       and runs sync-mirrors (`git push` to mirror remotes) — so they need the
+       network. run-checks then spawns the per-check sandbox below, whose worktree
+       lives in /tmp; because stacked Landlock rulesets INTERSECT, that inner
+       --rwx is void unless this outer layer also grants /tmp exec — hence
+       TMP-EXEC (grant /tmp --rwx). Without these the push is rejected, or checks
+       that exec their own scripts silently fail.
      - checks (:exec t, :network per :checks-allow-network): an untrusted check
        command may exec scripts it shipped (e.g. ./build.sh), so the worktree is
-       --rwx; landrun's network policy mirrors the admin's check-network setting.
-   Read/clone paths pass neither: --rw (no exec) and all TCP denied (best-effort;
+       --rwx; /tmp stays --rw (NO tmp-exec) so one check cannot exec another
+       check's worktree. landrun's network mirrors the admin's check-network setting.
+   Read/clone paths pass none: --rw (no exec) and all TCP denied (best-effort;
    Landlock net needs kernel >= 6.7). Cross-repo filesystem isolation holds in
    every case — verified repoB stays unreadable even with --rwx + network.
 
@@ -70,7 +75,7 @@
        (list "landrun" "--best-effort"
              "--rox" "/usr" "--rox" "/bin" "--rox" "/lib" "--rox" "/lib64"
              "--ro"  "/etc"
-             "--rw"  "/tmp"
+             (if tmp-exec "--rwx" "--rw") "/tmp"
              "--rw"  "/dev/null" "--rw" "/dev/urandom" "--rw" "/dev/zero"
              (if exec "--rwx" "--rw") (namestring rw-path))
        (when network (list "--unrestricted-network"))

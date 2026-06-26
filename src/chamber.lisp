@@ -488,17 +488,19 @@
           (error "ReceivePack timed out on repo lock"))
         (unwind-protect
             (let ((proc (uiop:launch-program
-                         ;; Wrapped with FS confinement + :hooks t. git runs this
-                         ;; repo's pre/post-receive hooks as children, so the sandbox
-                         ;; must grant the repo --rwx (exec the hook scripts) and
-                         ;; --unrestricted-network: pre-receive (cave-server run-checks)
-                         ;; needs Postgres over TCP, and post-receive curls the internal
-                         ;; endpoint + runs sync-mirrors (git push to remotes). Without
-                         ;; these the push is rejected. Cross-repo FS isolation still
-                         ;; holds. Relies on the REFER-fixed landrun (Containerfile).
+                         ;; Wrapped with FS confinement, :exec/:network/:tmp-exec.
+                         ;; git runs this repo's pre/post-receive hooks as children:
+                         ;; :exec (repo --rwx) lets the hook scripts under <repo>/hooks
+                         ;; execute; :network lets pre-receive (cave-server run-checks)
+                         ;; reach Postgres and post-receive curl the internal endpoint
+                         ;; + run sync-mirrors (git push to remotes); :tmp-exec (/tmp
+                         ;; --rwx) lets the nested per-check sandbox exec worktree
+                         ;; scripts from /tmp (stacked Landlock rulesets intersect).
+                         ;; Without these the push is rejected. Cross-repo FS isolation
+                         ;; still holds. Relies on the REFER-fixed landrun (Containerfile).
                          (sandbox-wrap disk-path
                           (list "git" "receive-pack" (namestring disk-path))
-                          :exec t :network t)
+                          :exec t :network t :tmp-exec t)
                          :input :stream :output :stream
                          :element-type '(unsigned-byte 8))))
               (unwind-protect
