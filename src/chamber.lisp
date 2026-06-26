@@ -488,12 +488,17 @@
           (error "ReceivePack timed out on repo lock"))
         (unwind-protect
             (let ((proc (uiop:launch-program
-                         ;; Wrapped: relies on the REFER-fixed landrun built in
-                         ;; the Containerfile (upstream #48 / PR #49). receive-pack's
-                         ;; quarantine migration does a cross-dir rename/link needing
-                         ;; Landlock ACCESS_FS_REFER; stock landrun denies it (EXDEV).
+                         ;; Wrapped with FS confinement + :hooks t. git runs this
+                         ;; repo's pre/post-receive hooks as children, so the sandbox
+                         ;; must grant the repo --rwx (exec the hook scripts) and
+                         ;; --unrestricted-network: pre-receive (cave-server run-checks)
+                         ;; needs Postgres over TCP, and post-receive curls the internal
+                         ;; endpoint + runs sync-mirrors (git push to remotes). Without
+                         ;; these the push is rejected. Cross-repo FS isolation still
+                         ;; holds. Relies on the REFER-fixed landrun (Containerfile).
                          (sandbox-wrap disk-path
-                          (list "git" "receive-pack" (namestring disk-path)))
+                          (list "git" "receive-pack" (namestring disk-path))
+                          :exec t :network t)
                          :input :stream :output :stream
                          :element-type '(unsigned-byte 8))))
               (unwind-protect

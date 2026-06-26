@@ -28,25 +28,38 @@
                 when (uiop:file-exists-p cand) return cand)
           prog)))
 
-(defun sandbox-wrap (rw-path argv)
+(defun sandbox-wrap (rw-path argv &key exec network)
   "Prefix ARGV with a landrun Landlock sandbox confining the subprocess to:
    read/write under RW-PATH, /tmp, and the /dev pseudo-devices git needs;
    read+exec under the system prefixes (/usr, /bin, /lib, /lib64); read-only
-   /etc. No --connect-tcp/--bind-tcp rules are passed, so all TCP bind/connect
-   is denied (best-effort; Landlock net restrictions require kernel >= 6.7).
-   ARGV[0] is resolved to an absolute path (landrun does no PATH search).
+   /etc. ARGV[0] is resolved to an absolute path (landrun does no PATH search).
+
+   EXEC (grant --rwx on RW-PATH instead of --rw, so files under it can be
+   EXECUTED — Landlock denies exec on --rw paths) and NETWORK (run landrun with
+   --unrestricted-network, allowing TCP) are independent and needed by:
+     - receive-pack (:exec t :network t): git runs the repo's pre/post-receive
+       hooks as children. They live under <repo>/hooks (need exec) and call back
+       into Cave — pre-receive (`cave-server run-checks`) connects to Postgres
+       over TCP, post-receive curls the internal endpoint and runs sync-mirrors
+       (`git push` to mirror remotes) — so they need the network. Without these
+       the push is rejected (cannot exec the hook / pre-receive can't reach DB).
+     - checks (:exec t, :network per :checks-allow-network): an untrusted check
+       command may exec scripts it shipped (e.g. ./build.sh), so the worktree is
+       --rwx; landrun's network policy mirrors the admin's check-network setting.
+   Read/clone paths pass neither: --rw (no exec) and all TCP denied (best-effort;
+   Landlock net needs kernel >= 6.7). Cross-repo filesystem isolation holds in
+   every case — verified repoB stays unreadable even with --rwx + network.
 
    Returns ARGV unchanged when :sandbox-landlock is disabled or the landrun
    binary is absent, so hosts without Landlock just run git as before.
    --best-effort makes landrun degrade rather than fail on older kernels.
 
-   receive-pack IS supported, but ONLY against the REFER-fixed landrun built in
-   the Containerfile (upstream issue #48 / PR #49). receive-pack's quarantine
-   migration does a cross-directory rename/link needing Landlock ACCESS_FS_REFER.
-   Stock landrun calls RestrictPaths + RestrictNet separately, stacking two
-   rulesets so the kernel denies REFER (cross-dir rename/link -> EXDEV, verified
-   locally). The patched build applies all rules in one ruleset. Swapping in an
-   unpatched landrun will make pushes fail at object migration.
+   receive-pack REQUIRES the REFER-fixed landrun built in the Containerfile
+   (upstream issue #48 / PR #49). Its quarantine migration does a cross-directory
+   rename/link needing Landlock ACCESS_FS_REFER. Stock landrun calls RestrictPaths
+   + RestrictNet separately, stacking two rulesets so the kernel denies REFER
+   (cross-dir rename/link -> EXDEV, verified locally). The patched build applies
+   all rules in one ruleset; an unpatched landrun makes pushes fail at migration.
 
    Filesystem MAC only (Tangled's \"Layer 1\"): cross-repo isolation comes from
    Landlock making other repos unreachable, NOT from a per-repo UID drop."
@@ -59,8 +72,9 @@
              "--ro"  "/etc"
              "--rw"  "/tmp"
              "--rw"  "/dev/null" "--rw" "/dev/urandom" "--rw" "/dev/zero"
-             "--rw"  (namestring rw-path)
-             "--")
+             (if exec "--rwx" "--rw") (namestring rw-path))
+       (when network (list "--unrestricted-network"))
+       (list "--")
        (cons (%resolve-exe (first argv)) (rest argv)))
       argv))
 
