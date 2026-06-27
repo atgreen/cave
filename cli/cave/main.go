@@ -10,10 +10,32 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 )
+
+// openBrowser opens rawURL in the platform's default browser, falling back to
+// printing the URL when no opener is available (e.g. headless environments).
+func openBrowser(rawURL string) error {
+	var cmd string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = "open"
+	case "windows":
+		cmd, args = "rundll32", []string{"url.dll,FileProtocolHandler"}
+	default:
+		cmd = "xdg-open"
+	}
+	if path, err := exec.LookPath(cmd); err == nil {
+		return exec.Command(path, append(args, rawURL)...).Start()
+	}
+	fmt.Fprintln(os.Stdout, rawURL)
+	return nil
+}
 
 const defaultBaseURL = "http://localhost:8080"
 
@@ -25,9 +47,11 @@ type Issue struct {
 	Title     string       `json:"title"`
 	Body      string       `json:"body"`
 	Status    string       `json:"status"`
+	Author    string       `json:"author"`
 	CreatedAt json.Number  `json:"created_at"`
 	UpdatedAt json.Number  `json:"updated_at"`
 	ClosedAt  *json.Number `json:"closed_at"`
+	Comments  []IssueComment `json:"comments"`
 }
 
 type issueCreateRequest struct {
@@ -47,6 +71,7 @@ type IssueComment struct {
 	ID        int64       `json:"id"`
 	IssueID   int64       `json:"issue_id"`
 	AuthorID  int64       `json:"author_id"`
+	Author    string      `json:"author"`
 	Body      string      `json:"body"`
 	CreatedAt json.Number `json:"created_at"`
 }
@@ -365,8 +390,8 @@ func runIssues(c *client, ownerName, repoName string, args []string) error {
 	switch args[0] {
 	case "list":
 		return runIssueList(c, ownerName, repoName, args[1:])
-	case "get":
-		return runIssueGet(c, ownerName, repoName, args[1:])
+	case "view", "get":
+		return runIssueView(c, ownerName, repoName, args[1:])
 	case "create":
 		return runIssueCreate(c, ownerName, repoName, args[1:])
 	case "comment":
@@ -387,7 +412,8 @@ func runIssues(c *client, ownerName, repoName string, args []string) error {
 func runIssueList(c *client, ownerName, repoName string, args []string) error {
 	fs := flag.NewFlagSet("issue list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	status := fs.String("status", "open", "Issue status filter")
+	status := fs.String("status", "open", "Issue status filter (open|closed)")
+	state := fs.String("state", "", "Issue state filter (open|closed) [gh alias for --status]")
 	jsonOut := fs.Bool("json", false, "Emit raw JSON")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -395,8 +421,13 @@ func runIssueList(c *client, ownerName, repoName string, args []string) error {
 		}
 		return err
 	}
+	// gh uses --state; accept it as an alias and let it win when set.
+	filter := *status
+	if *state != "" {
+		filter = *state
+	}
 
-	issues, err := c.listIssues(ownerName, repoName, *status)
+	issues, err := c.listIssues(ownerName, repoName, filter)
 	if err != nil {
 		return err
 	}
@@ -413,10 +444,12 @@ func runIssueList(c *client, ownerName, repoName string, args []string) error {
 	return w.Flush()
 }
 
-func runIssueGet(c *client, ownerName, repoName string, args []string) error {
-	fs := flag.NewFlagSet("issue get", flag.ContinueOnError)
+func runIssueView(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("issue view", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+	comments := fs.Bool("comments", false, "Include the full comment thread")
+	web := fs.Bool("web", false, "Open the issue in a browser")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -424,10 +457,17 @@ func runIssueGet(c *client, ownerName, repoName string, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: cave issue get [flags] <number>")
+		return errors.New("usage: cave issue view [flags] <number>")
+	}
+	number := fs.Arg(0)
+
+	if *web {
+		u := fmt.Sprintf("%s/%s/%s/issues/%s", c.baseURL,
+			url.PathEscape(ownerName), url.PathEscape(repoName), url.PathEscape(number))
+		return openBrowser(u)
 	}
 
-	issue, err := c.getIssue(ownerName, repoName, fs.Arg(0))
+	issue, err := c.getIssue(ownerName, repoName, number)
 	if err != nil {
 		return err
 	}
@@ -436,13 +476,42 @@ func runIssueGet(c *client, ownerName, repoName string, args []string) error {
 		return writeJSON(os.Stdout, issue)
 	}
 
+	// Header: title, then a gh-style status line.
 	fmt.Fprintf(os.Stdout, "#%d %s\n", issue.Number, issue.Title)
-	fmt.Fprintf(os.Stdout, "Status: %s\n", issue.Status)
+	openedBy := ""
+	if issue.Author != "" {
+		openedBy = fmt.Sprintf(" • opened by %s", issue.Author)
+	}
+	fmt.Fprintf(os.Stdout, "%s%s • %d comment%s\n",
+		strings.ToUpper(issue.Status), openedBy,
+		len(issue.Comments), plural(len(issue.Comments)))
 	if issue.Body != "" {
 		fmt.Fprintln(os.Stdout)
 		fmt.Fprintln(os.Stdout, issue.Body)
 	}
+
+	if *comments {
+		for _, cm := range issue.Comments {
+			fmt.Fprintln(os.Stdout, "\n--------------------------------------------------")
+			author := cm.Author
+			if author == "" {
+				author = "unknown"
+			}
+			fmt.Fprintf(os.Stdout, "%s commented:\n\n", author)
+			fmt.Fprintln(os.Stdout, cm.Body)
+		}
+	} else if len(issue.Comments) > 0 {
+		fmt.Fprintf(os.Stdout, "\n———\nUse --comments to read %d comment%s.\n",
+			len(issue.Comments), plural(len(issue.Comments)))
+	}
 	return nil
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func runIssueCreate(c *client, ownerName, repoName string, args []string) error {
@@ -762,8 +831,8 @@ func printRepoUsage(w io.Writer) {
 
 func printIssueUsage(w io.Writer) {
 	fmt.Fprintln(w, "Issue commands:")
-	fmt.Fprintln(w, "  issue list [--status open|closed] [--json]")
-	fmt.Fprintln(w, "  issue get [--json] <number>")
+	fmt.Fprintln(w, "  issue list [--state open|closed] [--json]")
+	fmt.Fprintln(w, "  issue view [--comments] [--web] [--json] <number>")
 	fmt.Fprintln(w, "  issue create --title TITLE [--body TEXT] [--json]")
 	fmt.Fprintln(w, "  issue comment <number> --body TEXT|- [--body-file PATH] [--json]")
 	fmt.Fprintln(w, "  issue close <number>")

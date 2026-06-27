@@ -2585,7 +2585,24 @@ the results. Skips deletes and zero-sha boundaries."
     (let* ((num (parse-integer id :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from api-get-issue (json-error "not found" :status 404)))
-      (json-response issue))))
+      ;; gh-style detail: embed the author login and the full comment thread so
+      ;; `cave issue view` can render everything in one request. Existing issue
+      ;; fields are preserved; `author` and `comments` are additive.
+      (let ((obj (plist-to-hash-table issue))
+            (author (find-user-by-id (getf issue :author-id))))
+        (setf (gethash "author" obj) (or (getf author :username) :null))
+        (setf (gethash "comments" obj)
+              (map 'vector
+                   (lambda (c)
+                     (let ((h (make-hash-table :test 'equal)))
+                       (setf (gethash "id" h) (getf c :id))
+                       (setf (gethash "author" h) (or (getf c :username) :null))
+                       (setf (gethash "body" h) (getf c :body))
+                       (setf (gethash "created_at" h)
+                             (princ-to-string (getf c :created-at)))
+                       h))
+                   (list-issue-comments (getf issue :id))))
+        (json-response obj)))))
 
 (easy-routes:defroute api-update-issue
     ("/api/v1/repos/:owner/:repo-name/issues/:id" :method :patch) ()
