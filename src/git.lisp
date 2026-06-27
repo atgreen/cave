@@ -310,22 +310,29 @@ Returns T on success, NIL otherwise."
     (unwind-protect
          (let ((exit-code
                 (progn
-                  (multiple-value-bind (_o _e code)
+                  (multiple-value-bind (wt-out wt-err code)
                       (git-run repo-path "worktree" "add" tmpdir target-branch)
-                    (declare (ignore _o _e))
+                    (llog:info "merge: worktree-add"
+                               :repo (namestring repo-path)
+                               :source source-branch :target target-branch
+                               :squash (and squash t)
+                               :ref-before (nth-value 0 (git-run repo-path "rev-parse" target-branch))
+                               :tmpdir tmpdir :code code :out wt-out :err wt-err)
                     (unless (zerop code) (return-from git-merge-branch nil)))
                   (if squash
                       ;; Squash merge: merge --squash then commit
-                      (multiple-value-bind (_o _e code)
+                      (multiple-value-bind (sq-out sq-err code)
                           (uiop:run-program
                            (list "git" "-C" tmpdir "merge" "--squash" source-branch)
                            :output '(:string :stripped t)
                            :error-output '(:string :stripped t)
                            :ignore-error-status t)
-                        (declare (ignore _o _e))
+                        (llog:info "merge: squash merge result"
+                                   :source source-branch :target target-branch
+                                   :code code :out sq-out :err sq-err)
                         (unless (zerop code) (return-from git-merge-branch nil))
                         ;; Commit the squashed changes
-                        (multiple-value-bind (_o2 _e2 code2)
+                        (multiple-value-bind (cm-out cm-err code2)
                             (uiop:run-program
                              (append (list "git" "-C" tmpdir) ident
                                      (list "commit" "--no-edit"
@@ -335,10 +342,14 @@ Returns T on success, NIL otherwise."
                              :output '(:string :stripped t)
                              :error-output '(:string :stripped t)
                              :ignore-error-status t)
-                          (declare (ignore _o2 _e2))
+                          (llog:info "merge: squash commit result"
+                                     :source source-branch :target target-branch
+                                     :code code2 :out cm-out :err cm-err
+                                     :worktree-head (nth-value 0 (git-run repo-path "-C" tmpdir "rev-parse" "HEAD"))
+                                     :ref-after (nth-value 0 (git-run repo-path "rev-parse" target-branch)))
                           code2))
                       ;; Regular merge
-                      (multiple-value-bind (_o _e code)
+                      (multiple-value-bind (mg-out mg-err code)
                           (uiop:run-program
                            (append (list "git" "-C" tmpdir) ident
                                    (list "merge" "--no-edit")
@@ -347,7 +358,11 @@ Returns T on success, NIL otherwise."
                            :output '(:string :stripped t)
                            :error-output '(:string :stripped t)
                            :ignore-error-status t)
-                        (declare (ignore _o _e))
+                        (llog:info "merge: git-merge result"
+                                   :source source-branch :target target-branch
+                                   :code code :out mg-out :err mg-err
+                                   :worktree-head (nth-value 0 (git-run repo-path "-C" tmpdir "rev-parse" "HEAD"))
+                                   :ref-after (nth-value 0 (git-run repo-path "rev-parse" target-branch)))
                         code)))))
            (zerop exit-code))
       (uiop:run-program (list "git" "-C" (namestring repo-path)
