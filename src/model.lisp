@@ -1787,6 +1787,27 @@
                            (not (getf pr :is-closed))))
           rules)
 
+    ;; Rule 1b: No merge conflicts with the target branch. Detected in-memory
+    ;; with git merge-tree (no worktree) so the PR page can warn — and the merge
+    ;; button can block — BEFORE a merge is attempted. The conflicting file list
+    ;; rides along on the rule so the view can render it.
+    (let* ((source (getf pr :source-branch))
+           (target (getf pr :target-branch))
+           (disk (when (and (not (getf pr :is-merged)) (not (getf pr :is-closed)))
+                   (ignore-errors (repo-disk-path (repo-owner-name repo)
+                                                  (getf repo :name))))))
+      (when disk
+        (multiple-value-bind (conflict-p files)
+            (git-merge-conflicts disk target source)
+          (push (list :kind :conflicts
+                      :description (cond ((not conflict-p) "No merge conflicts")
+                                         (files (format nil "Conflicts with ~A (~D file~:P)"
+                                                        target (length files)))
+                                         (t (format nil "Conflicts with ~A" target)))
+                      :pass (not conflict-p)
+                      :conflict-files files)
+                rules))))
+
     ;; Rule 2: Target branch exists (simplified — always true for now)
     (push (list :description "Target branch exists"
                 :pass t)

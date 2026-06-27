@@ -385,6 +385,34 @@ Returns T on success, NIL otherwise."
       (when (probe-file tmpdir)
         (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
 
+(defun git-merge-conflicts (repo-path target-branch source-branch)
+  "Test-merge SOURCE-BRANCH into TARGET-BRANCH entirely in memory — no worktree,
+   no checkout — with `git merge-tree`. Returns (values conflict-p files):
+   CONFLICT-P is T when the merge would conflict, and FILES is the list of
+   conflicting paths (git can report a conflict with an empty file list). A clean
+   merge, or an indeterminate result (e.g. a missing branch), returns
+   (values NIL NIL) so detection never falsely blocks a merge.
+
+   merge-tree exits 1 on conflict; the -z output is
+   <tree-oid> NUL <file> NUL <file> ... — we drop the leading tree oid."
+  (multiple-value-bind (out err code)
+      (git-run repo-path "merge-tree" "--write-tree" "-z" "--name-only"
+               "--no-messages" target-branch source-branch)
+    (declare (ignore err))
+    (if (eql code 1)
+        (let ((fields (remove "" (uiop:split-string (or out "")
+                                                    :separator (list #\Nul))
+                              :test #'string=)))
+          (values t (rest fields)))
+        (values nil nil))))
+
+(defun git-commit-ancestor-p (repo-path commit branch)
+  "Return T iff COMMIT exists and is an ancestor of BRANCH (i.e. already on it).
+   Used to validate a 'mark as manually merged' commit id."
+  (and (stringp commit) (plusp (length (string-trim " " commit)))
+       (eql 0 (nth-value 2 (git-run repo-path "merge-base" "--is-ancestor"
+                                    commit branch)))))
+
 (defun git-commit-file-on-branch (repo-path base-branch new-branch path content message
                                   &key (author-name "cave-bot")
                                        (author-email "cave-bot@localhost"))

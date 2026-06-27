@@ -2268,6 +2268,10 @@ the results. Skips deletes and zero-sha boundaries."
              (can-override (and is-admin (not mergeable)
                                 (not (getf pr :is-merged))
                                 (not (getf pr :is-closed))))
+             ;; Conflicting files (if any) ride on the :conflicts eligibility rule.
+             (conflict-files (getf (find :conflicts eligibility
+                                         :key (lambda (r) (getf r :kind)))
+                                   :conflict-files))
              (stack (find-stack-by-id (getf pr :stack-id)))
              (stack-items (when stack (list-stack-pull-requests (getf stack :id))))
              ;; Diff
@@ -2297,7 +2301,7 @@ the results. Skips deletes and zero-sha boundaries."
          (view-pull-request :owner-name owner :repo repo :pr pr
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
-                         :can-override can-override
+                         :can-override can-override :conflict-files conflict-files
                          :stack stack :stack-items stack-items
                          :diff-raw diff-raw :source-missing source-missing
                          :diff-comments-json comments-json
@@ -2398,6 +2402,33 @@ the results. Skips deletes and zero-sha boundaries."
       (when (or (getf pr :is-merged) (getf pr :is-closed))
         (setf (hunchentoot:return-code*) 409)
         (return-from merge-pull-request-submit "Pull request is already merged or closed"))
+      ;; Mark as manually merged: an admin asserts the PR's changes already
+      ;; landed on the target (e.g. they resolved conflicts and pushed out of
+      ;; band). Validate the pasted commit is actually an ancestor of the target
+      ;; branch, then mark merged — bypassing the eligibility gate and the
+      ;; auto-merge entirely (mirrors Gitea's MergeStyleManuallyMerged).
+      (let ((manual (hunchentoot:post-parameter "manual_merge_commit")))
+        (when (and manual (plusp (length (string-trim " " manual))))
+          (let ((commit (string-trim " " manual))
+                (target (getf pr :target-branch))
+                (disk (repo-disk-path owner repo-name)))
+            (unless (git-commit-ancestor-p disk commit target)
+              (setf (hunchentoot:return-code*) 409)
+              (return-from merge-pull-request-submit
+                (format nil "Commit ~A is not on ~A — paste a commit that is already merged into the target branch."
+                        commit target)))
+            (merge-pull-request (getf pr :id))
+            (log-event "pr.merged"
+                       :user-id *current-user-id* :repo-id (getf repo :id)
+                       :entity-type "pull_request" :entity-id (getf pr :id)
+                       :metadata (format nil "Manually merged at ~A" commit))
+            (notify-pr-merged repo owner repo-name pr)
+            (fire-webhooks (getf repo :id) "pull_request"
+                           (make-webhook-payload "pull_request.merged"
+                                                 :owner owner :repo repo-name
+                                                 :number (getf pr :number)))
+            (return-from merge-pull-request-submit
+              (hunchentoot:redirect (format nil "/~A/~A/pulls/~A" owner repo-name number))))))
       ;; Admins (the only role that reaches here) may bypass the eligibility
       ;; gate by posting override=t — used by the "merge anyway" UI. Audit-log
       ;; any override so a bypassed check is traceable.

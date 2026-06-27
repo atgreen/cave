@@ -1463,7 +1463,7 @@ function caveToggleCommentForm(btn) {
 ")))))
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
-                             can-merge can-override stack stack-items diff-raw
+                             can-merge can-override conflict-files stack stack-items diff-raw
                              diff-comments-json comment-action
                              commit-statuses source-missing)
   "Render a pull request detail page."
@@ -1643,10 +1643,38 @@ function caveShowCommentForm(td) {
               "Squash and merge")
              (:button.btn :type "submit" :name "strategy" :value "fast-forward-only"
               "Fast-forward only"))))
-         ;; Admin escape hatch: when the PR fails one or more requirements, a
-         ;; repo admin may still merge. Tucked behind a disclosure so it is a
-         ;; deliberate action, and posts override=t which the route audit-logs.
-         (when can-override
+         ;; Conflicts: list the conflicting files and how to resolve them. A
+         ;; "merge anyway" override can't succeed on a real conflict, so that is
+         ;; suppressed below; instead admins get a "mark as manually merged"
+         ;; escape hatch for when they resolve + push out of band.
+         (when conflict-files
+           (let ((source (getf pr :source-branch))
+                 (target (getf pr :target-branch))
+                 (ssh-url (ssh-clone-url org-name repo-name)))
+             (:div.merge-conflicts
+              (:h3 (format nil "Conflicts with ~A" target))
+              (:p "These files conflict and must be resolved before this pull request can be merged:")
+              (:ul (dolist (f conflict-files) (:li (:code f))))
+              (:p "Resolve locally, then push the updated branch:")
+              (:pre
+               (format nil "git fetch ~A~%git checkout ~A~%git merge origin/~A~%# fix the conflicting files above, then:~%git add -A && git commit~%git push origin ~A"
+                       ssh-url target source target))
+              (when can-override
+                (:details.merge-manual
+                 (:summary "Mark as manually merged")
+                 (:form :method "post"
+                  :action (format nil "/~A/~A/pulls/~A/merge" org-name repo-name cs-num)
+                  (:p :style "margin:var(--sp-2) 0;color:var(--fg-muted)"
+                   (format nil "If you already merged ~A into ~A another way, paste the resulting commit on ~A to close this out:"
+                           source target target))
+                  (:input :type "text" :name "manual_merge_commit"
+                   :placeholder "commit sha on target"
+                   :style "width:100%;margin-bottom:var(--sp-2)")
+                  (:button.btn :type "submit" "Mark as manually merged")))))))
+         ;; Admin escape hatch for OTHER unmet requirements (failing checks,
+         ;; missing approvals). Suppressed for conflicts, where merge-anyway
+         ;; can't win — those get the resolution UI above instead.
+         (when (and can-override (not conflict-files))
            (:details.merge-override
             (:summary "⚠ Admin override — merge anyway")
             (:form :method "post"
