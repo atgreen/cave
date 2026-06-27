@@ -27,6 +27,13 @@ RUN dnf install -y make gcc && dnf clean all
 RUN mkdir -p /var/cache/cave-runner/common-lisp \
     && chown -R podman:podman /var/cache/cave-runner
 
+# Per-job working trees live here (overridable via CAVE_RUNNER_WORKDIR). In
+# production mount a NATIVE (ext4/xfs) host volume over this path: building from
+# the container's fuse-overlayfs makes source reads crawl and wedges jobs (#9).
+# Pre-created + owned by `podman` so an unmounted dev run still works (on fuse).
+RUN mkdir -p /var/lib/cave-runner/work \
+    && chown -R podman:podman /var/lib/cave-runner
+
 # The runner is a subcommand of cave-server.
 COPY --chmod=755 cave-server /usr/bin/cave-server
 

@@ -867,7 +867,17 @@
                   (steps (slot-value task 'cave::steps))
                   (privileged (handler-case (slot-value task 'cave::privileged)
                                 (error () nil)))
-                  (workdir (format nil "/tmp/cave-job-~A" job-id))
+                  ;; Base dir for per-job working trees. In production this is a
+                  ;; NATIVE (ext4/xfs) host volume mounted into the rootless
+                  ;; cave-runner, NOT the container's fuse-overlayfs /tmp: an
+                  ;; SBCL/Go build reading source from a fuse-overlayfs /workspace
+                  ;; crawls and wedges the job (issue #9). Override the location
+                  ;; with CAVE_RUNNER_WORKDIR.
+                  (workdir-base (let ((e (uiop:getenv "CAVE_RUNNER_WORKDIR")))
+                                  (if (and e (plusp (length e)))
+                                      (string-right-trim "/" e)
+                                      "/var/lib/cave-runner/work")))
+                  (workdir (format nil "~A/cave-job-~A" workdir-base job-id))
                   (container-name (format nil "cave-job-~A" job-id))
                   ;; Persisted across jobs so Lisp builds reuse compiled FASLs
                   ;; instead of recompiling the whole ocicl tree every run (the
@@ -887,6 +897,9 @@
                                 :metadata (make-auth-metadata auth-token))
              (unwind-protect
               (progn
+                ;; Ensure the (native-volume) workdir base exists before cloning.
+                (ignore-errors
+                 (ensure-directories-exist (concatenate 'string workdir-base "/")))
                 ;; Pull image
                 (format t "  Pulling ~A...~%" image)
                 (multiple-value-bind (_out _err exit)
