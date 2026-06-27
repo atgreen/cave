@@ -9,7 +9,11 @@ jobs:
       - name: List files (pre)
         run: ls -l
       - name: Build Cave
-        run: make build
+        # Build cave's own artifacts only. `make build` also compiles the
+        # vendored third-party zoekt-git-index (huge Go dep tree that flakily
+        # hangs on `go: downloading` — see #9); the prod image builds zoekt in
+        # its own stage, so CI doesn't need it to validate that cave compiles.
+        run: make cave-server cave cavectl
       - name: List files (post)
         run: ls -l
 	
