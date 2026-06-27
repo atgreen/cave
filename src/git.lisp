@@ -6,16 +6,32 @@
 
 ;;; Shell out to git for all operations. Simple and correct.
 
-(defun git-run (repo-path &rest args)
-  "Run a git command in REPO-PATH. Returns (VALUES output error-output exit-code)."
+(defun %git-run (repo-path args &key network)
+  "Run `git -C REPO-PATH ARGS` under the Landlock sandbox. When NETWORK is true,
+   network egress is allowed (for git operations that contact an external
+   remote); filesystem confinement to REPO-PATH is unchanged either way.
+   Returns (VALUES output error-output exit-code)."
   (let ((cmd (sandbox-wrap repo-path
-                           (append (list "git" "-C" (namestring repo-path)) args))))
+                           (append (list "git" "-C" (namestring repo-path)) args)
+                           :network network)))
     (multiple-value-bind (output error-output exit-code)
         (uiop:run-program cmd
                           :output '(:string :stripped t)
                           :error-output '(:string :stripped t)
                           :ignore-error-status t)
       (values output error-output exit-code))))
+
+(defun git-run (repo-path &rest args)
+  "Run a local git command in REPO-PATH (no network egress).
+   Returns (VALUES output error-output exit-code)."
+  (%git-run repo-path args))
+
+(defun git-run-net (repo-path &rest args)
+  "Like GIT-RUN but with network egress allowed — for git operations that
+   contact an external remote (mirror push/pull, fetch-from-url). The sandbox
+   still confines the filesystem to REPO-PATH, so a compromised git process
+   reaches only this repo, not other repos or host secrets."
+  (%git-run repo-path args :network t))
 
 (defun %resolve-exe (prog)
   "Resolve a bare program name to an absolute path. landrun execs ARGV[0]
@@ -482,7 +498,7 @@ Returns T on success, NIL otherwise."
   "Best-effort fetch of COMMIT (and ancestors) from URL into bare REPO-PATH."
   (ensure-safe-remote-url url)
   (multiple-value-bind (_o _e exit)
-      (git-run repo-path "fetch" "--quiet" "--filter=blob:none" url commit)
+      (git-run-net repo-path "fetch" "--quiet" "--filter=blob:none" url commit)
     (declare (ignore _o _e))
     (zerop exit)))
 
@@ -511,7 +527,7 @@ Returns T on success, NIL otherwise."
   (ensure-safe-remote-url remote-url)
   (let ((url (inject-auth-token remote-url auth-token)))
     (multiple-value-bind (output err exit-code)
-        (git-run repo-path "push" "--mirror" url)
+        (git-run-net repo-path "push" "--mirror" url)
       (declare (ignore output))
       (values (zerop exit-code) err))))
 
@@ -521,12 +537,12 @@ Returns T on success, NIL otherwise."
   (ensure-safe-remote-url remote-url)
   (let ((url (inject-auth-token remote-url auth-token)))
     (multiple-value-bind (output err exit-code)
-        (git-run repo-path "fetch" "--prune" url "+refs/*:refs/*")
+        (git-run-net repo-path "fetch" "--prune" url "+refs/*:refs/*")
       (declare (ignore output))
       (when (zerop exit-code)
         ;; Auto-detect default branch: try remote HEAD, fall back to master/main
         (multiple-value-bind (remote-head _e rc)
-            (git-run repo-path "remote" "show" url)
+            (git-run-net repo-path "remote" "show" url)
           (declare (ignore _e))
           (when (zerop rc)
             (let ((line (find-if (lambda (l) (search "HEAD branch:" l))
