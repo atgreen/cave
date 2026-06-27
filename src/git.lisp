@@ -296,23 +296,29 @@ Returns T on success, NIL otherwise."
               (values a "cave-bot@localhost")))
         (values "cave-bot" "cave-bot@localhost"))))
 
-(defun git-merge-branch (repo-path source-branch target-branch &key squash author message)
-  "Merge SOURCE-BRANCH into TARGET-BRANCH in a bare repo.
-   If SQUASH is T, squash all commits into one. AUTHOR (\"Name <email>\") and
-   MESSAGE customize the merge/squash commit; a fallback identity is always set
-   so commits never fail for a missing committer in a clean worktree.
-   Uses a temporary worktree. Returns T on success, NIL on failure."
+(defun git-merge-branch (repo-path source-branch target-branch &key strategy author message)
+  "Merge SOURCE-BRANCH into TARGET-BRANCH in a bare repo using STRATEGY:
+     \"merge\"             — always create a merge commit (git merge --no-ff), so
+                          every merge is an auditable point in TARGET's history;
+     \"squash\"            — collapse SOURCE's commits into one new commit;
+     \"fast-forward-only\" — move TARGET to SOURCE only if it is a clean
+                          fast-forward, otherwise fail (no merge commit).
+   STRATEGY defaults to \"merge\". AUTHOR (\"Name <email>\") and MESSAGE customize
+   the merge/squash commit; a fallback identity and message are always supplied
+   so commits never fail. Uses a temporary worktree. Returns T on success, NIL
+   on failure (conflicts, or a non-fast-forwardable \"fast-forward-only\")."
   (let ((tmpdir (format nil "/tmp/cave-merge-~A" (ironclad:byte-array-to-hex-string
                                                    (ironclad:random-data 8))))
         (ident (multiple-value-bind (name email) (parse-git-author author)
                  (list "-c" (format nil "user.name=~A" name)
                        "-c" (format nil "user.email=~A" email))))
-        ;; Normalize MESSAGE to nil when blank. A blank `-m ""` is fatal for a
-        ;; fast-forward merge: git prints "No merge message -- not updating HEAD"
-        ;; and exits 0 WITHOUT moving the ref, so the merge silently no-ops.
+        ;; Normalize MESSAGE to nil when blank. A blank `-m ""` is fatal: git
+        ;; prints "No merge message -- not updating HEAD" / aborts the commit,
+        ;; so we always fall back to a generated message below.
         (msg (let ((m (and (stringp message)
                            (string-trim '(#\Space #\Tab #\Newline #\Return) message))))
-               (and m (plusp (length m)) m))))
+               (and m (plusp (length m)) m)))
+        (strat (if (and (stringp strategy) (plusp (length strategy))) strategy "merge")))
     (unwind-protect
          (let ((exit-code
                 (progn
@@ -320,47 +326,57 @@ Returns T on success, NIL otherwise."
                       (git-run repo-path "worktree" "add" tmpdir target-branch)
                     (declare (ignore _o _e))
                     (unless (zerop code) (return-from git-merge-branch nil)))
-                  (if squash
-                      ;; Squash merge: merge --squash then commit
-                      (multiple-value-bind (_o _e code)
-                          (uiop:run-program
-                           (list "git" "-C" tmpdir "merge" "--squash" source-branch)
-                           :output '(:string :stripped t)
-                           :error-output '(:string :stripped t)
-                           :ignore-error-status t)
-                        (declare (ignore _o _e))
-                        (unless (zerop code) (return-from git-merge-branch nil))
-                        ;; Commit the squashed changes. MSG is nil when blank, so
-                        ;; we always fall back to a real message — `git commit -m ""`
-                        ;; aborts on an empty message.
-                        (multiple-value-bind (_o2 _e2 code2)
-                            (uiop:run-program
-                             (append (list "git" "-C" tmpdir) ident
-                                     (list "commit" "--no-edit"
-                                           "-m" (or msg
-                                                    (format nil "Squash merge ~A into ~A"
-                                                            source-branch target-branch))))
-                             :output '(:string :stripped t)
-                             :error-output '(:string :stripped t)
-                             :ignore-error-status t)
-                          (declare (ignore _o2 _e2))
-                          code2))
-                      ;; Regular merge. Only pass `-m` when MSG is non-blank: a
-                      ;; blank `-m ""` makes a fast-forward print "No merge message
-                      ;; -- not updating HEAD" and exit 0 without moving the ref.
-                      ;; With no `-m`, --no-edit auto-generates the merge message
-                      ;; for true merges and fast-forwards advance the ref normally.
-                      (multiple-value-bind (_o _e code)
-                          (uiop:run-program
-                           (append (list "git" "-C" tmpdir) ident
-                                   (list "merge" "--no-edit")
-                                   (when msg (list "-m" msg))
-                                   (list source-branch))
-                           :output '(:string :stripped t)
-                           :error-output '(:string :stripped t)
-                           :ignore-error-status t)
-                        (declare (ignore _o _e))
-                        code)))))
+                  (cond
+                    ;; Squash: merge --squash then commit.
+                    ((string= strat "squash")
+                     (multiple-value-bind (_o _e code)
+                         (uiop:run-program
+                          (list "git" "-C" tmpdir "merge" "--squash" source-branch)
+                          :output '(:string :stripped t)
+                          :error-output '(:string :stripped t)
+                          :ignore-error-status t)
+                       (declare (ignore _o _e))
+                       (unless (zerop code) (return-from git-merge-branch nil))
+                       (multiple-value-bind (_o2 _e2 code2)
+                           (uiop:run-program
+                            (append (list "git" "-C" tmpdir) ident
+                                    (list "commit" "--no-edit"
+                                          "-m" (or msg
+                                                   (format nil "Squash merge ~A into ~A"
+                                                           source-branch target-branch))))
+                            :output '(:string :stripped t)
+                            :error-output '(:string :stripped t)
+                            :ignore-error-status t)
+                         (declare (ignore _o2 _e2))
+                         code2)))
+                    ;; Fast-forward only: advance the ref iff it is a clean FF,
+                    ;; else exit non-zero (caller reports the failure).
+                    ((string= strat "fast-forward-only")
+                     (multiple-value-bind (_o _e code)
+                         (uiop:run-program
+                          (list "git" "-C" tmpdir "merge" "--ff-only" source-branch)
+                          :output '(:string :stripped t)
+                          :error-output '(:string :stripped t)
+                          :ignore-error-status t)
+                       (declare (ignore _o _e))
+                       code))
+                    ;; Default "merge": --no-ff always creates a merge commit
+                    ;; (even when a fast-forward is possible), so it needs a
+                    ;; non-blank message — supplied or generated above.
+                    (t
+                     (multiple-value-bind (_o _e code)
+                         (uiop:run-program
+                          (append (list "git" "-C" tmpdir) ident
+                                  (list "merge" "--no-ff" "--no-edit"
+                                        "-m" (or msg
+                                                 (format nil "Merge ~A into ~A"
+                                                         source-branch target-branch)))
+                                  (list source-branch))
+                          :output '(:string :stripped t)
+                          :error-output '(:string :stripped t)
+                          :ignore-error-status t)
+                       (declare (ignore _o _e))
+                       code))))))
            (zerop exit-code))
       (uiop:run-program (list "git" "-C" (namestring repo-path)
                               "worktree" "remove" "--force" tmpdir)

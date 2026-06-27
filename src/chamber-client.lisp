@@ -339,22 +339,24 @@ the Hunchentoot worker forever."
 
 ;;; --- Write operations ---
 
-(defun chamber-merge-branch (owner repo-name target source &key author message squash)
-  "Merge source into target. Returns (VALUES success-p error-string)."
-  (chamber-or
-      (let ((resp (chamber-call "/cave.chamber.Chamber/MergeBranch"
-                                (make-instance 'cave::merge-branch-request
-                                               :owner owner :repo-name repo-name
-                                               :target target :source source
-                                               :author (or author "")
-                                               :message (or message "")
-                                               :squash (if squash t nil))
-                                'cave::merge-branch-response
-                                :owner owner :repo-name repo-name :write-p t)))
-        (values (slot-value resp 'cave::ok)
-                (slot-value resp 'cave::error-message)))
-      (git-merge-branch (repo-disk-path owner repo-name) target source
-                         :author author :message message :squash squash)))
+(defun chamber-merge-branch (owner repo-name target source &key author message strategy)
+  "Merge source into target with STRATEGY (\"merge\" (default, --no-ff),
+   \"squash\", or \"fast-forward-only\"). Returns (VALUES success-p error-string)."
+  (let ((strategy (or strategy "merge")))
+    (chamber-or
+        (let ((resp (chamber-call "/cave.chamber.Chamber/MergeBranch"
+                                  (make-instance 'cave::merge-branch-request
+                                                 :owner owner :repo-name repo-name
+                                                 :target target :source source
+                                                 :author (or author "")
+                                                 :message (or message "")
+                                                 :strategy strategy)
+                                  'cave::merge-branch-response
+                                  :owner owner :repo-name repo-name :write-p t)))
+          (values (slot-value resp 'cave::ok)
+                  (slot-value resp 'cave::error-message)))
+        (git-merge-branch (repo-disk-path owner repo-name) target source
+                           :author author :message message :strategy strategy))))
 
 (defun chamber-delete-branch (owner repo-name branch)
   (chamber-or

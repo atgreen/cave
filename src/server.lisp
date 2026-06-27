@@ -2398,15 +2398,26 @@ the results. Skips deletes and zero-sha boundaries."
       ;; marks the PR merged and deletes the branch while main never changes.
       (let* ((source (getf pr :source-branch))
              (target (getf pr :target-branch))
-             (strategy (hunchentoot:post-parameter "strategy"))
+             ;; Normalize the requested strategy to a known value; default to a
+             ;; --no-ff merge commit (GitHub/Gitea convention) so every PR leaves
+             ;; an auditable merge point in the target branch's history.
+             (raw-strategy (hunchentoot:post-parameter "strategy"))
+             (strategy (cond ((equal raw-strategy "squash") "squash")
+                             ((equal raw-strategy "fast-forward-only") "fast-forward-only")
+                             (t "merge")))
+             (message (format nil "Merge pull request #~A from ~A into ~A"
+                              (getf pr :number) source target))
              (disk (repo-disk-path owner repo-name))
              (before (nth-value 0 (git-run disk "rev-parse" target)))
              (merged (chamber-merge-branch owner repo-name source target
-                                           :squash (equal strategy "squash")))
+                                           :strategy strategy :message message))
              (after (nth-value 0 (git-run disk "rev-parse" target))))
         (unless merged
           (setf (hunchentoot:return-code*) 409)
-          (return-from merge-pull-request-submit "Merge failed — conflicts?"))
+          (return-from merge-pull-request-submit
+            (if (equal strategy "fast-forward-only")
+                "Merge failed — not a fast-forward (the target branch has commits the source doesn't)."
+                "Merge failed — conflicts?")))
         (when (and before after (string= before after))
           (setf (hunchentoot:return-code*) 409)
           (return-from merge-pull-request-submit

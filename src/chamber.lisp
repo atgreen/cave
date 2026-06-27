@@ -349,14 +349,14 @@
          (source (slot-value request 'cave::source))
          (author (slot-value request 'cave::author))
          (message (slot-value request 'cave::message))
-         (squash (slot-value request 'cave::squash))
+         (strategy (slot-value request 'cave::strategy))
          (disk-path (chamber-repo-path owner repo-name))
          (repo-key (format nil "~A/~A" owner repo-name)))
     (with-git-write repo-key
       (multiple-value-bind (success-p err)
           (git-merge-branch disk-path target source
                             :author author :message message
-                            :squash squash)
+                            :strategy strategy)
         (make-instance 'cave::merge-branch-response
                        :ok success-p
                        :error-message (or err ""))))))

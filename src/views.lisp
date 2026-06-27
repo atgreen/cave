@@ -1640,7 +1640,9 @@ function caveShowCommentForm(td) {
              (:button.btn.btn-primary :type "submit" :name "strategy" :value "merge"
               "Merge")
              (:button.btn :type "submit" :name "strategy" :value "squash"
-              "Squash and merge"))))))
+              "Squash and merge")
+             (:button.btn :type "submit" :name "strategy" :value "fast-forward-only"
+              "Fast-forward only"))))))
 
       ;; Reviews
       (:section

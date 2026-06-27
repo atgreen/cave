@@ -255,7 +255,8 @@ message MergeBranchRequest {
   string source = 4;
   string author = 5;
   string message = 6;
-  bool squash = 7;
+  bool squash = 7;  // deprecated: superseded by `strategy`
+  string strategy = 8;  // "merge" (--no-ff), "squash", "fast-forward-only"; "" => "merge"
 }
 
 message MergeBranchResponse {
