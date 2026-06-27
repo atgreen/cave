@@ -2435,9 +2435,18 @@ the results. Skips deletes and zero-sha boundaries."
              (message (format nil "Merge pull request #~A from ~A into ~A"
                               (getf pr :number) source target))
              (disk (repo-disk-path owner repo-name))
+             ;; If SOURCE is already an ancestor of TARGET there is nothing to
+             ;; merge — its commits are already in TARGET. git would report
+             ;; "Already up to date" and the ref legitimately would not move, so
+             ;; treat this as a successful no-op merge (mark the PR merged)
+             ;; rather than running a merge that trips the did-not-advance guard.
+             (already-merged (zerop (nth-value 2
+                                     (git-run disk "merge-base" "--is-ancestor"
+                                              source target))))
              (before (nth-value 0 (git-run disk "rev-parse" target)))
-             (merged (chamber-merge-branch owner repo-name source target
-                                           :strategy strategy :message message))
+             (merged (or already-merged
+                         (chamber-merge-branch owner repo-name source target
+                                               :strategy strategy :message message)))
              (after (nth-value 0 (git-run disk "rev-parse" target))))
         (unless merged
           (setf (hunchentoot:return-code*) 409)
@@ -2445,7 +2454,9 @@ the results. Skips deletes and zero-sha boundaries."
             (if (equal strategy "fast-forward-only")
                 "Merge failed — not a fast-forward (the target branch has commits the source doesn't)."
                 "Merge failed — conflicts?")))
-        (when (and before after (string= before after))
+        ;; Only a *real* merge that ran but left the ref unmoved is an error.
+        ;; An already-merged no-op is expected, so exempt it from the guard.
+        (when (and (not already-merged) before after (string= before after))
           (setf (hunchentoot:return-code*) 409)
           (return-from merge-pull-request-submit
             "Merge reported success but the target branch did not advance — aborted (storage may be degraded). The source branch was left intact."))
