@@ -27,6 +27,8 @@ RUN dnf install -y openssh-server git openssl && dnf clean all && \
     ssh-keygen -A && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/sshd_config.d && \
+    printf 'ClientAliveInterval 15\nClientAliveCountMax 8\nTCPKeepAlive yes\n' > /etc/ssh/sshd_config.d/10-keepalive.conf && \
     mkdir -p /var/lib/cave/repos /var/lib/cave/tmp /data/zoekt-index && \
     chown -R cave:cave /var/lib/cave /data/zoekt-index && \
     mkdir -p /home/cave/.ssh && \
