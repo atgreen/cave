@@ -2258,10 +2258,16 @@ the results. Skips deletes and zero-sha boundaries."
                                            concerns-all))))
                        reviews-raw))
              (eligibility (compute-merge-eligibility pr repo))
-             (can-merge (and (pull-request-mergeable-p eligibility)
-                             *current-user-id*
-                             (equal (repo-member-role (getf repo :id) *current-user-id*)
-                                    "admin")))
+             (mergeable (pull-request-mergeable-p eligibility))
+             (is-admin (and *current-user-id*
+                            (equal (repo-member-role (getf repo :id) *current-user-id*)
+                                   "admin")))
+             (can-merge (and mergeable is-admin))
+             ;; Admin escape hatch: PR fails a requirement but an admin may
+             ;; still override (as long as it is open).
+             (can-override (and is-admin (not mergeable)
+                                (not (getf pr :is-merged))
+                                (not (getf pr :is-closed))))
              (stack (find-stack-by-id (getf pr :stack-id)))
              (stack-items (when stack (list-stack-pull-requests (getf stack :id))))
              ;; Diff
@@ -2291,6 +2297,7 @@ the results. Skips deletes and zero-sha boundaries."
          (view-pull-request :owner-name owner :repo repo :pr pr
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
+                         :can-override can-override
                          :stack stack :stack-items stack-items
                          :diff-raw diff-raw :source-missing source-missing
                          :diff-comments-json comments-json
@@ -2387,10 +2394,30 @@ the results. Skips deletes and zero-sha boundaries."
       (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
         (setf (hunchentoot:return-code*) 403)
         (return-from merge-pull-request-submit "Forbidden"))
-      (let ((eligibility (compute-merge-eligibility pr repo)))
-        (unless (pull-request-mergeable-p eligibility)
+      ;; A closed/already-merged PR can never be merged, even under override.
+      (when (or (getf pr :is-merged) (getf pr :is-closed))
+        (setf (hunchentoot:return-code*) 409)
+        (return-from merge-pull-request-submit "Pull request is already merged or closed"))
+      ;; Admins (the only role that reaches here) may bypass the eligibility
+      ;; gate by posting override=t — used by the "merge anyway" UI. Audit-log
+      ;; any override so a bypassed check is traceable.
+      (let* ((override (let ((o (hunchentoot:post-parameter "override")))
+                         (and o (member o '("t" "true" "1" "on" "yes")
+                                        :test #'string-equal))))
+             (eligibility (compute-merge-eligibility pr repo)))
+        (unless (or (pull-request-mergeable-p eligibility) override)
           (setf (hunchentoot:return-code*) 422)
-          (return-from merge-pull-request-submit "Pull request is not mergeable")))
+          (return-from merge-pull-request-submit "Pull request is not mergeable"))
+        (when override
+          (log-event "pr.merge_override"
+                     :user-id *current-user-id*
+                     :repo-id (getf repo :id)
+                     :entity-type "pull_request"
+                     :entity-id (getf pr :id)
+                     :metadata (format nil "Admin override; failing rules: ~{~A~^; ~}"
+                                       (loop for r in eligibility
+                                             unless (getf r :pass)
+                                             collect (getf r :description))))))
       ;; Perform the actual git merge, then VERIFY the target branch actually
       ;; advanced before marking merged / auto-deleting the source branch.
       ;; chamber-merge-branch can report success without moving the target (e.g.

@@ -1463,7 +1463,7 @@ function caveToggleCommentForm(btn) {
 ")))))
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
-                             can-merge stack stack-items diff-raw
+                             can-merge can-override stack stack-items diff-raw
                              diff-comments-json comment-action
                              commit-statuses source-missing)
   "Render a pull request detail page."
@@ -1642,7 +1642,25 @@ function caveShowCommentForm(td) {
              (:button.btn :type "submit" :name "strategy" :value "squash"
               "Squash and merge")
              (:button.btn :type "submit" :name "strategy" :value "fast-forward-only"
-              "Fast-forward only"))))))
+              "Fast-forward only"))))
+         ;; Admin escape hatch: when the PR fails one or more requirements, a
+         ;; repo admin may still merge. Tucked behind a disclosure so it is a
+         ;; deliberate action, and posts override=t which the route audit-logs.
+         (when can-override
+           (:details.merge-override
+            (:summary "⚠ Admin override — merge anyway")
+            (:form :method "post"
+             :action (format nil "/~A/~A/pulls/~A/merge" org-name repo-name cs-num)
+             (:input :type "hidden" :name "override" :value "t")
+             (:p :style "margin:var(--sp-2) 0;color:var(--fg-muted)"
+              "This pull request does not meet all merge requirements. As a repo admin you can override the checks and merge anyway.")
+             (:div :style "display:flex;gap:var(--sp-2)"
+              (:button.btn.btn-primary :type "submit" :name "strategy" :value "merge"
+               "Merge anyway")
+              (:button.btn :type "submit" :name "strategy" :value "squash"
+               "Squash and merge")
+              (:button.btn :type "submit" :name "strategy" :value "fast-forward-only"
+               "Fast-forward only")))))))
 
       ;; Reviews
       (:section
