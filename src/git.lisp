@@ -10,9 +10,18 @@
   "Run `git -C REPO-PATH ARGS` under the Landlock sandbox. When NETWORK is true,
    network egress is allowed (for git operations that contact an external
    remote); filesystem confinement to REPO-PATH is unchanged either way.
-   Returns (VALUES output error-output exit-code)."
+   Returns (VALUES output error-output exit-code).
+
+   `-c safe.directory=*` is passed because cave-server runs as root while repos
+   are owned by `cave`; git's dubious-ownership check is normally satisfied by
+   `safe.directory = *` in root's global gitconfig, but the sandbox does not
+   grant $HOME, so the sandboxed git can't read it. The flag carries the same
+   exception on the command line. The sandbox already confines the filesystem to
+   REPO-PATH, so trusting `*` grants no extra reach."
   (let ((cmd (sandbox-wrap repo-path
-                           (append (list "git" "-C" (namestring repo-path)) args)
+                           (append (list "git" "-c" "safe.directory=*"
+                                         "-C" (namestring repo-path))
+                                   args)
                            :network network)))
     (multiple-value-bind (output error-output exit-code)
         (uiop:run-program cmd
@@ -914,7 +923,8 @@ Returns T on success, NIL otherwise."
 (defun git-blob-bytes (repo-path ref path)
   "Read file content at PATH under REF as raw octets. Returns byte vector or NIL."
   (let* ((cmd (sandbox-wrap repo-path
-                            (list "git" "-C" (namestring repo-path)
+                            (list "git" "-c" "safe.directory=*"
+                                  "-C" (namestring repo-path)
                                   "cat-file" "blob" (format nil "~A:~A" ref path))))
          (process (uiop:launch-program cmd :output :stream
                                        :element-type '(unsigned-byte 8)))
