@@ -1620,10 +1620,108 @@ function caveToggleCommentForm(btn) {
 }
 ")))))
 
+(defparameter +checks-panel-css+
+  ".checks-rollup{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 .5rem;font-weight:600}
+.checks-list{list-style:none;padding:0;margin:0}
+.check{display:flex;align-items:center;gap:.4rem;padding:.3rem 0;border-top:1px solid var(--border,#333)}
+.check-name{font-family:var(--font-mono,monospace)}
+.check-desc{color:var(--text-muted,#888);font-size:.85rem}
+.check-icon{display:inline-block;width:1em;height:1em;flex:0 0 1em;text-align:center;box-sizing:border-box}
+.check-success .check-icon::before{content:'\\2713';color:var(--green,#7c9a5e)}
+.check-failure .check-icon::before{content:'\\2717';color:var(--red,#b04a4a)}
+.check-pending .check-icon,.check-running .check-icon{border:2px solid var(--yellow,#c9a03e);border-top-color:transparent;border-radius:50%;width:.85em;height:.85em;animation:cave-spin .8s linear infinite}
+.checks-dot{display:inline-block;width:.7em;height:.7em;border-radius:50%}
+.checks-success{background:var(--green,#7c9a5e)}
+.checks-failure{background:var(--red,#b04a4a)}
+.checks-pending{background:var(--yellow,#c9a03e)}
+@keyframes cave-spin{to{transform:rotate(360deg)}}"
+  "Styles for the live PR checks panel (icons, spinners, rollup dot).")
+
+(defparameter +checks-panel-js+
+  "(function(){
+  var panel=document.getElementById('checks-panel');
+  if(!panel)return;
+  var url=panel.getAttribute('data-url');
+  function render(data){
+    var roll=document.getElementById('checks-rollup');roll.textContent='';
+    if(!data.rollup||data.rollup.total===0){
+      var s=document.createElement('span');s.className='checks-summary';
+      s.textContent='No checks have reported yet.';roll.appendChild(s);
+    }else{
+      var dot=document.createElement('span');dot.className='checks-dot checks-'+data.rollup.overall;roll.appendChild(dot);
+      var parts=[];
+      if(data.rollup.failure>0)parts.push(data.rollup.failure+' failing');
+      if(data.rollup.pending>0)parts.push(data.rollup.pending+' in progress');
+      if(data.rollup.success>0)parts.push(data.rollup.success+' successful');
+      var sm=document.createElement('span');sm.className='checks-summary';sm.textContent=parts.join(', ');roll.appendChild(sm);
+    }
+    var ul=document.getElementById('checks-rows');ul.textContent='';
+    (data.checks||[]).forEach(function(c){
+      var li=document.createElement('li');li.className='check check-'+c.state;
+      var ic=document.createElement('span');ic.className='check-icon';li.appendChild(ic);
+      var nm=document.createElement('span');nm.className='check-name';nm.textContent=' '+c.name;li.appendChild(nm);
+      var ds=document.createElement('span');ds.className='check-desc';ds.textContent=' \\u2014 '+(c.description||c.state);li.appendChild(ds);
+      if(c.url){li.appendChild(document.createTextNode(' '));var a=document.createElement('a');a.href=c.url;a.style.marginLeft='.5rem';a.style.fontSize='.8rem';a.textContent='details';li.appendChild(a);}
+      ul.appendChild(li);
+    });
+  }
+  var wasPending=false;
+  function poll(){
+    fetch(url,{headers:{'Accept':'application/json'}}).then(function(r){return r.json();}).then(function(data){
+      render(data);
+      if(data.rollup&&data.rollup.overall==='pending'){wasPending=true;setTimeout(poll,3000);}
+      else if(wasPending){setTimeout(function(){location.reload();},800);}
+    }).catch(function(){setTimeout(poll,5000);});
+  }
+  if(panel.querySelector('.check-pending,.check-running')){wasPending=true;poll();}
+})();"
+  "Polls the checks JSON endpoint while anything is in progress, live-updating
+rows + rollup, and reloads once everything settles so the merge box refreshes.")
+
+(defun render-checks-rollup (rollup)
+  "Render the rollup summary line (status dot + 'N failing, M in progress, …')."
+  (spinneret:with-html
+    (if (zerop (getf rollup :total))
+        (:span.checks-summary "No checks have reported yet.")
+        (progn
+          (:span :class (format nil "checks-dot checks-~A" (getf rollup :overall)))
+          (:span.checks-summary
+           (let ((parts nil)
+                 (fail (getf rollup :failure))
+                 (pend (getf rollup :pending))
+                 (succ (getf rollup :success)))
+             (when (plusp fail) (push (format nil "~A failing" fail) parts))
+             (when (plusp pend) (push (format nil "~A in progress" pend) parts))
+             (when (plusp succ) (push (format nil "~A successful" succ) parts))
+             (format nil "~{~A~^, ~}" (nreverse parts))))))))
+
+(defun render-check-row (c)
+  "Render one check row; icon is driven by the check-STATE class (CSS)."
+  (spinneret:with-html
+    (:li :class (format nil "check check-~A" (getf c :state))
+     (:span.check-icon)
+     (:span.check-name (format nil " ~A" (getf c :name)))
+     (:span.check-desc (format nil " — ~A" (or (getf c :description) (getf c :state))))
+     (let ((u (getf c :url)))
+       (when u (:a :href u :style "margin-left:.5rem;font-size:.8rem" "details"))))))
+
+(defun render-checks-panel (owner-name repo-name pr-num checks rollup)
+  "Render the live CI checks panel: rollup summary + per-check rows with spinners
+for in-progress checks, polling a JSON endpoint while anything runs."
+  (spinneret:with-html
+    (:section
+     (:style (:raw +checks-panel-css+))
+     (:h2 "Checks")
+     (:div#checks-panel
+      :data-url (format nil "/~A/~A/pulls/~A/checks.json" owner-name repo-name pr-num)
+      (:div#checks-rollup.checks-rollup (render-checks-rollup rollup))
+      (:ul#checks-rows.checks-list (dolist (c checks) (render-check-row c))))
+     (:script (:raw +checks-panel-js+)))))
+
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge can-override conflict-files stack stack-items diff-raw
                              diff-comments-json comment-action
-                             commit-statuses source-missing)
+                             checks checks-rollup source-missing)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -1760,24 +1858,9 @@ function caveShowCommentForm(td) {
                     (or diff-comments-json "[]")
                     (com.inuoe.jzon:stringify (or comment-action ""))))))))
 
-      ;; Commit statuses (CI)
-      (when commit-statuses
-        (:section
-         (:h2 "Checks")
-         (:ul.eligibility-list
-          (dolist (s commit-statuses)
-            (:li :class (cond ((equal (getf s :state) "success") "rule-pass")
-                              ((equal (getf s :state) "pending") "")
-                              (t "rule-fail"))
-             (format nil "~A ~A — ~A"
-                     (cond ((equal (getf s :state) "success") "✓")
-                           ((equal (getf s :state) "pending") "⏳")
-                           (t "✗"))
-                     (getf s :context)
-                     (or (getf s :description) (getf s :state)))
-             (when (and (getf s :target-url) (not (eq (getf s :target-url) :null)))
-               (:a :href (getf s :target-url) :style "margin-left:var(--sp-2);font-size:.8rem"
-                "details")))))))
+      ;; Live CI checks panel (commit statuses + cave workflow jobs)
+      (when (and checks-rollup (plusp (getf checks-rollup :total)))
+        (render-checks-panel org-name repo-name cs-num checks checks-rollup))
 
       ;; Merge eligibility
       (when (and eligibility

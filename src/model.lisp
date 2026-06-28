@@ -1330,6 +1330,49 @@
       ((some (lambda (s) (member (getf s :state) '("failure" "error") :test #'equal)) statuses) :failure)
       (t :pending))))
 
+(defun %normalize-check-state (raw)
+  "Map a raw commit-status/workflow status string to one of
+success|failure|pending|running."
+  (cond
+    ((member raw '("success") :test #'equal) "success")
+    ((member raw '("failure" "failed" "error" "cancelled") :test #'equal) "failure")
+    ((member raw '("running") :test #'equal) "running")
+    ((member raw '("skipped") :test #'equal) "success")
+    (t "pending")))            ; queued, blocked, assigned, pending
+
+(defun pull-request-checks (repo-id head-sha owner repo-name)
+  "Return (values CHECKS ROLLUP) for HEAD-SHA, combining external commit statuses
+with cave workflow jobs. CHECKS is a list of plists (:name :state :description
+:url); state is success|failure|pending|running. ROLLUP is a plist
+(:total :success :failure :pending :overall) where pending counts in-progress."
+  (let ((checks nil))
+    (dolist (s (list-commit-statuses repo-id head-sha))
+      (push (list :name (getf s :context)
+                  :state (%normalize-check-state (getf s :state))
+                  :description (let ((d (getf s :description)))
+                                 (if (and d (not (eq d :null))) d (getf s :state)))
+                  :url (let ((u (getf s :target-url)))
+                         (unless (or (null u) (eq u :null)) u)))
+            checks))
+    (dolist (run (workflow-runs-for-commit repo-id head-sha))
+      (dolist (job (list-workflow-jobs (getf run :id)))
+        (push (list :name (format nil "~A / ~A" (getf run :workflow-name) (getf job :name))
+                    :state (%normalize-check-state (getf job :status))
+                    :description (getf job :status)
+                    :url (format nil "/~A/~A/runs/w/~A" owner repo-name (getf run :id)))
+              checks)))
+    (setf checks (nreverse checks))
+    (let* ((total (length checks))
+           (succ (count "success" checks :key (lambda (c) (getf c :state)) :test #'equal))
+           (fail (count "failure" checks :key (lambda (c) (getf c :state)) :test #'equal))
+           (pend (- total succ fail))
+           (overall (cond ((zerop total) "none")
+                          ((plusp fail) "failure")
+                          ((plusp pend) "pending")
+                          (t "success"))))
+      (values checks (list :total total :success succ :failure fail
+                           :pending pend :overall overall)))))
+
 ;;; ========================== USER THEMES ==========================
 
 (defun set-user-theme (user-id theme-name)

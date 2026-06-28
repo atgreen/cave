@@ -2618,6 +2618,14 @@ number of commits re-verified."
                                             (princ-to-string (getf c :created-at)))
                                       ht))
                                   raw-comments))
+             (checks-mv (if (getf pr :head-commit)
+                            (multiple-value-list
+                             (pull-request-checks (getf repo :id) (getf pr :head-commit)
+                                                  owner repo-name))
+                            (list nil (list :total 0 :success 0 :failure 0
+                                            :pending 0 :overall "none"))))
+             (checks (first checks-mv))
+             (checks-rollup (second checks-mv))
              (comments-json (if comment-hts
                                 (com.inuoe.jzon:stringify comment-hts)
                                 "[]")))
@@ -2631,9 +2639,38 @@ number of commits re-verified."
                          :diff-comments-json comments-json
                          :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
                                                  owner repo-name num)
-                         :commit-statuses (when (getf pr :head-commit)
-                                            (list-commit-statuses (getf repo :id)
-                                                                  (getf pr :head-commit)))))))))
+                         :checks checks :checks-rollup checks-rollup))))))
+
+(easy-routes:defroute pull-request-checks-json
+    ("/:owner/:repo-name/pulls/:number/checks.json" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from pull-request-checks-json (not-found)))
+    (let* ((num (parse-integer number :junk-allowed t))
+           (pr (when num (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from pull-request-checks-json (not-found)))
+      (setf (hunchentoot:content-type*) "application/json")
+      (multiple-value-bind (checks rollup)
+          (if (getf pr :head-commit)
+              (pull-request-checks (getf repo :id) (getf pr :head-commit) owner repo-name)
+              (values nil (list :total 0 :success 0 :failure 0 :pending 0 :overall "none")))
+        (let ((root (make-hash-table :test 'equal))
+              (rh (make-hash-table :test 'equal))
+              (carr (make-array (length checks))))
+          (setf (gethash "total" rh) (getf rollup :total)
+                (gethash "success" rh) (getf rollup :success)
+                (gethash "failure" rh) (getf rollup :failure)
+                (gethash "pending" rh) (getf rollup :pending)
+                (gethash "overall" rh) (getf rollup :overall))
+          (loop for c in checks for i from 0
+                do (let ((ch (make-hash-table :test 'equal)))
+                     (setf (gethash "name" ch) (getf c :name)
+                           (gethash "state" ch) (getf c :state)
+                           (gethash "description" ch) (or (getf c :description) "")
+                           (gethash "url" ch) (or (getf c :url) ""))
+                     (setf (aref carr i) ch)))
+          (setf (gethash "rollup" root) rh
+                (gethash "checks" root) carr)
+          (com.inuoe.jzon:stringify root))))))
 
 ;; Inline diff comment
 (easy-routes:defroute diff-comment-submit
