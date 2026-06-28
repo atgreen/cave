@@ -46,6 +46,8 @@ cl-postgres, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a5783
 cl-postgres_plus_local-time, ghcr.io/ocicl/local-time@sha256:15dc0e56d0ff55bd2a3c597e67be1c26bd0677c230a15ad5098c5207a9df5554, local-time-20250808-c28f38e/cl-postgres+local-time.asd
 cl-ppcre, ghcr.io/ocicl/cl-ppcre@sha256:bf073924cf4fd5957a4fd961a95d446ed0e53fa32a5002cbd2d52182874f45e5, cl-ppcre-20250606-a2ea581/cl-ppcre.asd
 cl-ppcre-unicode, ghcr.io/ocicl/cl-ppcre@sha256:bf073924cf4fd5957a4fd961a95d446ed0e53fa32a5002cbd2d52182874f45e5, cl-ppcre-20250606-a2ea581/cl-ppcre-unicode.asd
+cl-qrencode, ghcr.io/ocicl/cl-qrencode@sha256:e581a36606e20879962b842eee5f14eea39ecfa253298e9597ebff44e613f93e, cl-qrencode-20240503-0de2d8a/cl-qrencode.asd
+cl-qrencode-test, ghcr.io/ocicl/cl-qrencode@sha256:e581a36606e20879962b842eee5f14eea39ecfa253298e9597ebff44e613f93e, cl-qrencode-20240503-0de2d8a/cl-qrencode-test.asd
 cl-reexport, ghcr.io/ocicl/cl-reexport@sha256:c795feb3e3727a19e61797187eb31bac1e855b1332335d26752200a28e9b9da8, cl-reexport-20240503-03ad7a0/cl-reexport.asd
 cl-reexport-test, ghcr.io/ocicl/cl-reexport@sha256:c795feb3e3727a19e61797187eb31bac1e855b1332335d26752200a28e9b9da8, cl-reexport-20240503-03ad7a0/cl-reexport-test.asd
 cl-slice, ghcr.io/ocicl/cl-slice@sha256:b96efc2a429aabbdf0ffe8f3b5446d08ae40d5f4d8e09acc2e7c5259d5ffaf8a, cl-slice-20240503-c531683/cl-slice.asd
@@ -210,3 +212,4 @@ with-user-abort, ghcr.io/ocicl/with-user-abort@sha256:c19560034f9909a7afb4110b5e
 xsubseq, ghcr.io/ocicl/xsubseq@sha256:7605d14f7cc7fd2f63190ad81fe7bd65daef105d6728ee6bb59baef49da2aa51, xsubseq-20240503-5ce430b/xsubseq.asd
 xsubseq-test, ghcr.io/ocicl/xsubseq@sha256:7605d14f7cc7fd2f63190ad81fe7bd65daef105d6728ee6bb59baef49da2aa51, xsubseq-20240503-5ce430b/xsubseq-test.asd
 yacc, ghcr.io/ocicl/yacc@sha256:44452a8cbece9e1d132c2c37b95051b8ae7cdaee8c79257ec6b73949f1e28e7e, cl-yacc-20250819-d02b6ea/yacc.asd
+zpng, ghcr.io/ocicl/zpng@sha256:0796acd47f4c7df74e4525060f77ce906a403030481baf8a46bb38621fb000da, zpng-1.2.2/zpng.asd

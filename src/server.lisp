@@ -836,6 +836,38 @@ the results. Skips deletes and zero-sha boundaries."
         (t
          (html-response (view-change-password :error "Could not update password.")))))))
 
+(easy-routes:defroute totp-page ("/-/settings/totp" :method :get) ()
+  (when (require-sudo "/-/settings/totp")
+    (html-response (view-totp :enabled (usher-totp-enabled-p)))))
+
+(easy-routes:defroute totp-enroll-submit ("/-/settings/totp/enroll" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (multiple-value-bind (uri secret) (usher-totp-enroll)
+      (if uri
+          (html-response (view-totp-enroll :qr (totp-qr-data-uri uri) :secret secret))
+          (hunchentoot:redirect "/-/settings/totp")))))
+
+(easy-routes:defroute totp-confirm-submit ("/-/settings/totp/confirm" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (let* ((code (hunchentoot:post-parameter "code"))
+           (codes (and code (usher-totp-confirm code))))
+      (if codes
+          (html-response (view-totp-backup-codes :codes codes :enabled-now t))
+          (multiple-value-bind (uri secret) (usher-totp-enroll)
+            (html-response (view-totp-enroll :qr (and uri (totp-qr-data-uri uri))
+                                             :secret secret
+                                             :error "Invalid code — try again.")))))))
+
+(easy-routes:defroute totp-disable-submit ("/-/settings/totp/disable" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (usher-totp-disable)
+    (hunchentoot:redirect "/-/settings/totp")))
+
+(easy-routes:defroute totp-backup-codes-submit ("/-/settings/totp/backup-codes" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (let ((codes (usher-backup-codes-regenerate)))
+      (html-response (view-totp-backup-codes :codes codes)))))
+
 (easy-routes:defroute generate-ssh-key-submit
     ("/-/settings/ssh-keys/generate" :method :post) ()
   (when (require-sudo "/-/settings")

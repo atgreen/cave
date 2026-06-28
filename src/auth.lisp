@@ -223,6 +223,53 @@
             (push (cons username temp) results)))))
     (nreverse results)))
 
+;;; Self-service TOTP (two-factor) — operate on the current cave user's embedded
+;;; Usher account, in-process.
+
+(defun usher-current-account ()
+  "The embedded-Usher user for the current cave session, or NIL."
+  (and *current-user*
+       (usher:store-find-user-by-username
+        (usher:provider-store usher::*provider*)
+        (getf *current-user* :username))))
+
+(defun usher-totp-enabled-p ()
+  (let ((u (usher-current-account)))
+    (and u (usher:totp-enabled-p (usher:provider-store usher::*provider*) u))))
+
+(defun usher-totp-enroll ()
+  "Begin TOTP enrollment for the current user. Returns (values otpauth-uri secret)."
+  (let ((u (usher-current-account)))
+    (when u (usher:enroll-totp! (usher:provider-store usher::*provider*) u :issuer "Cave"))))
+
+(defun usher-totp-confirm (code)
+  "Activate the pending TOTP secret if CODE matches. On success returns a fresh
+   list of backup codes (plaintext, show once); NIL on failure."
+  (let* ((store (usher:provider-store usher::*provider*)) (u (usher-current-account)))
+    (when (and u (usher:confirm-totp! store u code))
+      (usher:generate-backup-codes store u :count 10))))
+
+(defun usher-totp-disable ()
+  "Disable TOTP (and clear backup codes) for the current user."
+  (let* ((store (usher:provider-store usher::*provider*)) (u (usher-current-account)))
+    (when u
+      (usher:store-cred-del store (usher:user-subject u) "totp")
+      (usher:store-cred-del store (usher:user-subject u) "totp-pending")
+      (usher:store-cred-del store (usher:user-subject u) "backup-code")
+      t)))
+
+(defun usher-backup-codes-regenerate ()
+  "Regenerate single-use backup codes for the current user; returns the codes."
+  (let* ((store (usher:provider-store usher::*provider*)) (u (usher-current-account)))
+    (when u (usher:generate-backup-codes store u :count 10))))
+
+(defun totp-qr-data-uri (otpauth-uri)
+  "An inline PNG data: URI of the QR code for OTPAUTH-URI."
+  (let ((bytes (flexi-streams:with-output-to-sequence (s)
+                 (cl-qrencode:encode-png-stream otpauth-uri s :version 8 :level :level-m))))
+    (format nil "data:image/png;base64,~A"
+            (cl-base64:usb8-array-to-base64-string bytes))))
+
 (defun usher-set-password (username new-password)
   "Set USERNAME's embedded-Usher password. Returns T on success, NIL if no such
    user. Used by the self-service change-password flow."

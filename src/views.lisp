@@ -2607,6 +2607,60 @@ function caveShowCommentForm(td) {
       (:button.btn :type "submit" "Change password")))
     (:p (:a :href "/-/settings" "← Back to settings"))))
 
+(defun view-totp (&key enabled)
+  "TOTP status page."
+  (page (:title "Two-factor — Cave")
+    (:h1 "Two-factor authentication")
+    (if enabled
+        (progn
+          (:p :style "color:var(--success,#27ae60)"
+           "Two-factor authentication is enabled on your account.")
+          (:section
+           (:form :method "post" :action "/-/settings/totp/backup-codes"
+                  :style "display:inline"
+            (:button.btn :type "submit" "Regenerate backup codes"))
+           (:form :method "post" :action "/-/settings/totp/disable"
+                  :style "display:inline;margin-left:var(--sp-2)"
+            (:button.btn :type "submit" "Disable two-factor"))))
+        (progn
+          (:p "Protect your account with a time-based one-time password (TOTP) "
+              "from an authenticator app (Google Authenticator, Aegis, 1Password, etc.).")
+          (:form :method "post" :action "/-/settings/totp/enroll"
+           (:button.btn :type "submit" "Enable two-factor"))))
+    (:p :style "margin-top:var(--sp-3)" (:a :href "/-/settings" "← Back to settings"))))
+
+(defun view-totp-enroll (&key qr secret error)
+  "TOTP enrollment page: QR + secret + confirm form."
+  (page (:title "Enable two-factor — Cave")
+    (:h1 "Enable two-factor authentication")
+    (when error (:p :style "color:var(--danger,#c0392b)" error))
+    (:section
+     (:p "1. Scan this QR code with your authenticator app, or enter the secret manually:")
+     (when qr (:p (:img :src qr :alt "TOTP QR code"
+                        :style "width:220px;height:220px;image-rendering:pixelated")))
+     (when secret (:p "Secret: " (:code secret)))
+     (:p :style "margin-top:var(--sp-3)" "2. Enter the 6-digit code to confirm:")
+     (:form :method "post" :action "/-/settings/totp/confirm"
+      (:div.field
+       (:input :name "code" :inputmode "numeric" :pattern "[0-9]*" :placeholder "123456"
+               :autocomplete "one-time-code" :autofocus t :required t))
+      (:button.btn :type "submit" "Confirm")))
+    (:p (:a :href "/-/settings/totp" "Cancel"))))
+
+(defun view-totp-backup-codes (&key codes enabled-now)
+  "One-time display of backup codes."
+  (page (:title "Backup codes — Cave")
+    (:h1 "Backup codes")
+    (when enabled-now
+      (:p :style "color:var(--success,#27ae60)"
+       "Two-factor authentication is now enabled."))
+    (:p "Save these single-use backup codes somewhere safe — each works once if "
+        "you lose access to your authenticator. They are shown only now.")
+    (:section
+     (:ul :style "font-family:monospace;font-size:1.1rem;line-height:1.9;list-style:none;padding-left:0"
+      (dolist (c codes) (:li c))))
+    (:p (:a.btn :href "/-/settings/totp" "Done"))))
+
 (defun view-settings (&key ssh-keys api-tokens new-token ssh-error
                            generated-private-key generated-key-name
                            runners registration-token)
@@ -2636,8 +2690,10 @@ function caveShowCommentForm(td) {
       (:section
        (:h2 "Security")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
-        "Change your password. (Re-authentication is required.)")
-       (:a.btn :href "/-/settings/password" "Change password"))
+        "Change your password or manage two-factor authentication. (Re-authentication is required.)")
+       (:a.btn :href "/-/settings/password" "Change password")
+       (:a.btn :href "/-/settings/totp" :style "margin-left:var(--sp-2)"
+        "Two-factor authentication"))
 
       (:section
        (:h2 "CLI")
