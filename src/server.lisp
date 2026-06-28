@@ -3081,6 +3081,31 @@ repo member."
       (unless pr (return-from api-get-pull (json-error "not found" :status 404)))
       (json-response pr))))
 
+(easy-routes:defroute api-update-pull
+    ("/api/v1/repos/:owner/:repo-name/pulls/:number" :method :patch) ()
+  (unless *current-user-id*
+    (return-from api-update-pull (json-error "unauthorized" :status 401)))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (let* ((num (parse-integer number :junk-allowed t))
+           (pr (when num (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from api-update-pull (json-error "not found" :status 404)))
+      (unless (or (eql (getf pr :author-id) *current-user-id*)
+                  (member-of-repo-p repo))
+        (return-from api-update-pull (json-error "forbidden" :status 403)))
+      (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+             (json (com.inuoe.jzon:parse body-text))
+             ;; GitHub uses "state" for PRs; accept "status" as an alias.
+             (state (or (gethash "state" json) (gethash "status" json))))
+        (when state
+          (unless (member state '("open" "closed") :test #'equal)
+            (return-from api-update-pull (json-error "state must be open or closed")))
+          (cond
+            ((and (equal state "closed") (not (getf pr :is-merged)))
+             (close-pull-request (getf pr :id)))
+            ((and (equal state "open") (not (getf pr :is-merged)) (getf pr :is-closed))
+             (reopen-pull-request (getf pr :id)))))
+        (json-response (find-pull-request (getf repo :id) num))))))
+
 (easy-routes:defroute api-create-pull
     ("/api/v1/repos/:owner/:repo-name/pulls" :method :post) ()
   (unless *current-user-id*

@@ -97,6 +97,72 @@ type repoCreateRequest struct {
 	MirrorIntervalMinutes int    `json:"mirror_interval_minutes,omitempty"`
 }
 
+type PullRequest struct {
+	ID           int64       `json:"id"`
+	RepoID       int64       `json:"repo_id"`
+	Number       int64       `json:"number"`
+	AuthorID     int64       `json:"author_id"`
+	SourceBranch string      `json:"source_branch"`
+	TargetBranch string      `json:"target_branch"`
+	HeadCommit   string      `json:"head_commit"`
+	Version      int64       `json:"version"`
+	IsMerged     bool        `json:"is_merged"`
+	IsClosed     bool        `json:"is_closed"`
+	CreatedAt    json.Number `json:"created_at"`
+}
+
+type pullCreateRequest struct {
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+	Title        string `json:"title,omitempty"`
+}
+
+type pullUpdateRequest struct {
+	State string `json:"state"`
+}
+
+type Review struct {
+	ID         int64       `json:"id"`
+	ReviewerID int64       `json:"reviewer_id"`
+	State      string      `json:"state"`
+	Body       string      `json:"body"`
+	CreatedAt  json.Number `json:"created_at"`
+}
+
+type reviewRequest struct {
+	State string `json:"state"`
+	Body  string `json:"body,omitempty"`
+}
+
+type Check struct {
+	Name        string `json:"name"`
+	State       string `json:"state"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+}
+
+type ChecksResponse struct {
+	Rollup struct {
+		Total   int    `json:"total"`
+		Success int    `json:"success"`
+		Failure int    `json:"failure"`
+		Pending int    `json:"pending"`
+		Overall string `json:"overall"`
+	} `json:"rollup"`
+	Checks []Check `json:"checks"`
+}
+
+func prState(p *PullRequest) string {
+	switch {
+	case p.IsMerged:
+		return "merged"
+	case p.IsClosed:
+		return "closed"
+	default:
+		return "open"
+	}
+}
+
 type apiError struct {
 	Error string `json:"error"`
 }
@@ -204,6 +270,8 @@ func run(args []string) error {
 	switch rest[0] {
 	case "issue", "issues":
 		return runIssues(c, ownerName, resolvedRepo, rest[1:])
+	case "pr", "prs", "pull":
+		return runPulls(c, ownerName, resolvedRepo, rest[1:])
 	case "repo", "repos":
 		return runRepos(c, rest[1:])
 	case "deps":
@@ -689,6 +757,292 @@ func (c *client) createIssue(ownerName, repoName string, payload issueCreateRequ
 	return &issue, nil
 }
 
+func runPulls(c *client, ownerName, repoName string, args []string) error {
+	if len(args) == 0 {
+		printPullUsage(os.Stderr)
+		return errors.New("missing pr command")
+	}
+	switch args[0] {
+	case "list":
+		return runPullList(c, ownerName, repoName, args[1:])
+	case "view", "get":
+		return runPullView(c, ownerName, repoName, args[1:])
+	case "create":
+		return runPullCreate(c, ownerName, repoName, args[1:])
+	case "close":
+		return runPullClose(c, ownerName, repoName, args[1:])
+	case "reopen":
+		return runPullReopen(c, ownerName, repoName, args[1:])
+	case "checks":
+		return runPullChecks(c, ownerName, repoName, args[1:])
+	case "review":
+		return runPullReview(c, ownerName, repoName, args[1:])
+	case "help", "-h", "--help":
+		printPullUsage(os.Stdout)
+		return nil
+	default:
+		printPullUsage(os.Stderr)
+		return fmt.Errorf("unknown pr command %q", args[0])
+	}
+}
+
+func runPullList(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("pr list", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", "open", "PR state filter (open|merged|closed)")
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	values := url.Values{}
+	if *state != "" {
+		values.Set("status", *state)
+	}
+	var pulls []PullRequest
+	if err := c.doJSON(http.MethodGet, pullURL(c.baseURL, ownerName, repoName, "", values), nil, &pulls); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return writeJSON(os.Stdout, pulls)
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "NUMBER\tSTATE\tBRANCHES")
+	for _, p := range pulls {
+		pp := p
+		fmt.Fprintf(w, "#%d\t%s\t%s → %s\n", p.Number, prState(&pp), p.SourceBranch, p.TargetBranch)
+	}
+	return w.Flush()
+}
+
+func runPullView(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("pr view", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+	web := fs.Bool("web", false, "Open the pull request in a browser")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: cave pr view [flags] <number>")
+	}
+	number := fs.Arg(0)
+	if *web {
+		u := fmt.Sprintf("%s/%s/%s/pulls/%s", c.baseURL,
+			url.PathEscape(ownerName), url.PathEscape(repoName), url.PathEscape(number))
+		return openBrowser(u)
+	}
+	var pr PullRequest
+	if err := c.doJSON(http.MethodGet, pullURL(c.baseURL, ownerName, repoName, number, nil), nil, &pr); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return writeJSON(os.Stdout, pr)
+	}
+	fmt.Fprintf(os.Stdout, "#%d %s → %s\n", pr.Number, pr.SourceBranch, pr.TargetBranch)
+	fmt.Fprintf(os.Stdout, "%s • version %d", strings.ToUpper(prState(&pr)), pr.Version)
+	if pr.HeadCommit != "" {
+		fmt.Fprintf(os.Stdout, " • %s", pr.HeadCommit)
+	}
+	fmt.Fprintln(os.Stdout)
+	return nil
+}
+
+func runPullCreate(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("pr create", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	source := fs.String("source", "", "Source branch (required)")
+	target := fs.String("target", "", "Target branch (required)")
+	title := fs.String("title", "", "PR title")
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if strings.TrimSpace(*source) == "" || strings.TrimSpace(*target) == "" {
+		return errors.New("usage: cave pr create --source BRANCH --target BRANCH [--title T]")
+	}
+	var pr PullRequest
+	payload := pullCreateRequest{
+		SourceBranch: strings.TrimSpace(*source),
+		TargetBranch: strings.TrimSpace(*target),
+		Title:        strings.TrimSpace(*title),
+	}
+	if err := c.doJSON(http.MethodPost, pullURL(c.baseURL, ownerName, repoName, "", nil), payload, &pr); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return writeJSON(os.Stdout, pr)
+	}
+	fmt.Fprintf(os.Stdout, "Created pull request #%d: %s → %s\n", pr.Number, pr.SourceBranch, pr.TargetBranch)
+	return nil
+}
+
+func (c *client) updatePull(ownerName, repoName, number, state string) (*PullRequest, error) {
+	var pr PullRequest
+	if err := c.doJSON(http.MethodPatch, pullURL(c.baseURL, ownerName, repoName, number, nil),
+		pullUpdateRequest{State: state}, &pr); err != nil {
+		return nil, err
+	}
+	return &pr, nil
+}
+
+func runPullClose(c *client, ownerName, repoName string, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: cave pr close <number>")
+	}
+	pr, err := c.updatePull(ownerName, repoName, args[0], "closed")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Closed pull request #%d\n", pr.Number)
+	return nil
+}
+
+func runPullReopen(c *client, ownerName, repoName string, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: cave pr reopen <number>")
+	}
+	pr, err := c.updatePull(ownerName, repoName, args[0], "open")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Reopened pull request #%d\n", pr.Number)
+	return nil
+}
+
+func runPullChecks(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("pr checks", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: cave pr checks [--json] <number>")
+	}
+	number := fs.Arg(0)
+	// The checks feed is a web route, not under /api/v1.
+	rawURL := fmt.Sprintf("%s/%s/%s/pulls/%s/checks.json", c.baseURL,
+		url.PathEscape(ownerName), url.PathEscape(repoName), url.PathEscape(number))
+	var checks ChecksResponse
+	if err := c.doJSON(http.MethodGet, rawURL, nil, &checks); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return writeJSON(os.Stdout, checks)
+	}
+	if checks.Rollup.Total == 0 {
+		fmt.Fprintln(os.Stdout, "No checks have reported yet.")
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "%s: %d failing, %d in progress, %d successful\n\n",
+		strings.ToUpper(checks.Rollup.Overall),
+		checks.Rollup.Failure, checks.Rollup.Pending, checks.Rollup.Success)
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	for _, ck := range checks.Checks {
+		mark := "•"
+		switch ck.State {
+		case "success":
+			mark = "✓"
+		case "failure":
+			mark = "✗"
+		case "pending", "running":
+			mark = "○"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", mark, ck.Name, ck.Description)
+	}
+	w.Flush()
+	// Non-zero exit when checks aren't all green, so scripts can gate on it.
+	if checks.Rollup.Overall != "success" {
+		os.Exit(1)
+	}
+	return nil
+}
+
+func runPullReview(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("pr review", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	state := fs.String("state", "", "Review state: approve|approve_with_concerns|request_changes|comment")
+	approve := fs.Bool("approve", false, "Shortcut for --state approve")
+	requestChanges := fs.Bool("request-changes", false, "Shortcut for --state request_changes")
+	comment := fs.Bool("comment", false, "Shortcut for --state comment")
+	body := fs.String("body", "", "Review body (use - to read stdin)")
+	bodyFile := fs.String("body-file", "", "Read review body from file")
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+
+	var positional []string
+	remaining := args
+	for {
+		if err := fs.Parse(remaining); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		remaining = rest[1:]
+	}
+	if len(positional) != 1 {
+		return errors.New("usage: cave pr review <number> --approve|--request-changes|--comment [--body TEXT]")
+	}
+	number := positional[0]
+
+	st := *state
+	switch {
+	case *approve:
+		st = "approve"
+	case *requestChanges:
+		st = "request_changes"
+	case *comment:
+		st = "comment"
+	}
+	if st == "" {
+		return errors.New("a review state is required (--approve, --request-changes, --comment, or --state)")
+	}
+
+	text, err := resolveCommentBody(*body, *bodyFile)
+	if err != nil {
+		return err
+	}
+
+	var review Review
+	rawURL := pullURL(c.baseURL, ownerName, repoName, number, nil) + "/reviews"
+	if err := c.doJSON(http.MethodPost, rawURL, reviewRequest{State: st, Body: text}, &review); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return writeJSON(os.Stdout, review)
+	}
+	fmt.Fprintf(os.Stdout, "Reviewed pull request #%s: %s\n", number, st)
+	return nil
+}
+
+func pullURL(baseURL, ownerName, repoName, number string, query url.Values) string {
+	path := fmt.Sprintf("%s/api/v1/repos/%s/%s/pulls", baseURL, url.PathEscape(ownerName), url.PathEscape(repoName))
+	if number != "" {
+		path += "/" + url.PathEscape(number)
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	return path
+}
+
 func (c *client) doJSON(method, rawURL string, payload any, out any) error {
 	var body io.Reader
 	if payload != nil {
@@ -764,7 +1118,11 @@ func needsRepo(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "issue", "issues":
+	case "issue", "issues", "pr", "prs", "pull":
+		// Help subcommands don't need a repo.
+		if len(args) >= 2 && (args[1] == "help" || args[1] == "-h" || args[1] == "--help") {
+			return false
+		}
 		return true
 	case "deps":
 		// Only the repo-scoped deps subcommands need a repo (not who-uses/help).
@@ -818,7 +1176,20 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	printIssueUsage(w)
 	fmt.Fprintln(w)
+	printPullUsage(w)
+	fmt.Fprintln(w)
 	printDepsUsage(w)
+}
+
+func printPullUsage(w io.Writer) {
+	fmt.Fprintln(w, "Pull request commands:")
+	fmt.Fprintln(w, "  pr list [--state open|merged|closed] [--json]")
+	fmt.Fprintln(w, "  pr view [--web] [--json] <number>")
+	fmt.Fprintln(w, "  pr create --source BRANCH --target BRANCH [--title T] [--json]")
+	fmt.Fprintln(w, "  pr checks [--json] <number>     (exit 1 unless all checks pass)")
+	fmt.Fprintln(w, "  pr review <number> --approve|--request-changes|--comment [--body TEXT|-]")
+	fmt.Fprintln(w, "  pr close <number>")
+	fmt.Fprintln(w, "  pr reopen <number>")
 }
 
 func printRepoUsage(w io.Writer) {

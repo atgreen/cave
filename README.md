@@ -308,10 +308,19 @@ cave issue get    [--json] <number>
 cave issue create --title TITLE [--body TEXT] [--json]
 cave issue close  <number>
 cave issue reopen <number>
+
+cave pr list     [--state open|merged|closed] [--json]
+cave pr view     [--web] [--json] <number>
+cave pr create   --source BRANCH --target BRANCH [--title T] [--json]
+cave pr checks   [--json] <number>     # exit 1 unless all checks pass — CI-gateable
+cave pr review   <number> --approve|--request-changes|--comment [--body TEXT|-]
+cave pr close    <number>
+cave pr reopen   <number>
 ```
 
-Set `CAVE_REPO=owner/repo` (or pass `--repo`) so issue commands can find
-the target without you typing it every time.
+Set `CAVE_REPO=owner/repo` (or pass `--repo`) so issue and PR commands can find
+the target without you typing it every time. `cave pr checks <n>` exits non-zero
+unless every check is green, so it composes in scripts (`cave pr checks 7 && …`).
 
 ### `cave-server` — server binary
 
@@ -361,6 +370,7 @@ PATCH  /api/v1/repos/:owner/:repo/issues/:number         Close / reopen
 GET    /api/v1/repos/:owner/:repo/pulls
 POST   /api/v1/repos/:owner/:repo/pulls
 GET    /api/v1/repos/:owner/:repo/pulls/:number
+PATCH  /api/v1/repos/:owner/:repo/pulls/:number             Close / reopen ({"state": …})
 GET    /api/v1/repos/:owner/:repo/pulls/:number/reviews
 POST   /api/v1/repos/:owner/:repo/pulls/:number/reviews
 GET    /api/v1/repos/:owner/:repo/statuses/:sha
