@@ -201,6 +201,28 @@
   (llog:info "Embedded Usher OIDC provider ready"
              :issuer (config-value :oidc-issuer)))
 
+(defun usher-migrate-users (&key (force-admins '("atgreen")))
+  "Provision Usher accounts from the existing cave_users (username, email,
+   display name, is_admin). Accounts in FORCE-ADMINS are granted cave-admin too.
+   Skips users that already exist. Returns a list of (username . temp-password)
+   for newly created accounts — show these to the operator once."
+  (let ((results nil))
+    (dolist (row (postmodern:query
+                  (:select 'username 'email 'display-name 'is-admin
+                   :from 'cave-users)
+                  :rows))
+      (destructuring-bind (username email display-name is-admin) row
+        (let* ((real-email (and email (not (string-equal email "false")) email))
+               (admin (or (eq is-admin t)
+                          (member username force-admins :test #'string=)))
+               (temp (usher:random-token 9)))
+          (unless (usher:store-find-user-by-username
+                   (usher:provider-store usher::*provider*) username)
+            (usher-add-user username temp :email real-email
+                            :display-name display-name :admin admin)
+            (push (cons username temp) results)))))
+    (nreverse results)))
+
 (defun usher-add-user (username password &key email display-name admin)
   "Provision (or update) a local Usher user; optionally grant cave-admin.
    For manually migrating accounts off Keycloak."
