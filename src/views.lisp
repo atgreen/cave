@@ -65,6 +65,7 @@ explicitly chosen another theme."
                         (:span :style "color:var(--primary,#7c9a5e);font-weight:600"
                          (format nil "● ~A" unread))
                         "○")))
+                 (:a.btn.btn-sm :href "/-/explore" "Explore")
                  (:a.btn.btn-sm :href "/-/new-org" "New org")
                  (:a.btn.btn-sm :href "/-/settings" "Settings")
                  (when (getf *current-user* :is-admin)
@@ -73,7 +74,9 @@ explicitly chosen another theme."
                  (:span.nav-user (getf *current-user* :username))
                  (:form :method "post" :action "/logout" :style "display:inline"
                   (:button.btn.btn-sm :type "submit" "Log out")))
-               (:a.btn.btn-sm :href "/-/auth/login" "Log in")))))
+               (progn
+                 (:a.btn.btn-sm :href "/-/explore" "Explore")
+                 (:a.btn.btn-sm :href "/-/auth/login" "Log in"))))))
         (:main.container ,@body)
         (:footer.site-footer
          (:span (format nil "Cave ~A" +version+)))
@@ -248,6 +251,91 @@ explicitly chosen another theme."
      (:p :style "margin-top:var(--sp-4)"
       (:a.btn :href "/" "Back to the front page")))))
 
+(defun explore-url (q sort page)
+  "Build an /-/explore URL preserving the current query, sort, and page."
+  (format nil "/-/explore?q=~A&sort=~A&page=~A"
+          (hunchentoot:url-encode (or q "")) (or sort "recent") page))
+
+(defun %repo-list-item (r &key meta)
+  "Render one repo list <li> with owner/name, description, and optional META."
+  (spinneret:with-html
+    (:li
+     (:a :href (format nil "/~A/~A" (getf r :owner-name) (getf r :name))
+      (format nil "~A/~A" (getf r :owner-name) (getf r :name)))
+     (let ((d (getf r :description)))
+       (when (and d (not (eq d :null)) (plusp (length d)))
+         (:span.desc d)))
+     (when meta
+       (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem" meta)))))
+
+(defun view-explore (&key repos total query sort (page 1) (per-page 30) trending users orgs)
+  "Explore page: trending repos, searchable/sortable/paginated public repo list,
+and a people/organizations directory."
+  (let* ((q (or query ""))
+         (sort (or sort "recent"))
+         (total (or total 0))
+         (pages (max 1 (ceiling total per-page))))
+    (page (:title "Explore — Cave")
+      (:h1 "Explore")
+      ;; Trending
+      (when trending
+        (:section
+         (:h2 :style "font-size:1rem" "Trending this week")
+         (:ul.repo-list
+          (dolist (r trending)
+            (%repo-list-item r :meta (format nil "~A view~:P" (getf r :views)))))))
+      ;; Search + sort
+      (:form :method "get" :action "/-/explore"
+       :style "display:flex;gap:.5rem;margin:var(--sp-3) 0;flex-wrap:wrap"
+       (:input :type "text" :name "q" :value q :placeholder "Search repositories…"
+               :style "flex:1;min-width:12rem")
+       (:select :name "sort"
+        (dolist (opt '(("recent" . "Recently updated") ("newest" . "Newest")
+                       ("name" . "Name")))
+          (:option :value (car opt) :selected (equal sort (car opt)) (cdr opt))))
+       (:button.btn :type "submit" "Search")
+       (:a.btn :href "/-/search" "Search code"))
+      ;; Repositories
+      (:section
+       (:h2 :style "font-size:1rem" (format nil "Repositories (~A)" total))
+       (if repos
+           (:ul.repo-list
+            (dolist (r repos)
+              (%repo-list-item
+               r :meta (let ((pushed (or (getf r :last-pushed-at) (getf r :updated-at))))
+                         (when (format-relative-time pushed)
+                           (format nil "updated ~A" (format-relative-time pushed)))))))
+           (:p.empty "No repositories found."))
+       (when (> pages 1)
+         (:div :style "display:flex;gap:.5rem;justify-content:center;align-items:center;margin-top:var(--sp-3)"
+          (when (> page 1)
+            (:a.btn.btn-sm :href (explore-url q sort (1- page)) "← Prev"))
+          (:span :style "color:var(--text-muted);font-size:.85rem"
+           (format nil "Page ~A of ~A" page pages))
+          (when (< page pages)
+            (:a.btn.btn-sm :href (explore-url q sort (1+ page)) "Next →")))))
+      ;; People & organizations
+      (:div :style "display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4);align-items:start;margin-top:var(--sp-4)"
+       (:section
+        (:h2 :style "font-size:1rem" "People")
+        (if users
+            (:ul.repo-list
+             (dolist (u users)
+               (:li (render-avatar (getf u :email) :size 16)
+                (:a :href (format nil "/~A" (getf u :username))
+                 :style "margin-left:.4rem" (getf u :username)))))
+            (:p.empty "No users.")))
+       (:section
+        (:h2 :style "font-size:1rem" "Organizations")
+        (if orgs
+            (:ul.repo-list
+             (dolist (o orgs)
+               (:li (:a :href (format nil "/~A" (getf o :name)) (getf o :name))
+                (let ((d (getf o :description)))
+                  (when (and d (not (eq d :null)) (plusp (length d)))
+                    (:span.desc d))))))
+            (:p.empty "No organizations.")))))))
+
 (defun view-public-landing (&key repos events hero-html)
   "Anonymous landing page. The hero/intro is rendered from the cave/cave-landing
 repo's index.md (HERO-HTML) when present, so the copy is editable via git with no
@@ -274,7 +362,9 @@ data: featured repositories, recent activity, and instance stats."
       ;; Two columns: featured repos | recent activity
       (:div :style "display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4);align-items:start"
        (:section
-        (:h2 "Repositories")
+        (:div :style "display:flex;justify-content:space-between;align-items:baseline"
+         (:h2 "Repositories")
+         (:a :href "/-/explore" :style "font-size:.85rem" "Browse all →"))
         (if featured
             (:ul.repo-list
              (dolist (repo featured)

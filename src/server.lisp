@@ -846,6 +846,25 @@ editing the landing copy is a git push — no redeploy."
 ;; ----------------------------------------------------------------------------
 ;; Routes: Org creation
 
+(easy-routes:defroute explore-page ("/-/explore" :method :get) ()
+  (let* ((q (hunchentoot:get-parameter "q"))
+         (sort (or (hunchentoot:get-parameter "sort") "recent"))
+         (page (max 1 (or (parse-integer (or (hunchentoot:get-parameter "page") "1")
+                                         :junk-allowed t)
+                          1)))
+         (per-page 30)
+         (offset (* (1- page) per-page))
+         (blank-q (or (null q) (zerop (length (string-trim " " q))))))
+    (html-response
+     (view-explore :repos (search-public-repos :query q :sort sort
+                                               :limit per-page :offset offset)
+                   :total (count-public-repos :query q)
+                   :query q :sort sort :page page :per-page per-page
+                   :trending (when (and blank-q (= page 1))
+                               (trending-public-repos :days 7 :limit 6))
+                   :users (list-users)
+                   :orgs (list-orgs)))))
+
 (easy-routes:defroute new-org-page ("/-/new-org" :method :get) ()
   (when (require-login)
     (html-response (view-new-org))))

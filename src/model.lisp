@@ -454,6 +454,55 @@
     limit)
    :plists))
 
+(defun search-public-repos (&key query (sort "recent") (limit 30) (offset 0))
+  "Public repos for the Explore page. QUERY filters name/description (ILIKE);
+SORT is recent|newest|name. Paginated with LIMIT/OFFSET."
+  (let* ((order (cond ((equal sort "newest") "r.created_at DESC")
+                      ((equal sort "name") "lower(r.name) ASC")
+                      (t "COALESCE(r.last_pushed_at, r.updated_at) DESC")))
+         (like (when (and query (plusp (length (string-trim " " query))))
+                 (format nil "%~A%" (string-trim " " query))))
+         (sql (format nil "SELECT r.*, COALESCE(o.name, u.username) AS owner_name
+                FROM cave_repos r
+                LEFT JOIN cave_orgs o ON o.id = r.org_id
+                LEFT JOIN cave_users u ON u.id = r.owner_id
+                WHERE r.is_private = false~:[~; AND (r.name ILIKE $3 OR r.description ILIKE $3)~]
+                ORDER BY ~A LIMIT $1 OFFSET $2" like order)))
+    (if like
+        (postmodern:query sql limit offset like :plists)
+        (postmodern:query sql limit offset :plists))))
+
+(defun count-public-repos (&key query)
+  "Total public repos matching QUERY (for Explore pagination)."
+  (let ((like (when (and query (plusp (length (string-trim " " query))))
+                (format nil "%~A%" (string-trim " " query)))))
+    (or (if like
+            (postmodern:query
+             "SELECT COUNT(*) FROM cave_repos WHERE is_private = false
+              AND (name ILIKE $1 OR description ILIKE $1)" like :single)
+            (postmodern:query
+             "SELECT COUNT(*) FROM cave_repos WHERE is_private = false" :single))
+        0)))
+
+(defun list-orgs ()
+  "All organizations, alphabetical (for the Explore people/orgs directory)."
+  (postmodern:query (:order-by (:select '* :from 'cave-orgs) 'name) :plists))
+
+(defun trending-public-repos (&key (days 7) (limit 6))
+  "Public repos ranked by page views over the last DAYS — Cave's trending signal."
+  (postmodern:query
+   (format nil "SELECT r.*, COALESCE(o.name, u.username) AS owner_name,
+                       COUNT(pv.id) AS views
+                FROM cave_page_views pv
+                JOIN cave_repos r ON r.id = pv.repo_id
+                LEFT JOIN cave_orgs o ON o.id = r.org_id
+                LEFT JOIN cave_users u ON u.id = r.owner_id
+                WHERE r.is_private = false
+                  AND pv.viewed_at > NOW() - INTERVAL '~D days'
+                GROUP BY r.id, o.name, u.username
+                ORDER BY views DESC LIMIT $1" days)
+   limit :plists))
+
 (defun list-recent-public-events (&key (limit 20))
   "Recent events on public repos. For the anon landing's activity feed.
    Clones are excluded — they're noise in a feed and counted in Pulse instead."
