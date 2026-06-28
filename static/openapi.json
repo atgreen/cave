@@ -1,0 +1,338 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Cave API",
+    "version": "v1",
+    "description": "REST API for the Cave code forge. Authenticate with a personal API token (Settings → API Tokens) using the `Authorization: Bearer <token>` header. Read endpoints on public repositories work without authentication.\n\nTimestamps are RFC 3339 UTC strings. Errors use `{ \"error\": \"message\" }` with a 4xx/5xx status.",
+    "license": { "name": "MIT" }
+  },
+  "servers": [
+    { "url": "/", "description": "This Cave instance" }
+  ],
+  "security": [ { "bearerAuth": [] } ],
+  "tags": [
+    { "name": "repos", "description": "Repositories" },
+    { "name": "issues", "description": "Issues and comments" },
+    { "name": "pulls", "description": "Pull requests and reviews" },
+    { "name": "statuses", "description": "Commit statuses (CI)" }
+  ],
+  "paths": {
+    "/api/v1/user/repos": {
+      "post": {
+        "tags": ["repos"],
+        "summary": "Create a personal repository",
+        "operationId": "createUserRepo",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RepoCreate" } } }
+        },
+        "responses": {
+          "200": { "description": "Created repository", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Repo" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/repos/{owner}/{repo}/issues": {
+      "parameters": [ { "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/repo" } ],
+      "get": {
+        "tags": ["issues"],
+        "summary": "List issues",
+        "operationId": "listIssues",
+        "parameters": [ { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["open", "closed"], "default": "open" } } ],
+        "responses": {
+          "200": { "description": "Issues", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Issue" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["issues"],
+        "summary": "Create an issue",
+        "operationId": "createIssue",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IssueCreate" } } } },
+        "responses": {
+          "200": { "description": "Created issue", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Issue" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/repos/{owner}/{repo}/issues/{number}": {
+      "parameters": [ { "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/repo" }, { "$ref": "#/components/parameters/number" } ],
+      "get": {
+        "tags": ["issues"],
+        "summary": "Get an issue",
+        "operationId": "getIssue",
+        "responses": {
+          "200": { "description": "Issue", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Issue" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["issues"],
+        "summary": "Close or reopen an issue",
+        "operationId": "updateIssue",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StateUpdate" } } } },
+        "responses": {
+          "200": { "description": "Updated issue", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Issue" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/repos/{owner}/{repo}/issues/{number}/comments": {
+      "parameters": [ { "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/repo" }, { "$ref": "#/components/parameters/number" } ],
+      "post": {
+        "tags": ["issues"],
+        "summary": "Comment on an issue",
+        "operationId": "createIssueComment",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommentCreate" } } } },
+        "responses": {
+          "200": { "description": "Created comment", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IssueComment" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/repos/{owner}/{repo}/pulls": {
+      "parameters": [ { "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/repo" } ],
+      "get": {
+        "tags": ["pulls"],
+        "summary": "List pull requests",
+        "operationId": "listPulls",
+        "parameters": [ { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["open", "merged", "closed"], "default": "open" } } ],
+        "responses": {
+          "200": { "description": "Pull requests", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/PullRequest" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["pulls"],
+        "summary": "Open a pull request",
+        "operationId": "createPull",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PullCreate" } } } },
+        "responses": {
+          "200": { "description": "Created pull request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PullRequest" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/repos/{owner}/{repo}/pulls/{number}": {
+      "parameters": [ { "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/repo" }, { "$ref": "#/components/parameters/number" } ],
+      "get": {
+        "tags": ["pulls"],
+        "summary": "Get a pull request",
+        "operationId": "getPull",
+        "responses": {
+          "200": { "description": "Pull request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PullRequest" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["pulls"],
+        "summary": "Close or reopen a pull request",
+        "operationId": "updatePull",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StateUpdate" } } } },
+        "responses": {
+          "200": { "description": "Updated pull request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PullRequest" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/repos/{owner}/{repo}/pulls/{number}/reviews": {
+      "parameters": [ { "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/repo" }, { "$ref": "#/components/parameters/number" } ],
+      "get": {
+        "tags": ["pulls"],
+        "summary": "List reviews on a pull request",
+        "operationId": "listReviews",
+        "responses": {
+          "200": { "description": "Reviews", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Review" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["pulls"],
+        "summary": "Submit a review",
+        "operationId": "createReview",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReviewCreate" } } } },
+        "responses": {
+          "200": { "description": "Created review", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Review" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/repos/{owner}/{repo}/statuses/{sha}": {
+      "parameters": [ { "$ref": "#/components/parameters/owner" }, { "$ref": "#/components/parameters/repo" }, { "name": "sha", "in": "path", "required": true, "schema": { "type": "string" } } ],
+      "get": {
+        "tags": ["statuses"],
+        "summary": "List commit statuses",
+        "operationId": "listCommitStatuses",
+        "responses": {
+          "200": { "description": "Statuses", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/CommitStatus" } } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["statuses"],
+        "summary": "Set a commit status",
+        "operationId": "setCommitStatus",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommitStatusCreate" } } } },
+        "responses": {
+          "200": { "description": "Created status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommitStatus" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Personal API token from Settings → API Tokens" }
+    },
+    "parameters": {
+      "owner": { "name": "owner", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Repository owner (user or org)" },
+      "repo": { "name": "repo", "in": "path", "required": true, "schema": { "type": "string" }, "description": "Repository name" },
+      "number": { "name": "number", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "Issue or pull request number" }
+    },
+    "responses": {
+      "Error": { "description": "Bad request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Unauthorized": { "description": "Missing or invalid token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Forbidden": { "description": "Not permitted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NotFound": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "Error": { "type": "object", "properties": { "error": { "type": "string" } }, "required": ["error"] },
+      "Repo": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "owner_id": { "type": ["integer", "null"] },
+          "org_id": { "type": ["integer", "null"] },
+          "owner_name": { "type": "string" },
+          "description": { "type": "string" },
+          "is_private": { "type": "boolean" },
+          "default_branch": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "RepoCreate": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "private": { "type": "boolean", "default": false },
+          "mode": { "type": "string", "enum": ["empty", "import", "mirror"], "default": "empty" },
+          "url": { "type": "string", "description": "Remote URL for import/mirror" },
+          "auth_token": { "type": "string" },
+          "mirror_interval_minutes": { "type": "integer", "default": 60 }
+        }
+      },
+      "Issue": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "repo_id": { "type": "integer" },
+          "number": { "type": "integer" },
+          "author_id": { "type": "integer" },
+          "author": { "type": "string" },
+          "title": { "type": "string" },
+          "body": { "type": "string" },
+          "status": { "type": "string", "enum": ["open", "closed"] },
+          "milestone_id": { "type": ["integer", "null"] },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "closed_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "IssueCreate": { "type": "object", "required": ["title"], "properties": { "title": { "type": "string" }, "body": { "type": "string" } } },
+      "StateUpdate": { "type": "object", "required": ["state"], "properties": { "state": { "type": "string", "enum": ["open", "closed"], "description": "New state. (The issues endpoint also accepts the alias `status`.)" } } },
+      "CommentCreate": { "type": "object", "required": ["body"], "properties": { "body": { "type": "string" } } },
+      "IssueComment": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "issue_id": { "type": "integer" },
+          "author_id": { "type": "integer" },
+          "author": { "type": "string" },
+          "body": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PullRequest": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "repo_id": { "type": "integer" },
+          "number": { "type": "integer" },
+          "author_id": { "type": "integer" },
+          "source_branch": { "type": "string" },
+          "target_branch": { "type": "string" },
+          "head_commit": { "type": ["string", "null"] },
+          "version": { "type": "integer" },
+          "is_merged": { "type": "boolean" },
+          "is_closed": { "type": "boolean" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PullCreate": {
+        "type": "object",
+        "required": ["source_branch", "target_branch"],
+        "properties": {
+          "source_branch": { "type": "string" },
+          "target_branch": { "type": "string" }
+        }
+      },
+      "Review": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "changeset_id": { "type": "integer" },
+          "reviewer_id": { "type": "integer" },
+          "state": { "type": "string", "enum": ["approve", "approve_with_concerns", "request_changes", "comment"] },
+          "body": { "type": ["string", "null"] },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ReviewCreate": {
+        "type": "object",
+        "required": ["state"],
+        "properties": {
+          "state": { "type": "string", "enum": ["approve", "approve_with_concerns", "request_changes", "comment"] },
+          "body": { "type": "string" }
+        }
+      },
+      "CommitStatus": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "repo_id": { "type": "integer" },
+          "commit_sha": { "type": "string" },
+          "state": { "type": "string", "enum": ["pending", "success", "failure", "error"] },
+          "context": { "type": "string" },
+          "description": { "type": ["string", "null"] },
+          "target_url": { "type": ["string", "null"] },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CommitStatusCreate": {
+        "type": "object",
+        "required": ["state"],
+        "properties": {
+          "state": { "type": "string", "enum": ["pending", "success", "failure", "error"] },
+          "context": { "type": "string", "default": "default" },
+          "description": { "type": "string" },
+          "target_url": { "type": "string" }
+        }
+      }
+    }
+  }
+}

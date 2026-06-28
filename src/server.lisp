@@ -127,12 +127,29 @@
     (return-from require-sudo nil))
   t)
 
+(defun universal-to-rfc3339 (ut)
+  "Format a CL universal-time integer as an RFC3339 UTC timestamp string."
+  (multiple-value-bind (sec min hr day mon yr) (decode-universal-time ut 0)
+    (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ" yr mon day hr min sec)))
+
 (defun plist-to-hash-table (plist)
-  "Convert a plist to a hash table with lowercase string keys."
+  "Convert a plist to a hash table with lowercase string keys for JSON output.
+SQL NULL (:null) becomes JSON null; universal-time integers in *_at fields are
+emitted as RFC3339 UTC strings so the public API speaks standard timestamps."
   (let ((ht (make-hash-table :test 'equal)))
     (loop for (key val) on plist by #'cddr
-          do (setf (gethash (string-downcase (substitute #\_ #\- (symbol-name key))) ht)
-                   (if (eq val :null) 'null val)))
+          for k = (string-downcase (substitute #\_ #\- (symbol-name key)))
+          do (setf (gethash k ht)
+                   (cond
+                     ((eq val :null) 'null)
+                     ;; *_at columns hold universal time; 2208988800 = 1970 in
+                     ;; that epoch, so anything larger is a real timestamp.
+                     ((and (integerp val)
+                           (>= (length k) 3)
+                           (string= "_at" k :start2 (- (length k) 3))
+                           (> val 2208988800))
+                      (universal-to-rfc3339 val))
+                     (t val))))
     ht))
 
 (defun api-serialize (data)
@@ -3065,6 +3082,35 @@ repo member."
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Pull Requests
+
+(defparameter +api-docs-html+
+  "<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\">
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+    <title>Cave API reference</title>
+  </head>
+  <body>
+    <script id=\"api-reference\" data-url=\"/api/v1/openapi.json\"></script>
+    <script src=\"https://cdn.jsdelivr.net/npm/@scalar/api-reference\"></script>
+  </body>
+</html>"
+  "Standalone Scalar API-reference page rendering the OpenAPI spec.")
+
+(easy-routes:defroute api-openapi-json ("/api/v1/openapi.json" :method :get) ()
+  "Serve the OpenAPI 3.1 description of the v1 API (for SDK generators / docs)."
+  (setf (hunchentoot:content-type*) "application/json; charset=utf-8")
+  (handler-case
+      (uiop:read-file-string (merge-pathnames "static/openapi.json" (app-root)))
+    (error ()
+      (setf (hunchentoot:return-code*) 404)
+      "{\"error\":\"openapi spec not found\"}")))
+
+(easy-routes:defroute api-docs ("/api/v1/docs" :method :get) ()
+  "Interactive API reference (Scalar) for the v1 API."
+  (setf (hunchentoot:content-type*) "text/html; charset=utf-8")
+  +api-docs-html+)
 
 (easy-routes:defroute api-list-pulls
     ("/api/v1/repos/:owner/:repo-name/pulls" :method :get) ()

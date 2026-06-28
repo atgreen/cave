@@ -311,7 +311,7 @@ cave issue reopen <number>
 
 cave pr list     [--state open|merged|closed] [--json]
 cave pr view     [--web] [--json] <number>
-cave pr create   --source BRANCH --target BRANCH [--title T] [--json]
+cave pr create   --source BRANCH --target BRANCH [--json]
 cave pr checks   [--json] <number>     # exit 1 unless all checks pass — CI-gateable
 cave pr review   <number> --approve|--request-changes|--comment [--body TEXT|-]
 cave pr close    <number>
@@ -358,8 +358,14 @@ cavectl version             Print cavectl version
 
 ## REST API
 
+The API is described by an **OpenAPI 3.1** document served at
+`/api/v1/openapi.json`, with an interactive reference at `/api/v1/docs`. Point
+any OpenAPI client generator (openapi-generator, Speakeasy, Fern, Kiota, …) at
+the spec to produce a typed client library in your language. Timestamps are
+RFC 3339 UTC strings; errors are `{ "error": "message" }`.
+
 Authenticate with `Authorization: Bearer <api-token>` (issued from Settings →
-API Tokens):
+API Tokens); read endpoints on public repos work unauthenticated.
 
 ```
 POST   /api/v1/user/repos                                Create a personal repo

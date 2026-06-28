@@ -40,17 +40,17 @@ func openBrowser(rawURL string) error {
 const defaultBaseURL = "http://localhost:8080"
 
 type Issue struct {
-	ID        int64        `json:"id"`
-	RepoID    int64        `json:"repo_id"`
-	Number    int64        `json:"number"`
-	AuthorID  int64        `json:"author_id"`
-	Title     string       `json:"title"`
-	Body      string       `json:"body"`
-	Status    string       `json:"status"`
-	Author    string       `json:"author"`
-	CreatedAt json.Number  `json:"created_at"`
-	UpdatedAt json.Number  `json:"updated_at"`
-	ClosedAt  *json.Number `json:"closed_at"`
+	ID        int64          `json:"id"`
+	RepoID    int64          `json:"repo_id"`
+	Number    int64          `json:"number"`
+	AuthorID  int64          `json:"author_id"`
+	Title     string         `json:"title"`
+	Body      string         `json:"body"`
+	Status    string         `json:"status"`
+	Author    string         `json:"author"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
+	ClosedAt  *string        `json:"closed_at"`
 	Comments  []IssueComment `json:"comments"`
 }
 
@@ -68,23 +68,23 @@ type issueCommentRequest struct {
 }
 
 type IssueComment struct {
-	ID        int64       `json:"id"`
-	IssueID   int64       `json:"issue_id"`
-	AuthorID  int64       `json:"author_id"`
-	Author    string      `json:"author"`
-	Body      string      `json:"body"`
-	CreatedAt json.Number `json:"created_at"`
+	ID        int64  `json:"id"`
+	IssueID   int64  `json:"issue_id"`
+	AuthorID  int64  `json:"author_id"`
+	Author    string `json:"author"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
 }
 
 type Repo struct {
-	ID          int64       `json:"id"`
-	Name        string      `json:"name"`
-	OwnerID     *int64      `json:"owner_id"`
-	OrgID       *int64      `json:"org_id"`
-	OwnerName   string      `json:"owner_name"`
-	Description string      `json:"description"`
-	IsPrivate   bool        `json:"is_private"`
-	CreatedAt   json.Number `json:"created_at"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	OwnerID     *int64 `json:"owner_id"`
+	OrgID       *int64 `json:"org_id"`
+	OwnerName   string `json:"owner_name"`
+	Description string `json:"description"`
+	IsPrivate   bool   `json:"is_private"`
+	CreatedAt   string `json:"created_at"`
 }
 
 type repoCreateRequest struct {
@@ -98,23 +98,22 @@ type repoCreateRequest struct {
 }
 
 type PullRequest struct {
-	ID           int64       `json:"id"`
-	RepoID       int64       `json:"repo_id"`
-	Number       int64       `json:"number"`
-	AuthorID     int64       `json:"author_id"`
-	SourceBranch string      `json:"source_branch"`
-	TargetBranch string      `json:"target_branch"`
-	HeadCommit   string      `json:"head_commit"`
-	Version      int64       `json:"version"`
-	IsMerged     bool        `json:"is_merged"`
-	IsClosed     bool        `json:"is_closed"`
-	CreatedAt    json.Number `json:"created_at"`
+	ID           int64  `json:"id"`
+	RepoID       int64  `json:"repo_id"`
+	Number       int64  `json:"number"`
+	AuthorID     int64  `json:"author_id"`
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+	HeadCommit   string `json:"head_commit"`
+	Version      int64  `json:"version"`
+	IsMerged     bool   `json:"is_merged"`
+	IsClosed     bool   `json:"is_closed"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type pullCreateRequest struct {
 	SourceBranch string `json:"source_branch"`
 	TargetBranch string `json:"target_branch"`
-	Title        string `json:"title,omitempty"`
 }
 
 type pullUpdateRequest struct {
@@ -122,11 +121,11 @@ type pullUpdateRequest struct {
 }
 
 type Review struct {
-	ID         int64       `json:"id"`
-	ReviewerID int64       `json:"reviewer_id"`
-	State      string      `json:"state"`
-	Body       string      `json:"body"`
-	CreatedAt  json.Number `json:"created_at"`
+	ID         int64  `json:"id"`
+	ReviewerID int64  `json:"reviewer_id"`
+	State      string `json:"state"`
+	Body       string `json:"body"`
+	CreatedAt  string `json:"created_at"`
 }
 
 type reviewRequest struct {
@@ -858,7 +857,6 @@ func runPullCreate(c *client, ownerName, repoName string, args []string) error {
 	fs.SetOutput(io.Discard)
 	source := fs.String("source", "", "Source branch (required)")
 	target := fs.String("target", "", "Target branch (required)")
-	title := fs.String("title", "", "PR title")
 	jsonOut := fs.Bool("json", false, "Emit raw JSON")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -867,13 +865,12 @@ func runPullCreate(c *client, ownerName, repoName string, args []string) error {
 		return err
 	}
 	if strings.TrimSpace(*source) == "" || strings.TrimSpace(*target) == "" {
-		return errors.New("usage: cave pr create --source BRANCH --target BRANCH [--title T]")
+		return errors.New("usage: cave pr create --source BRANCH --target BRANCH")
 	}
 	var pr PullRequest
 	payload := pullCreateRequest{
 		SourceBranch: strings.TrimSpace(*source),
 		TargetBranch: strings.TrimSpace(*target),
-		Title:        strings.TrimSpace(*title),
 	}
 	if err := c.doJSON(http.MethodPost, pullURL(c.baseURL, ownerName, repoName, "", nil), payload, &pr); err != nil {
 		return err
@@ -1185,7 +1182,7 @@ func printPullUsage(w io.Writer) {
 	fmt.Fprintln(w, "Pull request commands:")
 	fmt.Fprintln(w, "  pr list [--state open|merged|closed] [--json]")
 	fmt.Fprintln(w, "  pr view [--web] [--json] <number>")
-	fmt.Fprintln(w, "  pr create --source BRANCH --target BRANCH [--title T] [--json]")
+	fmt.Fprintln(w, "  pr create --source BRANCH --target BRANCH [--json]")
 	fmt.Fprintln(w, "  pr checks [--json] <number>     (exit 1 unless all checks pass)")
 	fmt.Fprintln(w, "  pr review <number> --approve|--request-changes|--comment [--body TEXT|-]")
 	fmt.Fprintln(w, "  pr close <number>")
