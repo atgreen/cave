@@ -688,6 +688,23 @@ the results. Skips deletes and zero-sha boundaries."
                                :nonce (generate-oidc-state))))
       (hunchentoot:redirect "/-/auth/login")))
 
+(easy-routes:defroute register-page ("/-/register" :method :get) ()
+  (if *current-user*
+      (hunchentoot:redirect "/")
+      (html-response (view-register))))
+
+(easy-routes:defroute register-submit ("/-/register" :method :post) ()
+  (let ((username (hunchentoot:post-parameter "username"))
+        (email (hunchentoot:post-parameter "email"))
+        (password (hunchentoot:post-parameter "password")))
+    (case (usher-register-user username email password)
+      (:ok (hunchentoot:redirect "/-/auth/login"))
+      (:taken (html-response (view-register :error "That username is already taken."
+                                            :username username :email email)))
+      (t (html-response (view-register
+                         :error "Enter a username and a password of at least 8 characters."
+                         :username username :email email))))))
+
 (easy-routes:defroute logout ("/logout" :method :post) ()
   ;; With the embedded provider the cave session IS the auth state — there is no
   ;; separate IdP SSO session to end. Clear the session locally and go home.

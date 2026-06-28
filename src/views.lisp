@@ -206,7 +206,7 @@ explicitly chosen another theme."
       (:span
        (:a.btn :href "/-/auth/login" "Log in")
        " "
-       (:a.btn.btn-primary :href "/-/auth/login" "Register")))
+       (:a.btn.btn-primary :href "/-/register" "Register")))
      (:p :style "color:var(--text-muted);margin-bottom:var(--sp-4)"
       "Browse public projects below. To create your own, log in or register.")
      (if repos
@@ -2606,6 +2606,28 @@ function caveShowCommentForm(td) {
                :autocomplete "new-password" :minlength "8" :required t))
       (:button.btn :type "submit" "Change password")))
     (:p (:a :href "/-/settings" "← Back to settings"))))
+
+(defun view-register (&key error username email)
+  "Self-service registration form."
+  (page (:title "Register — Cave")
+    (:h1 "Create an account")
+    (when error (:p :style "color:var(--danger,#c0392b)" error))
+    (:p :style "color:var(--text-muted);font-size:.9rem"
+     "New accounts require administrator approval before you can sign in.")
+    (:section
+     (:form :method "post" :action "/-/register"
+      (:div.field
+       (:label :for "username" "Username")
+       (:input :id "username" :name "username" :value (or username "") :autofocus t :required t))
+      (:div.field
+       (:label :for "email" "Email")
+       (:input :id "email" :name "email" :type "email" :value (or email "")))
+      (:div.field
+       (:label :for "password" "Password")
+       (:input :id "password" :name "password" :type "password"
+               :minlength "8" :autocomplete "new-password" :required t))
+      (:button.btn.btn-primary :type "submit" "Create account")))
+    (:p "Already have an account? " (:a :href "/-/auth/login" "Sign in"))))
 
 (defun view-totp (&key enabled)
   "TOTP status page."

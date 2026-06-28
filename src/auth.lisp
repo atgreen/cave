@@ -165,17 +165,17 @@
                    (uiop:ensure-directory-pathname (config-value :data-dir))))
 
 (defun ensure-usher-client ()
-  "Register (idempotently) the cave OAuth client in the embedded provider,
-   from cave's own OIDC config."
-  (let ((store (usher:provider-store usher::*provider*)))
-    (unless (usher:store-find-client store (config-value :oidc-client-id))
-      (usher:store-add-client
-       store (usher:make-client :id (config-value :oidc-client-id)
-                                :type :confidential
-                                :secret-hash (usher:hash-password
-                                              (or (config-value :oidc-client-secret) ""))
-                                :name "Cave"
-                                :redirect-uris (list (oidc-redirect-uri)))))))
+  "Register the cave OAuth client in the embedded provider from cave's own OIDC
+   config. Upserts on every boot, so the client secret is (re)hashed with the
+   current Argon2 policy."
+  (usher:store-add-client
+   (usher:provider-store usher::*provider*)
+   (usher:make-client :id (config-value :oidc-client-id)
+                      :type :confidential
+                      :secret-hash (usher:hash-password
+                                    (or (config-value :oidc-client-secret) ""))
+                      :name "Cave"
+                      :redirect-uris (list (oidc-redirect-uri)))))
 
 (defun init-usher ()
   "Build and install the embedded Usher OIDC provider (idempotent). Migrates the
@@ -186,6 +186,9 @@
          :issuer (config-value :oidc-issuer)
          :tls '(:mode :none)
          :totp-issuer "Cave"
+         ;; Tuned for this host's CPU (default 64 MiB/t=3 is ~3 s/hash on 2 vCPUs).
+         ;; OWASP-minimum-ish; existing hashes migrate via rehash-on-login.
+         :argon2 '(:variant :argon2i :m 19456 :t 2 :p 1)
          :db (list :backend :postgres
                    :host (config-value :db-host)
                    :port (config-value :db-port)
@@ -269,6 +272,24 @@
                  (cl-qrencode:encode-png-stream otpauth-uri s :version 8 :level :level-m))))
     (format nil "data:image/png;base64,~A"
             (cl-base64:usb8-array-to-base64-string bytes))))
+
+(defun usher-register-user (username email password)
+  "Self-service account creation: a new Usher user (active, not admin). The cave
+   pending-approval gate is applied when they first sign in (provision-oidc-user).
+   Returns :ok, :taken, or :invalid."
+  (let ((store (usher:provider-store usher::*provider*))
+        (uname (and username (string-trim '(#\Space #\Tab) username))))
+    (cond
+      ((or (null uname) (zerop (length uname))
+           (null password) (< (length password) 8))
+       :invalid)
+      ((usher:store-find-user-by-username store uname) :taken)
+      (t (usher:store-add-user
+          store (usher:make-user :subject (usher:random-uuid) :username uname
+                                 :name uname :email email :email-verified nil
+                                 :status "active"
+                                 :password-hash (usher:hash-password password)))
+         :ok))))
 
 (defun usher-set-password (username new-password)
   "Set USERNAME's embedded-Usher password. Returns T on success, NIL if no such
