@@ -2626,6 +2626,9 @@ number of commits re-verified."
                                             :pending 0 :overall "none"))))
              (checks (first checks-mv))
              (checks-rollup (second checks-mv))
+             (can-close (and *current-user-id*
+                             (or (eql (getf pr :author-id) *current-user-id*)
+                                 (member-of-repo-p repo))))
              (comments-json (if comment-hts
                                 (com.inuoe.jzon:stringify comment-hts)
                                 "[]")))
@@ -2639,7 +2642,8 @@ number of commits re-verified."
                          :diff-comments-json comments-json
                          :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
                                                  owner repo-name num)
-                         :checks checks :checks-rollup checks-rollup))))))
+                         :checks checks :checks-rollup checks-rollup
+                         :can-close can-close))))))
 
 (easy-routes:defroute pull-request-checks-json
     ("/:owner/:repo-name/pulls/:number/checks.json" :method :get) ()
@@ -2747,6 +2751,28 @@ number of commits re-verified."
          (if pr
              (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number))
              (format nil "/~A/~A" owner repo-name)))))))
+
+(easy-routes:defroute pull-request-state-submit
+    ("/:owner/:repo-name/pulls/:number/state" :method :post) ()
+  "Close or reopen a pull request (no merge). Allowed for the PR author or any
+repo member."
+  (when (require-login)
+    (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
+           (num (parse-integer number :junk-allowed t))
+           (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
+      (unless (and repo pr) (return-from pull-request-state-submit (not-found)))
+      (unless (or (eql (getf pr :author-id) *current-user-id*)
+                  (member-of-repo-p repo))
+        (setf (hunchentoot:return-code*) 403)
+        (return-from pull-request-state-submit "Forbidden"))
+      (let ((action (hunchentoot:post-parameter "action")))
+        (cond
+          ((and (equal action "close") (not (getf pr :is-merged)))
+           (close-pull-request (getf pr :id)))
+          ((and (equal action "reopen")
+                (not (getf pr :is-merged)) (getf pr :is-closed))
+           (reopen-pull-request (getf pr :id)))))
+      (hunchentoot:redirect (format nil "/~A/~A/pulls/~A" owner repo-name num)))))
 
 (easy-routes:defroute merge-pull-request-submit
     ("/:owner/:repo-name/pulls/:number/merge" :method :post) ()

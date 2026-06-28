@@ -1941,11 +1941,18 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
     :where (:= 'id changeset-id))))
 
 (defun close-pull-request (changeset-id)
-  "Mark a pull request as closed."
+  "Mark a pull request as closed (without merging)."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'is-closed t 'closed-at (:now) 'updated-at (:now)
     :where (:= 'id changeset-id))))
+
+(defun reopen-pull-request (changeset-id)
+  "Reopen a previously-closed (un-merged) pull request."
+  (postmodern:execute
+   (:update 'cave-changesets
+    :set 'is-closed nil 'closed-at :null 'updated-at (:now)
+    :where (:and (:= 'id changeset-id) (:= 'is-merged nil)))))
 
 (defun merge-pull-request (changeset-id)
   "Mark a pull request as merged."

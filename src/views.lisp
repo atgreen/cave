@@ -1721,7 +1721,7 @@ for in-progress checks, polling a JSON endpoint while anything runs."
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge can-override conflict-files stack stack-items diff-raw
                              diff-comments-json comment-action
-                             checks checks-rollup source-missing)
+                             checks checks-rollup source-missing can-close)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -1744,6 +1744,17 @@ for in-progress checks, polling a JSON endpoint while anything runs."
                (getf author :username))
        (when (getf pr :head-commit)
          (:code :style "margin-left:.5rem" (getf pr :head-commit))))
+
+      ;; Close / reopen (author or repo member). Merged PRs can't be reopened.
+      (when (and can-close (not (getf pr :is-merged)))
+        (:form :method "post" :style "margin:.5rem 0"
+         :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+         (if (getf pr :is-closed)
+             (:button.btn.btn-sm :type "submit" :name "action" :value "reopen"
+              "Reopen pull request")
+             (:button.btn.btn-sm :type "submit" :name "action" :value "close"
+              :style "border-color:var(--red,#b04a4a);color:var(--red,#b04a4a)"
+              "Close pull request"))))
 
       ;; Source branch gone (e.g. pruned by a mirror sync): the diff can't be
       ;; computed and the PR can't be merged. Say so instead of "0 files".
