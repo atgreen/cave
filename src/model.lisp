@@ -484,18 +484,18 @@
    :plists))
 
 (defun list-user-repos (user-id &key include-private)
-  "List repos owned by a user."
+  "List repos owned by a user, most recently changed first."
   (if include-private
       (postmodern:query
        (:order-by
         (:select '* :from 'cave-repos :where (:= 'owner-id user-id))
-        'name)
+        (:desc (:coalesce 'last-pushed-at 'updated-at)))
        :plists)
       (postmodern:query
        (:order-by
         (:select '* :from 'cave-repos
          :where (:and (:= 'owner-id user-id) (:= 'is-private nil)))
-        'name)
+        (:desc (:coalesce 'last-pushed-at 'updated-at)))
        :plists)))
 
 (defun repo-member-role (repo-id user-id)
