@@ -12,22 +12,25 @@ are not built yet.
 
 ### Implemented
 
-- **Git hosting** — SSH push/clone with per-repo access control, plus anonymous read-only clone over HTTPS
+- **Git hosting** — SSH push/clone with per-repo access control, plus anonymous read-only clone over HTTPS; pushing a new branch prints an "open a pull request" link back in the terminal
 - **Pull requests** — graduated review model (approve, approve with concerns, request changes); enforced merge-eligibility rules: required approvals, blocking change-requests, unresolved concerns, and required status checks (failing/pending checks block the merge); squash merge
-- **Issues** — create, list, comment, close/reopen (labels, assignees, and filtering are *Planned*)
-- **Releases** — tag-backed releases with markdown body and per-asset uploads (≤ 100 MB each), download counts
-- **Commit status API** — external CI reports pass/fail per context on a commit; feeds merge eligibility
-- **Commit signature verification** — SSH-signed commits validated against registered user keys on push; "Verified" badge in the commit list
+- **Live checks panel** — pull requests show a GitHub-style checks panel combining external commit statuses and cave workflow jobs: a rollup summary (N failing / M in progress / K successful) plus per-check rows with green/red icons and spinners for in-progress checks, polled live while anything runs (the merge box refreshes once they settle)
+- **Issues** — create, list, comment, close/reopen; labels with label filtering, assignees, and milestones (with open/closed issue counts)
+- **Notifications** — in-app notification feed with an unread-count bell, plus per-repo watching (members are subscribed automatically; anyone can Watch); new issues, comments, PR reviews, and merges notify members + watchers. Email notifications too
+- **Releases** — tag-backed releases with markdown body and per-asset uploads (≤ 100 MB each), download counts; release notes auto-generated from commits since the previous tag when the body is left blank
+- **Commit status API** — external CI reports pass/fail per context on a commit; feeds merge eligibility and the checks panel
+- **Supply-chain security** — CycloneDX SBOM ingest on push, dependency graph, OSV advisory-feed matching, severity-ranked dependency alerts with durable suppressions, and Dependabot-style auto-fix pull requests (speculative build before opening)
+- **Commit signature verification** — SSH- and GPG-signed commits validated against keys registered in Settings (SSH keys / GPG keys), verified on push with a "Verified" badge in the commit list; a `cave-server reverify` command backfills verification for existing history after a key is added
 - **Git subprocess sandboxing** — `git` push/clone, repo metadata reads, and pre-receive checks run inside a Landlock filesystem sandbox (via [landrun](https://github.com/Zouuup/landrun)) scoped to the target repo: a compromised git or check process can touch only its own repo plus read-only system paths — not other repos or host secrets (kernel-enforced cross-repo isolation). Gated by `:sandbox-landlock` (on by default); degrades to a no-op where the kernel lacks Landlock
 - **Code browser** — file tree with per-file last commit and relative age, repo language breakdown, file-type icons, Monaco editor, syntax-highlighted diffs, branch/tag switcher (overview, code, tree, and file views), SSH/HTTPS clone widget, click-a-line-number permalinks (`#L42`) with a per-line action menu
-- **README rendering** — server-side Markdown with tables and fenced code blocks; rendered HTML cached by blob sha
+- **README & markdown rendering** — server-side Markdown (CommonMark + GFM tables, via cl-commonmark) with fenced code blocks, rendered HTML cached by blob sha; math (KaTeX) and Mermaid diagrams rendered client-side, loaded lazily only when the syntax is present
 - **Code search** — full-text code search powered by [Zoekt](https://github.com/sourcegraph/zoekt), repo-scoped and global
 - **Repo mirroring** — push to and pull from GitHub/GitLab/Codeberg, with scheduled sync
 - **Webhooks** — HTTP callbacks on push, PR, and issue events
 - **Pulse tab** — per-repo activity chart, total views, unique visitors, top contributors, referring sites (member-only)
 - **Public landing** — anonymous visitors get a list of public repos and recent activity, no login required
 - **User themes** — built-in (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
-- **Keycloak SSO** — OIDC authentication, self-registration gated by admin approval, email verification, 2FA (TOTP)
+- **Built-in identity (Usher)** — cave embeds its own OpenID Provider (Usher) in-process, so no external IdP is required: OIDC login, self-registration gated by admin approval, email verification, password reset, self-service password change, and 2FA (TOTP) with backup codes. SSH and GPG key management live in Settings. cave still speaks plain OIDC, so it can also federate to an external provider (e.g. Keycloak)
 - **Email** — SMTP via mailpit (dev) or any external relay (Resend / Postmark / SES / Fastmail …) configured per deploy
 - **Observability** — Prometheus metrics, Grafana dashboards, SBCL runtime stats
 - **Backup/restore** — one-command backup and restore of Postgres + repos + config
@@ -43,7 +46,8 @@ are not built yet.
 ### Planned
 
 - **Atomic stack landing** — ordered validation plus all-or-nothing merge of a stack
-- **Richer issues** — labels, assignees, filtering, and `Closes #N` auto-close (the schema exists; the UI/API don't)
+- **`Closes #N` auto-close** — close issues automatically from commit/PR messages (labels, assignees, milestones, and filtering are now *Implemented*)
+- **Deployment auth migration** — the cave binary embeds Usher, but the `cavectl` tooling still provisions an external Keycloak (`auth.mode: keycloak`); wiring `cavectl` to deploy the embedded provider directly is pending
 - **Fully sandboxed checks** — pre-receive checks already run under a Landlock filesystem sandbox (cross-repo isolation, scoped to the extracted worktree) with a scrubbed environment, network isolation (`unshare -n` plus Landlock TCP-deny, best-effort where the container can't `unshare`), and a wall-clock timeout (`:checks-*`). Still missing for full isolation: cgroup memory/CPU limits and dropping to a per-repo unprivileged UID
 - **Repo deployment / CD** — build images, queue deploys, roll back, manage secrets
 - **Unit/integration tests** — for migrations, the REST API, and merge-policy rules (today only the end-to-end Playwright suite exists)
@@ -151,7 +155,8 @@ src/
 ├── package.lisp        — Package definition
 ├── config.lisp         — S-expression config parser
 ├── db.lisp             — PostgreSQL via Postmodern, numbered migrations
-├── auth.lisp           — OIDC auth, sessions, API tokens, sudo mode
+├── auth.lisp           — Embedded Usher OpenID Provider, sessions, API tokens,
+│                         GPG/SSH key mgmt, notifications, sudo mode
 ├── model.lisp          — Domain queries: users, orgs, repos, issues, PRs,
 │                         reviews, releases, signatures, page views, …
 ├── git.lisp            — Git CLI integration (branch, log, tree, diff, merge,
@@ -185,7 +190,8 @@ deploy/quadlet/         — systemd-user quadlet units
 | Postmodern | PostgreSQL client |
 | Spinneret | S-expression HTML generation |
 | ag-grpc | gRPC server + client (runners, chamber) |
-| 3bmd | Markdown rendering |
+| Usher | Embedded OpenID Provider (in-process auth) |
+| cl-commonmark | Markdown rendering (CommonMark + GFM tables) |
 | Dexador | HTTP client (OIDC, webhooks) |
 | Ironclad + jzon + flexi-streams | crypto, JSON, byte streams |
 
@@ -206,8 +212,11 @@ Two configs live side-by-side:
     :db-user "cave"
     :db-password "…"
     :base-url "https://cave.example.com"
-    :oidc-issuer "https://auth.cave.example.com/realms/cave"
-    :oidc-issuer-internal "http://cave-keycloak:8080/realms/cave"
+    ;; OIDC issuer. For the embedded Usher provider, set this to your base URL —
+    ;; cave self-serves OIDC, no external IdP needed. For an external provider
+    ;; (e.g. Keycloak) point it at the realm and set :oidc-issuer-internal to the
+    ;; in-cluster URL.
+    :oidc-issuer "https://cave.example.com"
     :oidc-client-id "cave"
     :oidc-client-secret "…"
     :zoekt-enabled t
