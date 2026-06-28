@@ -106,6 +106,71 @@
             (format t "~%"))
           (format t "~&No new accounts (all cave_users already exist in Usher).~%")))))
 
+;;; --- System repos (cave-themes, cave-landing): create + seed at startup ---
+
+(defun system-repo-empty-p (owner name)
+  "True when OWNER/NAME's bare repo has no commits (no branches)."
+  (let ((disk-path (repo-disk-path owner name)))
+    (and (probe-file disk-path) (null (git-branches disk-path)))))
+
+(defun seed-system-repo (owner name seed-subdir commit-msg)
+  "Push the files under SEED-SUBDIR (relative to app-root, so they're found both
+in dev and in the shipped image) into OWNER/NAME's main branch as one commit."
+  (let* ((seed-dir (merge-pathnames seed-subdir (app-root)))
+         (disk-path (repo-disk-path owner name))
+         (tmpdir (format nil "/tmp/cave-seed-~A"
+                         (ironclad:byte-array-to-hex-string (ironclad:random-data 4)))))
+    (if (not (probe-file seed-dir))
+        (llog:warn "System repo seed dir missing" :dir (namestring seed-dir))
+        (handler-case
+            (progn
+              (uiop:run-program (list "git" "clone" (namestring disk-path) tmpdir)
+                                :output :string :error-output :string)
+              (uiop:run-program (list "git" "-C" tmpdir "symbolic-ref" "HEAD" "refs/heads/main")
+                                :ignore-error-status t)
+              (uiop:run-program (format nil "cp -r ~A* ~A/" (namestring seed-dir) tmpdir)
+                                :output :string :error-output :string :force-shell t)
+              (uiop:run-program (list "git" "-C" tmpdir "add" "-A")
+                                :output :string :error-output :string)
+              (uiop:run-program (list "git" "-C" tmpdir
+                                      "-c" "user.name=Cave" "-c" "user.email=cave@localhost"
+                                      "commit" "-m" commit-msg)
+                                :output :string :error-output :string)
+              (uiop:run-program (list "git" "-C" tmpdir "push" "origin" "HEAD:main")
+                                :output :string :error-output :string)
+              ;; Make sure the bare repo's default branch points at main.
+              (uiop:run-program (list "git" "-C" (namestring disk-path)
+                                      "symbolic-ref" "HEAD" "refs/heads/main")
+                                :ignore-error-status t)
+              (llog:info "Seeded system repo" :repo (format nil "~A/~A" owner name)))
+          (error (e)
+            (llog:warn "Failed to seed system repo"
+                       :repo (format nil "~A/~A" owner name)
+                       :error (princ-to-string e)))))
+    (uiop:run-program (list "rm" "-rf" tmpdir) :ignore-error-status t)))
+
+(defun ensure-system-repo (name description seed-subdir commit-msg)
+  "Ensure cave/NAME exists and is populated: create it (DB row + bare repo) when
+missing, and seed it from SEED-SUBDIR when it has no commits — so a missing OR
+empty system repo gets populated at startup."
+  (let ((cave-org (find-org-by-name "cave")))
+    (when cave-org
+      (unless (find-repo "cave" name)
+        (handler-case
+            (progn
+              (postmodern:query
+               (:insert-into 'cave-repos
+                :set 'org-id (getf cave-org :id) 'name name 'description description
+                :returning '*)
+               :plist)
+              (init-bare-repo "cave" name)
+              (llog:info "Created system repo" :repo (format nil "cave/~A" name)))
+          (error (e)
+            (llog:warn "Failed to create system repo"
+                       :repo name :error (princ-to-string e)))))
+      (when (and (find-repo "cave" name) (system-repo-empty-p "cave" name))
+        (seed-system-repo "cave" name seed-subdir commit-msg)))))
+
 ;;; --- SERVE subcommand ---
 
 (defun make-serve-command ()
@@ -168,7 +233,8 @@
         (format *error-output* "~&Embedded Usher init failed: ~A~%" e)
         (uiop:quit 1)))
 
-    ;; Ensure cave org and cave-themes repo exist
+    ;; Ensure the cave system org exists, then pre-populate the system repos:
+    ;; created if missing, seeded if empty.
     (unless (find-org-by-name "cave")
       (handler-case
           (progn
@@ -181,47 +247,10 @@
              :plist)
             (llog:info "Created cave org"))
         (error () nil)))
-    (let ((cave-org (find-org-by-name "cave")))
-      (when (and cave-org (not (find-repo "cave" "cave-themes")))
-        (handler-case
-            (let ((repo (postmodern:query
-                         (:insert-into 'cave-repos
-                          :set 'org-id (getf cave-org :id)
-                               'name "cave-themes"
-                               'description "Built-in and community themes for Cave"
-                          :returning '*)
-                         :plist)))
-              (init-bare-repo "cave" "cave-themes")
-              ;; Seed with example theme files
-              (let ((disk-path (repo-disk-path "cave" "cave-themes"))
-                    (seed-dir (merge-pathnames "keycloak/cave-themes-seed/" (uiop:getcwd)))
-                    (tmpdir (format nil "/tmp/cave-themes-seed-~A"
-                                    (ironclad:byte-array-to-hex-string
-                                     (ironclad:random-data 4)))))
-                (when (probe-file seed-dir)
-                  (handler-case
-                      (progn
-                        (uiop:run-program (list "git" "clone" (namestring disk-path) tmpdir)
-                                          :output :string :error-output :string)
-                        (uiop:run-program (format nil "cp ~A* ~A/" (namestring seed-dir) tmpdir)
-                                          :output :string :error-output :string
-                                          :force-shell t)
-                        (uiop:run-program (list "git" "-C" tmpdir "add" "-A")
-                                          :output :string :error-output :string)
-                        (uiop:run-program (list "git" "-C" tmpdir
-                                                "-c" "user.name=Cave"
-                                                "-c" "user.email=cave@localhost"
-                                                "commit" "-m" "Add example theme and documentation")
-                                          :output :string :error-output :string)
-                        (uiop:run-program (list "git" "-C" tmpdir "push" "origin" "main")
-                                          :output :string :error-output :string)
-                        (llog:info "Seeded cave/cave-themes with example theme"))
-                    (error (e)
-                      (llog:warn "Failed to seed cave-themes" :error (princ-to-string e))))
-                  (uiop:run-program (list "rm" "-rf" tmpdir)
-                                    :ignore-error-status t)))
-              (llog:info "Created cave/cave-themes repo" :id (getf repo :id)))
-          (error () nil))))
+    (ensure-system-repo "cave-themes" "Built-in and community themes for Cave"
+                        "static/seed/cave-themes/" "Seed example theme and documentation")
+    (ensure-system-repo "cave-landing" "Landing page content for this Cave instance"
+                        "static/seed/cave-landing/" "Seed default landing page")
 
     (let ((port (or port-override (config-value :http-port 8080))))
       (bt2:with-lock-held (*server-lock*)
