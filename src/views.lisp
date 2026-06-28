@@ -248,45 +248,58 @@ explicitly chosen another theme."
      (:p :style "margin-top:var(--sp-4)"
       (:a.btn :href "/" "Back to the front page")))))
 
-(defun view-public-landing (&key repos events)
-  "Anonymous landing — list public repos so visitors can browse without an account."
-  (page (:title "Cave")
-    (:section
-     (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-3)"
-      (:h2 "Public repositories")
-      (:span
-       (:a.btn :href "/-/auth/login" "Log in")
-       " "
-       (:a.btn.btn-primary :href "/-/register" "Register")))
-     (:p :style "color:var(--text-muted);margin-bottom:var(--sp-4)"
-      "Browse public projects below. To create your own, log in or register.")
-     (if repos
-         (:ul.repo-list
-          (dolist (repo repos)
-            (let ((pushed (or (getf repo :last-pushed-at)
-                              (getf repo :updated-at)))
-                  (owner (getf repo :owner-name)))
-              (:li
-               (:a :href (format nil "/~A/~A" owner (getf repo :name))
-                (format nil "~A/~A" owner (getf repo :name)))
-               (when (getf repo :description)
-                 (:span.desc (getf repo :description)))
-               (when (format-relative-time pushed)
-                 (:span.repo-meta :style "margin-left:auto;color:var(--text-muted);font-size:.85rem"
-                  "Updated " (format-relative-time pushed)))))))
-         (:p.empty "No public repositories yet.")))
-    (when events
-      (:section
-       (:h2 "Recent activity")
-       (:ul.issue-list
-        (dolist (ev events)
-          (:li
-           (:span (format-event ev))
-           (let ((rel (format-relative-time (getf ev :created-at))))
-             (when rel
-               (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:.5rem" rel)))
-           (when (and (getf ev :repo-name) (not (eq (getf ev :repo-name) :null)))
-             (:span.badge :style "margin-left:auto" (getf ev :repo-name))))))))))
+(defun view-public-landing (&key repos events hero-html)
+  "Anonymous landing page. The hero/intro is rendered from the cave/cave-landing
+repo's index.md (HERO-HTML) when present, so the copy is editable via git with no
+redeploy; otherwise a built-in default is shown. Cave always appends the live
+data: featured repositories, recent activity, and instance stats."
+  (let ((featured (if (> (length repos) 8) (subseq repos 0 8) repos)))
+    (page (:title "Cave")
+      ;; Hero — from cave/cave-landing:index.md, or a built-in default.
+      (:section :style "text-align:center;padding:var(--sp-5) 0 var(--sp-4)"
+       (if hero-html
+           (:div.readme-content
+            :style "max-width:48rem;margin:0 auto;text-align:left"
+            (:raw hero-html))
+           (progn
+             (:h1 :style "font-size:2.4rem;margin:0 0 .35rem;letter-spacing:.12em" "Cave")
+             (:p :style "color:var(--text);font-size:1.1rem;margin:0 0 .25rem"
+              "A self-hosted code forge in Common Lisp")
+             (:p :style "color:var(--text-muted);font-size:.9rem;margin:0"
+              "push · review · merge · deploy — own your infrastructure")))
+       (:div :style "display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin-top:1.25rem"
+        (:a.btn :href "/api/v1/docs" "API docs")
+        (:a.btn :href "/-/auth/login" "Sign in")
+        (:a.btn.btn-primary :href "/-/register" "Register")))
+      ;; Two columns: featured repos | recent activity
+      (:div :style "display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4);align-items:start"
+       (:section
+        (:h2 "Repositories")
+        (if featured
+            (:ul.repo-list
+             (dolist (repo featured)
+               (let ((owner (getf repo :owner-name))
+                     (desc (getf repo :description)))
+                 (:li
+                  (:a :href (format nil "/~A/~A" owner (getf repo :name))
+                   (format nil "~A/~A" owner (getf repo :name)))
+                  (when (and desc (not (eq desc :null)) (plusp (length desc)))
+                    (:span.desc desc))))))
+            (:p.empty "No public repositories yet.")))
+       (:section
+        (:h2 "Recent activity")
+        (if events
+            (:ul.issue-list
+             (dolist (ev events)
+               (:li
+                (:span (format-event ev))
+                (let ((rel (format-relative-time (getf ev :created-at))))
+                  (when rel
+                    (:span :style "color:var(--text-muted);font-size:.8rem;margin-left:.5rem" rel))))))
+            (:p.empty "No activity yet."))))
+      ;; Stats footer
+      (:p :style "text-align:center;color:var(--text-muted);font-size:.85rem;margin-top:var(--sp-4)"
+       (format nil "~D public repositor~:@P · running Cave ~A" (length repos) +version+)))))
 
 (defun view-dashboard (&key orgs repos username events)
   "Render the dashboard."

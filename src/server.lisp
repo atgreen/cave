@@ -811,6 +811,26 @@ number of commits re-verified."
 ;; ----------------------------------------------------------------------------
 ;; Routes: Dashboard
 
+(defun compute-landing-hero ()
+  "Render the landing hero from cave/cave-landing:index.md, or NIL when that repo
+or file is absent. Cached by the file's blob sha (reuses the README cache), so
+editing the landing copy is a git push — no redeploy."
+  (let ((repo (ignore-errors (find-repo "cave" "cave-landing"))))
+    (when repo
+      (let* ((ref (or (chamber-get-default-branch "cave" "cave-landing") "main"))
+             (info (ignore-errors
+                    (chamber-get-blob-info "cave" "cave-landing" ref "index.md"))))
+        (when info
+          (let* ((key (cons :landing-hero (getf info :hash)))
+                 (cached (readme-cache-get key)))
+            (or cached
+                (let* ((md (ignore-errors
+                            (chamber-get-blob "cave" "cave-landing" ref "index.md")))
+                       (html (when (and md (plusp (length md)))
+                               (render-markdown md))))
+                  (when html (readme-cache-put key html))
+                  html))))))))
+
 (easy-routes:defroute dashboard ("/" :method :get) ()
   (if *current-user*
       (html-response
@@ -820,7 +840,8 @@ number of commits re-verified."
                        :events (list-recent-events :limit 20)))
       (html-response
        (view-public-landing :repos (list-public-repos :limit 50)
-                            :events (list-recent-public-events :limit 20)))))
+                            :events (list-recent-public-events :limit 20)
+                            :hero-html (ignore-errors (compute-landing-hero))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Org creation
