@@ -258,8 +258,19 @@ explicitly chosen another theme."
           (when (and language (plusp (length language))) (hunchentoot:url-encode language))
           page))
 
+(defun render-lang-tag (name &key (show-name t))
+  "A colored language dot (Linguist color) optionally followed by the name.
+No-op for a blank or :null NAME."
+  (when (and name (not (eq name :null)) (plusp (length name)))
+    (spinneret:with-html
+      (:span :style "display:inline-flex;align-items:center;gap:.3rem;color:var(--text-muted);font-size:.78rem"
+       (:span :title name
+        :style (format nil "display:inline-block;width:.65em;height:.65em;border-radius:50%;flex:0 0 auto;background:~A"
+                       (or (language-color name) "var(--text-muted,#888)")))
+       (when show-name name)))))
+
 (defun %repo-list-item (r &key meta)
-  "Render one repo list <li> with owner/name, description, and optional META."
+  "Render one repo list <li> with owner/name, description, language, and META."
   (spinneret:with-html
     (:li
      (:a :href (format nil "/~A/~A" (getf r :owner-name) (getf r :name))
@@ -267,6 +278,7 @@ explicitly chosen another theme."
      (let ((d (getf r :description)))
        (when (and d (not (eq d :null)) (plusp (length d)))
          (:span.desc d)))
+     (render-lang-tag (getf r :primary-language))
      (when meta
        (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem" meta)))))
 
@@ -308,10 +320,12 @@ a language filter, and a people/organizations directory."
           :style "text-decoration:none"
           :href (explore-url q sort nil 1) "all")
          (dolist (l languages)
-           (let ((name (getf l :language)))
+           (let* ((name (getf l :language))
+                  (color (or (language-color name) "var(--text-muted,#888)")))
              (:a :class (format nil "badge~@[ btn-active~]" (equal name current-language))
-              :style "text-decoration:none"
+              :style "text-decoration:none;display:inline-flex;align-items:center;gap:.3rem"
               :href (explore-url q sort name 1)
+              (:span :style (format nil "display:inline-block;width:.6em;height:.6em;border-radius:50%;background:~A" color))
               (format nil "~A (~A)" name (getf l :n)))))))
       ;; Repositories
       (:section

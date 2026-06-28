@@ -978,6 +978,13 @@ Returns a markdown string, or NIL when there is nothing to report."
           (let ((by-ext (and ext (cdr (assoc ext *language-by-ext* :test #'equal)))))
             (when by-ext (values (car by-ext) (cdr by-ext))))))))
 
+(defun language-color (name)
+  "Hex color for a language display NAME (from the Linguist-style tables), or NIL."
+  (flet ((scan (table)
+           (loop for e in table
+                 when (equal (cadr e) name) return (cddr e))))
+    (or (scan *language-by-ext*) (scan *language-by-name*))))
+
 (defparameter *vendor-path-segments*
   '("node_modules" "bower_components" "vendor" "third_party" "third-party"
     "dist" "jspm_packages" ".yarn" "godeps" "site-packages")
