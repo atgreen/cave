@@ -37,6 +37,20 @@
           (when (and user (getf user :email))
             (send-email (getf user :email) subject body)))))))
 
+(defun notify-inapp (repo-id kind subject link &key exclude-user-id)
+  "Create in-app notifications for a repo's members and watchers (minus the actor)."
+  (let ((recipients (remove-duplicates
+                     (append (mapcar (lambda (m) (getf m :user-id))
+                                     (list-repo-members repo-id))
+                             (repo-watcher-ids repo-id)))))
+    (dolist (uid recipients)
+      (when (and uid (not (and exclude-user-id (= uid exclude-user-id))))
+        (handler-case
+            (create-notification :user-id uid :repo-id repo-id
+                                 :kind kind :subject subject :link link)
+          (error (e)
+            (llog:warn "in-app notify failed" :error (princ-to-string e))))))))
+
 (defun notify-issue-created (repo owner-name repo-name issue)
   "Notify repo members about a new issue."
   (let ((subject (format nil "[~A/~A] New issue #~A: ~A"
@@ -49,7 +63,11 @@
                       (config-value :base-url) owner-name repo-name
                       (getf issue :number))))
     (notify-repo-participants (getf repo :id) subject body
-                              :exclude-user-id *current-user-id*)))
+                              :exclude-user-id *current-user-id*)
+    (notify-inapp (getf repo :id) "issue"
+                  (format nil "New issue #~A: ~A" (getf issue :number) (getf issue :title))
+                  (format nil "/~A/~A/issues/~A" owner-name repo-name (getf issue :number))
+                  :exclude-user-id *current-user-id*)))
 
 (defun notify-issue-comment (repo owner-name repo-name issue comment-body)
   "Notify about a new issue comment."
@@ -62,7 +80,11 @@
                       (config-value :base-url) owner-name repo-name
                       (getf issue :number))))
     (notify-repo-participants (getf repo :id) subject body
-                              :exclude-user-id *current-user-id*)))
+                              :exclude-user-id *current-user-id*)
+    (notify-inapp (getf repo :id) "issue_comment"
+                  (format nil "Comment on #~A: ~A" (getf issue :number) (getf issue :title))
+                  (format nil "/~A/~A/issues/~A" owner-name repo-name (getf issue :number))
+                  :exclude-user-id *current-user-id*)))
 
 (defun notify-pr-review (repo owner-name repo-name pr state)
   "Notify about a PR review."
@@ -77,7 +99,11 @@
                       (config-value :base-url) owner-name repo-name
                       (getf pr :number))))
     (notify-repo-participants (getf repo :id) subject body
-                              :exclude-user-id *current-user-id*)))
+                              :exclude-user-id *current-user-id*)
+    (notify-inapp (getf repo :id) "pr_review"
+                  (format nil "Review on PR #~A: ~A" (getf pr :number) state)
+                  (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+                  :exclude-user-id *current-user-id*)))
 
 ;;; --- Webhooks ---
 
@@ -161,4 +187,9 @@
                       (config-value :base-url) owner-name repo-name
                       (getf pr :number))))
     (notify-repo-participants (getf repo :id) subject body
-                              :exclude-user-id *current-user-id*)))
+                              :exclude-user-id *current-user-id*)
+    (notify-inapp (getf repo :id) "pr_merged"
+                  (format nil "PR #~A merged: ~A → ~A" (getf pr :number)
+                          (getf pr :source-branch) (getf pr :target-branch))
+                  (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+                  :exclude-user-id *current-user-id*)))

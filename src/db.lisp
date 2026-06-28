@@ -777,7 +777,39 @@ CREATE TABLE cave_gpg_keys (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_gpg_keys_keyid ON cave_gpg_keys (key_id);
-CREATE INDEX idx_gpg_keys_user_id ON cave_gpg_keys (user_id);"))
+CREATE INDEX idx_gpg_keys_user_id ON cave_gpg_keys (user_id);")
+
+    (56 . "-- In-app notifications, repo watches, and issue milestones.
+CREATE TABLE cave_notifications (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  repo_id BIGINT REFERENCES cave_repos(id) ON DELETE CASCADE,
+  kind VARCHAR(32) NOT NULL,
+  subject VARCHAR(512) NOT NULL,
+  link VARCHAR(1024) NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_notifications_user ON cave_notifications (user_id, is_read, created_at DESC);
+
+CREATE TABLE cave_repo_watches (
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  PRIMARY KEY (repo_id, user_id)
+);
+
+CREATE TABLE cave_milestones (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  title VARCHAR(256) NOT NULL,
+  description TEXT,
+  due_on TIMESTAMPTZ,
+  state VARCHAR(8) NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_milestones_repo ON cave_milestones (repo_id, state);
+
+ALTER TABLE cave_issues ADD COLUMN milestone_id BIGINT REFERENCES cave_milestones(id) ON DELETE SET NULL;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

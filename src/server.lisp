@@ -505,7 +505,25 @@ number of commits re-verified."
                            ("before" . ,(getf r :old))
                            ("repository" . (("owner" . ,owner)
                                             ("name" . ,repo-name))))))))
-    "ok"))
+    ;; Push-time hint (the post-receive hook echoes this back to the pusher):
+    ;; suggest opening a PR for newly pushed feature branches that have none.
+    (let ((default-branch (or (chamber-get-default-branch owner repo-name) "main"))
+          (base (config-value :base-url ""))
+          (lines nil))
+      (dolist (r refs)
+        (let* ((ref (getf r :ref))
+               (new (getf r :new))
+               (branch (when (and (>= (length ref) 11)
+                                  (string= ref "refs/heads/" :end1 11))
+                         (subseq ref 11))))
+          (when (and branch new
+                     (not (every (lambda (c) (char= c #\0)) new))
+                     (not (equal branch default-branch))
+                     (not (find-pull-request-by-branch (getf repo :id) branch)))
+            (push (format nil "Open a pull request for '~A': ~A/~A/~A/pulls/new"
+                          branch base owner repo-name)
+                  lines))))
+      (if lines (format nil "~{~A~^~%~}" (nreverse lines)) ""))))
 
 (defun valid-runner-request-p ()
   "True when the request carries a valid runner bearer token."
@@ -865,6 +883,23 @@ number of commits re-verified."
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: User settings
+
+(easy-routes:defroute notifications-page ("/-/notifications" :method :get) ()
+  (when (require-login)
+    (html-response
+     (view-notifications :notifications (list-notifications *current-user-id* :limit 100)))))
+
+(easy-routes:defroute notifications-read-submit ("/-/notifications/read" :method :post) ()
+  (when (require-login)
+    (mark-all-notifications-read *current-user-id*)
+    (hunchentoot:redirect "/-/notifications")))
+
+(easy-routes:defroute notification-go ("/-/notifications/:id/go" :method :get) ()
+  (when (require-login)
+    (let* ((nid (parse-integer id :junk-allowed t))
+           (n (and nid (find-notification nid *current-user-id*))))
+      (when nid (mark-notification-read nid *current-user-id*))
+      (hunchentoot:redirect (or (and n (getf n :link)) "/-/notifications")))))
 
 (easy-routes:defroute settings-page ("/-/settings" :method :get) ()
   (when (require-login)
@@ -1300,6 +1335,16 @@ number of commits re-verified."
                       :file-tree file-tree))))))
 
 ;; Fork
+(easy-routes:defroute repo-watch-submit
+    ("/:owner/:repo-name/watch" :method :post) ()
+  (when (require-login)
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from repo-watch-submit (not-found)))
+      (if (watching-repo-p (getf repo :id) *current-user-id*)
+          (unwatch-repo (getf repo :id) *current-user-id*)
+          (watch-repo (getf repo :id) *current-user-id*))
+      (hunchentoot:redirect (format nil "/~A/~A" owner repo-name)))))
+
 (easy-routes:defroute fork-repo-submit
     ("/:owner/:repo-name/fork" :method :post) ()
   (when (require-login)
@@ -1864,6 +1909,10 @@ number of commits re-verified."
             (html-response (view-new-release :owner-name owner :repo repo
                                               :existing-tags (git-tags disk-path)
                                               :error (format nil "Could not create git tag ~A." tag-name))))))
+      ;; Auto-generate notes from commits since the previous tag when the body
+      ;; was left blank.
+      (when (zerop (length (string-trim '(#\Space #\Newline #\Return #\Tab) body)))
+        (setf body (or (git-release-notes disk-path tag-name) body)))
       (create-release :repo-id (getf repo :id)
                       :tag-name tag-name
                       :name release-name
@@ -2268,9 +2317,23 @@ number of commits re-verified."
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from issues-page repo))
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
-           (issues (list-issues (getf repo :id) :status status)))
+           (label-filter (hunchentoot:get-parameter "label"))
+           (issues (list-issues (getf repo :id) :status status))
+           (labels-by-issue (let ((h (make-hash-table)))
+                              (dolist (i issues)
+                                (setf (gethash (getf i :id) h) (issue-labels (getf i :id))))
+                              h))
+           (issues (if (and label-filter (plusp (length label-filter)))
+                       (remove-if-not
+                        (lambda (i) (member label-filter (gethash (getf i :id) labels-by-issue)
+                                            :test #'equal))
+                        issues)
+                       issues)))
       (html-response
-       (view-issues :owner-name owner :repo repo :issues issues :current-status status)))))
+       (view-issues :owner-name owner :repo repo :issues issues :current-status status
+                    :labels-by-issue labels-by-issue
+                    :current-label label-filter
+                    :all-labels (labels-in-repo (getf repo :id)))))))
 
 (easy-routes:defroute deps-page ("/:owner/:repo-name/deps" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
@@ -2279,6 +2342,58 @@ number of commits re-verified."
      (view-dependencies :owner-name owner :repo repo
                         :alerts (list-dep-alerts-detailed (getf repo :id) :state "open")
                         :deps (list-repo-deps (getf repo :id))))))
+
+(easy-routes:defroute milestones-page ("/:owner/:repo-name/milestones" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from milestones-page repo))
+    (let* ((milestones (list-milestones (getf repo :id) :state nil))
+           (counts (let ((h (make-hash-table)))
+                     (dolist (m milestones)
+                       (multiple-value-bind (open closed)
+                           (milestone-issue-counts (getf m :id))
+                         (setf (gethash (getf m :id) h) (cons open closed))))
+                     h)))
+      (html-response
+       (view-milestones :owner-name owner :repo repo :milestones milestones
+                        :counts counts :can-edit (and (member-of-repo-p repo) t))))))
+
+(easy-routes:defroute create-milestone-submit
+    ("/:owner/:repo-name/milestones" :method :post) ()
+  (when (require-login)
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from create-milestone-submit (not-found)))
+      (unless (member-of-repo-p repo)
+        (setf (hunchentoot:return-code*) 403)
+        (return-from create-milestone-submit "Forbidden"))
+      (let ((title (string-trim " " (or (hunchentoot:post-parameter "title") ""))))
+        (when (plusp (length title))
+          (create-milestone :repo-id (getf repo :id) :title title
+                            :description (hunchentoot:post-parameter "description"))))
+      (hunchentoot:redirect (format nil "/~A/~A/milestones" owner repo-name)))))
+
+(easy-routes:defroute milestone-close-submit
+    ("/:owner/:repo-name/milestones/:id/close" :method :post) ()
+  (when (require-login)
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from milestone-close-submit (not-found)))
+      (unless (member-of-repo-p repo)
+        (setf (hunchentoot:return-code*) 403)
+        (return-from milestone-close-submit "Forbidden"))
+      (let ((mid (parse-integer id :junk-allowed t)))
+        (when mid (update-milestone mid :state "closed")))
+      (hunchentoot:redirect (format nil "/~A/~A/milestones" owner repo-name)))))
+
+(easy-routes:defroute milestone-delete-submit
+    ("/:owner/:repo-name/milestones/:id/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from milestone-delete-submit (not-found)))
+      (unless (member-of-repo-p repo)
+        (setf (hunchentoot:return-code*) 403)
+        (return-from milestone-delete-submit "Forbidden"))
+      (let ((mid (parse-integer id :junk-allowed t)))
+        (when mid (delete-milestone mid)))
+      (hunchentoot:redirect (format nil "/~A/~A/milestones" owner repo-name)))))
 
 (easy-routes:defroute new-issue-page
     ("/:owner/:repo-name/issues/new" :method :get) ()
@@ -2315,10 +2430,48 @@ number of commits re-verified."
     (let* ((num (parse-integer number :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from issue-page (not-found)))
-      (html-response
-       (view-issue :owner-name owner :repo repo :issue issue
-                   :author (find-user-by-id (getf issue :author-id))
-                   :comments (list-issue-comments (getf issue :id)))))))
+      (let ((ms-id (getf issue :milestone-id)))
+        (html-response
+         (view-issue :owner-name owner :repo repo :issue issue
+                     :author (find-user-by-id (getf issue :author-id))
+                     :comments (list-issue-comments (getf issue :id))
+                     :labels (issue-labels (getf issue :id))
+                     :assignees (issue-assignees (getf issue :id))
+                     :milestone (when (and ms-id (not (eq ms-id :null)))
+                                  (find-milestone ms-id))
+                     :milestones (list-milestones (getf repo :id) :state "open")
+                     :can-edit (and (member-of-repo-p repo) t)))))))
+
+(easy-routes:defroute issue-meta-submit
+    ("/:owner/:repo-name/issues/:number/meta" :method :post) ()
+  (when (require-login)
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from issue-meta-submit (not-found)))
+      (unless (member-of-repo-p repo)
+        (setf (hunchentoot:return-code*) 403)
+        (return-from issue-meta-submit "Forbidden"))
+      (let* ((num (parse-integer number :junk-allowed t))
+             (issue (when num (find-issue (getf repo :id) num))))
+        (unless issue (return-from issue-meta-submit (not-found)))
+        ;; Labels: comma-separated strings.
+        (set-issue-labels (getf issue :id)
+                          (uiop:split-string (or (hunchentoot:post-parameter "labels") "")
+                                             :separator '(#\,)))
+        ;; Assignees: comma-separated usernames → ids (unknown names ignored).
+        (let ((ids (loop for name in (uiop:split-string
+                                      (or (hunchentoot:post-parameter "assignees") "")
+                                      :separator '(#\,))
+                         for trimmed = (string-trim " " name)
+                         for u = (and (plusp (length trimmed))
+                                      (find-user-by-username trimmed))
+                         when u collect (getf u :id))))
+          (set-issue-assignees (getf issue :id) ids))
+        ;; Milestone: id or empty → clear.
+        (let ((mid (parse-integer (or (hunchentoot:post-parameter "milestone_id") "")
+                                  :junk-allowed t)))
+          (set-issue-milestone (getf issue :id) mid))
+        (hunchentoot:redirect
+         (format nil "/~A/~A/issues/~A" owner repo-name num))))))
 
 (easy-routes:defroute issue-comment-submit
     ("/:owner/:repo-name/issues/:number/comment" :method :post) ()
@@ -3113,7 +3266,7 @@ number of commits re-verified."
   ;; Post-receive hook (calls back into running Cave server)
   (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
     (with-open-file (out hook-path :direction :output :if-exists :supersede)
-      (format out "#!/bin/bash~%# Pipe ref updates to the running Cave server~%tee >(curl -sf -X POST --data-binary @- \"http://localhost:~A/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\") >/dev/null~%"
+      (format out "#!/bin/bash~%# Forward ref updates to Cave; relay any push-time hints to the pusher.~%hint=$(curl -sf -X POST --data-binary @- \"http://localhost:~A/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\" 2>/dev/null)~%[ -n \"$hint\" ] && echo \"$hint\" >&2~%"
               (config-value :http-port 8080) owner repo-name)
       (format out "cave-server sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
               owner repo-name)

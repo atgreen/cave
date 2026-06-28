@@ -235,6 +235,28 @@ Returns T on success, NIL otherwise."
     (declare (ignore _o _e))
     (zerop exit-code)))
 
+(defun git-release-notes (repo-path tag)
+  "Generate markdown release notes for TAG: a bulleted list of commit subjects
+since the previous tag reachable from TAG (or all history if there is none).
+Returns a markdown string, or NIL when there is nothing to report."
+  (let* ((prev (multiple-value-bind (out _e exit)
+                   (git-run repo-path "describe" "--tags" "--abbrev=0"
+                            (format nil "~A^" tag))
+                 (declare (ignore _e))
+                 (when (zerop exit)
+                   (let ((p (string-trim '(#\Space #\Newline #\Return) out)))
+                     (when (plusp (length p)) p)))))
+         (range (if prev (format nil "~A..~A" prev tag) tag)))
+    (multiple-value-bind (out _e exit)
+        (git-run repo-path "log" "--no-merges" "--format=- %s (%h)" range)
+      (declare (ignore _e))
+      (when (zerop exit)
+        (let ((body (string-trim '(#\Newline #\Space #\Return) out)))
+          (when (plusp (length body))
+            (if prev
+                (format nil "### Changes since ~A~%~%~A~%" prev body)
+                (format nil "### Changes~%~%~A~%" body))))))))
+
 (defun git-tags (repo-path)
   "List tags in a bare repo. Returns list of tag name strings, newest first."
   (multiple-value-bind (output _err exit-code)

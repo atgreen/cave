@@ -1563,6 +1563,188 @@
           :set 'status status 'updated-at (:now)
           :where (:= 'id issue-id))))))
 
+;;; ========================== ISSUE LABELS / ASSIGNEES / MILESTONES ====
+
+(defun issue-labels (issue-id)
+  "List of label strings on an issue."
+  (postmodern:query
+   (:order-by (:select 'label :from 'cave-issue-labels
+               :where (:= 'issue-id issue-id))
+              'label)
+   :column))
+
+(defun set-issue-labels (issue-id labels)
+  "Replace an issue's labels with LABELS (a list of non-empty strings)."
+  (postmodern:with-transaction ()
+    (postmodern:execute
+     (:delete-from 'cave-issue-labels :where (:= 'issue-id issue-id)))
+    (dolist (label (remove-duplicates
+                    (remove-if #'uiop:emptyp
+                               (mapcar (lambda (s) (string-trim " " s)) labels))
+                    :test #'equal))
+      (postmodern:execute
+       (:insert-into 'cave-issue-labels :set 'issue-id issue-id 'label label)))))
+
+(defun labels-in-repo (repo-id)
+  "Distinct label strings used across a repo's issues (for filters/suggestions)."
+  (postmodern:query
+   "SELECT DISTINCT l.label FROM cave_issue_labels l
+      JOIN cave_issues i ON i.id = l.issue_id
+     WHERE i.repo_id = $1 ORDER BY l.label"
+   repo-id :column))
+
+(defun issue-assignees (issue-id)
+  "Plists (:user-id :username) assigned to an issue."
+  (postmodern:query
+   (:select (:as 'cave-issue-assignees.user-id 'user-id) 'cave-users.username
+    :from 'cave-issue-assignees
+    :inner-join 'cave-users :on (:= 'cave-issue-assignees.user-id 'cave-users.id)
+    :where (:= 'cave-issue-assignees.issue-id issue-id))
+   :plists))
+
+(defun set-issue-assignees (issue-id user-ids)
+  "Replace an issue's assignees with USER-IDS (a list of user ids)."
+  (postmodern:with-transaction ()
+    (postmodern:execute
+     (:delete-from 'cave-issue-assignees :where (:= 'issue-id issue-id)))
+    (dolist (uid (remove-duplicates user-ids))
+      (when uid
+        (postmodern:execute
+         (:insert-into 'cave-issue-assignees :set 'issue-id issue-id 'user-id uid))))))
+
+(defun set-issue-milestone (issue-id milestone-id)
+  "Set (or clear, when MILESTONE-ID is NIL) an issue's milestone."
+  (postmodern:execute
+   (:update 'cave-issues :set 'milestone-id (or milestone-id :null)
+            'updated-at (:now)
+    :where (:= 'id issue-id))))
+
+(defun create-milestone (&key repo-id title description due-on)
+  "Create a milestone. Returns its plist."
+  (postmodern:query
+   (:insert-into 'cave-milestones
+    :set 'repo-id repo-id 'title title
+         'description (or description :null)
+         'due-on (or due-on :null)
+    :returning '*)
+   :plist))
+
+(defun list-milestones (repo-id &key (state "open"))
+  "List a repo's milestones. STATE nil lists all."
+  (if state
+      (postmodern:query
+       (:order-by (:select '* :from 'cave-milestones
+                   :where (:and (:= 'repo-id repo-id) (:= 'state state)))
+                  'title)
+       :plists)
+      (postmodern:query
+       (:order-by (:select '* :from 'cave-milestones :where (:= 'repo-id repo-id))
+                  'state 'title)
+       :plists)))
+
+(defun find-milestone (milestone-id)
+  (postmodern:query
+   (:select '* :from 'cave-milestones :where (:= 'id milestone-id)) :plist))
+
+(defun update-milestone (milestone-id &key title description due-on state)
+  (when title (postmodern:execute (:update 'cave-milestones :set 'title title :where (:= 'id milestone-id))))
+  (when description (postmodern:execute (:update 'cave-milestones :set 'description description :where (:= 'id milestone-id))))
+  (when due-on (postmodern:execute (:update 'cave-milestones :set 'due-on due-on :where (:= 'id milestone-id))))
+  (when state (postmodern:execute (:update 'cave-milestones :set 'state state :where (:= 'id milestone-id)))))
+
+(defun delete-milestone (milestone-id)
+  (postmodern:execute (:delete-from 'cave-milestones :where (:= 'id milestone-id))))
+
+(defun milestone-issue-counts (milestone-id)
+  "Return (values open-count closed-count) for a milestone."
+  (let ((open (postmodern:query
+               (:select (:count '*) :from 'cave-issues
+                :where (:and (:= 'milestone-id milestone-id) (:= 'status "open")))
+               :single))
+        (closed (postmodern:query
+                 (:select (:count '*) :from 'cave-issues
+                  :where (:and (:= 'milestone-id milestone-id) (:= 'status "closed")))
+                 :single)))
+    (values (or open 0) (or closed 0))))
+
+;;; ========================== NOTIFICATIONS &amp; WATCHES ==================
+
+(defun create-notification (&key user-id repo-id kind subject link)
+  "Insert an in-app notification for a user."
+  (postmodern:execute
+   (:insert-into 'cave-notifications
+    :set 'user-id user-id
+         'repo-id (or repo-id :null)
+         'kind kind 'subject subject 'link link)))
+
+(defun list-notifications (user-id &key unread-only (limit 50))
+  "List a user's notifications, newest first."
+  (if unread-only
+      (postmodern:query
+       (:limit (:order-by (:select '* :from 'cave-notifications
+                           :where (:and (:= 'user-id user-id) (:= 'is-read nil)))
+                          (:desc 'created-at))
+               limit)
+       :plists)
+      (postmodern:query
+       (:limit (:order-by (:select '* :from 'cave-notifications
+                           :where (:= 'user-id user-id))
+                          (:desc 'created-at))
+               limit)
+       :plists)))
+
+(defun find-notification (notification-id user-id)
+  "Fetch one notification scoped to its owner, or NIL."
+  (postmodern:query
+   (:select '* :from 'cave-notifications
+    :where (:and (:= 'id notification-id) (:= 'user-id user-id)))
+   :plist))
+
+(defun count-unread-notifications (user-id)
+  "Number of unread notifications for a user."
+  (or (postmodern:query
+       (:select (:count '*) :from 'cave-notifications
+        :where (:and (:= 'user-id user-id) (:= 'is-read nil)))
+       :single)
+      0))
+
+(defun mark-notification-read (notification-id user-id)
+  "Mark one notification read (scoped to its owner)."
+  (postmodern:execute
+   (:update 'cave-notifications :set 'is-read t
+    :where (:and (:= 'id notification-id) (:= 'user-id user-id)))))
+
+(defun mark-all-notifications-read (user-id)
+  "Mark all of a user's notifications read."
+  (postmodern:execute
+   (:update 'cave-notifications :set 'is-read t
+    :where (:and (:= 'user-id user-id) (:= 'is-read nil)))))
+
+(defun watch-repo (repo-id user-id)
+  "Subscribe a user to a repo's notifications (idempotent)."
+  (postmodern:execute
+   "INSERT INTO cave_repo_watches (repo_id, user_id) VALUES ($1, $2)
+    ON CONFLICT DO NOTHING"
+   repo-id user-id))
+
+(defun unwatch-repo (repo-id user-id)
+  (postmodern:execute
+   (:delete-from 'cave-repo-watches
+    :where (:and (:= 'repo-id repo-id) (:= 'user-id user-id)))))
+
+(defun watching-repo-p (repo-id user-id)
+  (and user-id
+       (postmodern:query
+        (:select t :from 'cave-repo-watches
+         :where (:and (:= 'repo-id repo-id) (:= 'user-id user-id)))
+        :single)))
+
+(defun repo-watcher-ids (repo-id)
+  "User ids watching a repo."
+  (postmodern:query
+   (:select 'user-id :from 'cave-repo-watches :where (:= 'repo-id repo-id))
+   :column))
+
 ;;; ========================== ISSUE COMMENTS ==========================
 
 (defun create-issue-comment (&key issue-id author-id body)

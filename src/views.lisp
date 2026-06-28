@@ -59,6 +59,12 @@ explicitly chosen another theme."
                    (:form.nav-search :method "get" :action "/-/search"
                     (:input.nav-search-input :type "text" :name "q"
                      :placeholder "Search code..." :autocomplete "off")))
+                 (let ((unread (ignore-errors (count-unread-notifications *current-user-id*))))
+                   (:a.btn.btn-sm :href "/-/notifications" :title "Notifications"
+                    (if (and unread (plusp unread))
+                        (:span :style "color:var(--primary,#7c9a5e);font-weight:600"
+                         (format nil "● ~A" unread))
+                        "○")))
                  (:a.btn.btn-sm :href "/-/new-org" "New org")
                  (:a.btn.btn-sm :href "/-/settings" "Settings")
                  (when (getf *current-user* :is-admin)
@@ -70,7 +76,52 @@ explicitly chosen another theme."
                (:a.btn.btn-sm :href "/-/auth/login" "Log in")))))
         (:main.container ,@body)
         (:footer.site-footer
-         (:span (format nil "Cave ~A" +version+)))))))
+         (:span (format nil "Cave ~A" +version+)))
+        ;; Lazy-render math (KaTeX) and diagrams (Mermaid) in any markdown on the
+        ;; page. The CDN libraries load only when the relevant syntax is present.
+        (:script (:raw +markdown-enhance-js+))))))
+
+(defparameter +markdown-enhance-js+
+  "(function(){
+  var sel='.readme-content,.issue-body,.comment-body,.markdown-body';
+  var md=document.querySelector(sel);
+  if(!md)return;
+  if(document.querySelector('code.language-mermaid,code.mermaid')){
+    var m=document.createElement('script');
+    m.src='https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
+    m.onload=function(){
+      document.querySelectorAll('code.language-mermaid,code.mermaid').forEach(function(c){
+        var pre=c.closest('pre')||c,d=document.createElement('div');
+        d.className='mermaid';d.textContent=c.textContent;pre.replaceWith(d);
+      });
+      var dark=(document.documentElement.getAttribute('data-theme')||'').indexOf('light')<0;
+      mermaid.initialize({startOnLoad:false,theme:dark?'dark':'default'});
+      mermaid.run();
+    };
+    document.head.appendChild(m);
+  }
+  if(md.textContent.indexOf('$')>=0){
+    var l=document.createElement('link');l.rel='stylesheet';
+    l.href='https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css';
+    document.head.appendChild(l);
+    var k=document.createElement('script');
+    k.src='https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js';
+    k.onload=function(){
+      var a=document.createElement('script');
+      a.src='https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js';
+      a.onload=function(){
+        document.querySelectorAll(sel).forEach(function(el){
+          renderMathInElement(el,{delimiters:[
+            {left:'$$',right:'$$',display:true},
+            {left:'$',right:'$',display:false}]});
+        });
+      };
+      document.head.appendChild(a);
+    };
+    document.head.appendChild(k);
+  }
+})();"
+  "Client-side enhancer: renders KaTeX math and Mermaid diagrams in markdown.")
 
 ;;; --- Breadcrumb helper ---
 
@@ -680,6 +731,13 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                                                       (hunchentoot:url-encode r))))))))
       ;; Clone widget — SSH/HTTPS toggle with copy button
       (render-clone-widget org-name repo-name)
+      ;; Watch / unwatch toggle — subscribe to in-app notifications
+      (when *current-user*
+        (:form :method "post" :style "display:inline-block;margin-bottom:var(--sp-4);margin-right:var(--sp-2)"
+         :action (format nil "/~A/~A/watch" org-name repo-name)
+         (:button.btn :type "submit"
+          (if (watching-repo-p (getf repo :id) *current-user-id*)
+              "Unwatch" "Watch"))))
       ;; Fork button (don't show on own repos)
       (when (and *current-user*
                  (not (equal (getf *current-user* :username) org-name)))
@@ -1145,7 +1203,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
 ;;; ========================== ISSUE PAGES ==========================
 
-(defun view-issues (&key owner-name repo issues current-status)
+(defun view-issues (&key owner-name repo issues current-status
+                         labels-by-issue current-label all-labels)
   "Render the issues list."
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
@@ -1158,8 +1217,23 @@ document.addEventListener('DOMContentLoaded', function() {
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "closed"))
          :href "?status=closed" "Closed"))
        (when *current-user*
+         (:a.btn.btn-sm :href (format nil "/~A/~A/milestones" org-name repo-name)
+          "Milestones"))
+       (when *current-user*
          (:a.btn.btn-primary :href (format nil "/~A/~A/issues/new" org-name repo-name)
           "New issue")))
+      ;; Label filter bar
+      (when all-labels
+        (:div.label-filters :style "margin:.5rem 0;display:flex;gap:.35rem;flex-wrap:wrap;align-items:center"
+         (:span :style "font-size:.8rem;color:var(--text-muted)" "Labels:")
+         (when current-label
+           (:a.btn.btn-sm :href (format nil "?status=~A" (or current-status "open")) "✕ clear"))
+         (dolist (l all-labels)
+           (:a :class (format nil "badge~@[ btn-active~]" (equal l current-label))
+            :style "text-decoration:none"
+            :href (format nil "?status=~A&label=~A" (or current-status "open")
+                          (hunchentoot:url-encode l))
+            l))))
       (if issues
           (:ul.issue-list
            (dolist (iss issues)
@@ -1168,8 +1242,53 @@ document.addEventListener('DOMContentLoaded', function() {
                                  (getf iss :number))
                (:span.issue-number (format nil "#~A" (getf iss :number)))
                (format nil " ~A" (getf iss :title)))
+              (dolist (l (and labels-by-issue (gethash (getf iss :id) labels-by-issue)))
+                (:span.badge :style "margin-left:.25rem" l))
               (:span.badge (getf iss :status)))))
           (:p.empty "No issues found.")))))
+
+(defun view-milestones (&key owner-name repo milestones counts can-edit)
+  "Render the milestones list with open/closed issue counts and a create form."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Milestones — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :issues :repo repo)
+      (:div :style "display:flex;justify-content:space-between;align-items:center"
+       (:h1 "Milestones")
+       (:a.btn.btn-sm :href (format nil "/~A/~A/issues" owner-name repo-name) "← Issues"))
+      (if milestones
+          (:ul.data-list
+           (dolist (m milestones)
+             (let ((c (and counts (gethash (getf m :id) counts))))
+               (:li
+                (:strong (getf m :title))
+                (:span.badge (getf m :state))
+                (when c
+                  (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:.5rem"
+                   (format nil "~A open / ~A closed" (car c) (cdr c))))
+                (let ((d (getf m :description)))
+                  (when (and d (not (eq d :null)) (plusp (length d)))
+                    (:div :style "color:var(--text-muted);font-size:.85rem" d)))
+                (when can-edit
+                  (:div :style "display:inline-flex;gap:.35rem;margin-left:.5rem"
+                   (when (equal (getf m :state) "open")
+                     (:form :method "post" :style "display:inline"
+                      :action (format nil "/~A/~A/milestones/~A/close" owner-name repo-name (getf m :id))
+                      (:button.btn.btn-sm :type "submit" "Close")))
+                   (:form :method "post" :style "display:inline"
+                    :action (format nil "/~A/~A/milestones/~A/delete" owner-name repo-name (getf m :id))
+                    (:button.btn.btn-sm :type "submit" "Delete"))))))))
+          (:p.empty "No milestones yet."))
+      (when can-edit
+        (:section
+         (:h2 "New milestone")
+         (:form :method "post" :action (format nil "/~A/~A/milestones" owner-name repo-name)
+          (:div.field
+           (:label :for "title" "Title")
+           (:input :type "text" :id "title" :name "title" :required t))
+          (:div.field
+           (:label :for "description" "Description (optional)")
+           (:input :type "text" :id "description" :name "description"))
+          (:button.btn.btn-primary :type "submit" "Create milestone")))))))
 
 (defun %dep-severity-rank (sev)
   "Sort key: critical highest. SEV may be a string or :null."
@@ -1233,7 +1352,8 @@ document.addEventListener('DOMContentLoaded', function() {
         (:textarea :id "body" :name "body" :rows "12" (when body (princ body))))
        (:button.btn.btn-primary :type "submit" "Create issue")))))
 
-(defun view-issue (&key owner-name repo issue author comments)
+(defun view-issue (&key owner-name repo issue author comments
+                        labels assignees milestone milestones can-edit)
   "Render an issue detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -1246,6 +1366,44 @@ document.addEventListener('DOMContentLoaded', function() {
       (:div.issue-meta
        (render-avatar (getf author :email) :size 16)
        (format nil " Opened by ~A" (getf author :username)))
+      ;; Labels / assignees / milestone summary
+      (when (or labels assignees (and milestone (not (eq milestone :null))))
+        (:div.issue-attrs :style "display:flex;gap:1rem;flex-wrap:wrap;margin:.5rem 0;font-size:.85rem"
+         (when labels
+           (:div "Labels: "
+            (dolist (l labels)
+              (:span.badge :style "margin-left:.25rem" l))))
+         (when assignees
+           (:div (format nil "Assignees: ~{~A~^, ~}"
+                         (mapcar (lambda (a) (getf a :username)) assignees))))
+         (when (and milestone (not (eq milestone :null)))
+           (:div "Milestone: " (:strong (getf milestone :title))))))
+      ;; Member edit form for labels / assignees / milestone
+      (when can-edit
+        (:details :style "margin:.5rem 0"
+         (:summary :style "cursor:pointer;font-size:.85rem;color:var(--text-muted)"
+          "Edit labels / assignees / milestone")
+         (:form :method "post" :style "margin-top:.5rem"
+          :action (format nil "/~A/~A/issues/~A/meta" org-name repo-name issue-num)
+          (:div.field
+           (:label :for "labels" "Labels (comma-separated)")
+           (:input :type "text" :id "labels" :name "labels"
+                   :value (format nil "~{~A~^, ~}" labels)))
+          (:div.field
+           (:label :for "assignees" "Assignees (comma-separated usernames)")
+           (:input :type "text" :id "assignees" :name "assignees"
+                   :value (format nil "~{~A~^, ~}"
+                                  (mapcar (lambda (a) (getf a :username)) assignees))))
+          (:div.field
+           (:label :for "milestone_id" "Milestone")
+           (:select :id "milestone_id" :name "milestone_id"
+            (:option :value "" "— none —")
+            (dolist (m milestones)
+              (:option :value (princ-to-string (getf m :id))
+               :selected (and milestone (not (eq milestone :null))
+                              (eql (getf m :id) (getf milestone :id)))
+               (getf m :title)))))
+          (:button.btn.btn-sm :type "submit" "Save"))))
       (let ((ib (getf issue :body)))
         (when (and ib (not (eq ib :null)))
           (:div.issue-body (:raw (render-markdown ib)))))
@@ -2682,6 +2840,26 @@ function caveShowCommentForm(td) {
      (:ul :style "font-family:monospace;font-size:1.1rem;line-height:1.9;list-style:none;padding-left:0"
       (dolist (c codes) (:li c))))
     (:p (:a.btn :href "/-/settings/totp" "Done"))))
+
+(defun view-notifications (&key notifications)
+  "Render the in-app notification feed."
+  (page (:title "Notifications — Cave")
+    (:div :style "display:flex;justify-content:space-between;align-items:center"
+     (:h1 "Notifications")
+     (when notifications
+       (:form :method "post" :action "/-/notifications/read" :style "margin:0"
+        (:button.btn.btn-sm :type "submit" "Mark all read"))))
+    (if notifications
+        (:ul.data-list
+         (dolist (n notifications)
+           (:li :style (if (getf n :is-read)
+                           "opacity:.6"
+                           "border-left:3px solid var(--primary,#7c9a5e);padding-left:.5rem")
+            (:a :href (format nil "/-/notifications/~A/go" (getf n :id))
+             (getf n :subject))
+            (:span :style "color:var(--text-muted);font-size:.8rem;margin-left:.5rem"
+             (or (format-relative-time (getf n :created-at)) "")))))
+        (:p.empty "You're all caught up — no notifications."))))
 
 (defun view-settings (&key ssh-keys gpg-keys api-tokens new-token ssh-error gpg-error
                            generated-private-key generated-key-name
