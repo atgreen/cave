@@ -251,10 +251,12 @@ explicitly chosen another theme."
      (:p :style "margin-top:var(--sp-4)"
       (:a.btn :href "/" "Back to the front page")))))
 
-(defun explore-url (q sort page)
-  "Build an /-/explore URL preserving the current query, sort, and page."
-  (format nil "/-/explore?q=~A&sort=~A&page=~A"
-          (hunchentoot:url-encode (or q "")) (or sort "recent") page))
+(defun explore-url (q sort language page)
+  "Build an /-/explore URL preserving the current query, sort, language, and page."
+  (format nil "/-/explore?q=~A&sort=~A~@[&language=~A~]&page=~A"
+          (hunchentoot:url-encode (or q "")) (or sort "recent")
+          (when (and language (plusp (length language))) (hunchentoot:url-encode language))
+          page))
 
 (defun %repo-list-item (r &key meta)
   "Render one repo list <li> with owner/name, description, and optional META."
@@ -268,9 +270,10 @@ explicitly chosen another theme."
      (when meta
        (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem" meta)))))
 
-(defun view-explore (&key repos total query sort (page 1) (per-page 30) trending users orgs)
+(defun view-explore (&key repos total query sort (page 1) (per-page 30) trending users orgs
+                          languages current-language)
   "Explore page: trending repos, searchable/sortable/paginated public repo list,
-and a people/organizations directory."
+a language filter, and a people/organizations directory."
   (let* ((q (or query ""))
          (sort (or sort "recent"))
          (total (or total 0))
@@ -284,9 +287,11 @@ and a people/organizations directory."
          (:ul.repo-list
           (dolist (r trending)
             (%repo-list-item r :meta (format nil "~A view~:P" (getf r :views)))))))
-      ;; Search + sort
+      ;; Search + sort (language preserved across a search via a hidden field)
       (:form :method "get" :action "/-/explore"
        :style "display:flex;gap:.5rem;margin:var(--sp-3) 0;flex-wrap:wrap"
+       (when current-language
+         (:input :type "hidden" :name "language" :value current-language))
        (:input :type "text" :name "q" :value q :placeholder "Search repositories…"
                :style "flex:1;min-width:12rem")
        (:select :name "sort"
@@ -295,6 +300,19 @@ and a people/organizations directory."
           (:option :value (car opt) :selected (equal sort (car opt)) (cdr opt))))
        (:button.btn :type "submit" "Search")
        (:a.btn :href "/-/search" "Search code"))
+      ;; Language filter chips
+      (when languages
+        (:div :style "display:flex;gap:.35rem;flex-wrap:wrap;align-items:center;margin-bottom:var(--sp-3)"
+         (:span :style "font-size:.8rem;color:var(--text-muted)" "Languages:")
+         (:a :class (format nil "badge~@[ btn-active~]" (null current-language))
+          :style "text-decoration:none"
+          :href (explore-url q sort nil 1) "all")
+         (dolist (l languages)
+           (let ((name (getf l :language)))
+             (:a :class (format nil "badge~@[ btn-active~]" (equal name current-language))
+              :style "text-decoration:none"
+              :href (explore-url q sort name 1)
+              (format nil "~A (~A)" name (getf l :n)))))))
       ;; Repositories
       (:section
        (:h2 :style "font-size:1rem" (format nil "Repositories (~A)" total))
@@ -309,11 +327,11 @@ and a people/organizations directory."
        (when (> pages 1)
          (:div :style "display:flex;gap:.5rem;justify-content:center;align-items:center;margin-top:var(--sp-3)"
           (when (> page 1)
-            (:a.btn.btn-sm :href (explore-url q sort (1- page)) "← Prev"))
+            (:a.btn.btn-sm :href (explore-url q sort current-language (1- page)) "← Prev"))
           (:span :style "color:var(--text-muted);font-size:.85rem"
            (format nil "Page ~A of ~A" page pages))
           (when (< page pages)
-            (:a.btn.btn-sm :href (explore-url q sort (1+ page)) "Next →")))))
+            (:a.btn.btn-sm :href (explore-url q sort current-language (1+ page)) "Next →")))))
       ;; People & organizations
       (:div :style "display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4);align-items:start;margin-top:var(--sp-4)"
        (:section

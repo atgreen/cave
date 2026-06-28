@@ -454,35 +454,69 @@
     limit)
    :plists))
 
-(defun search-public-repos (&key query (sort "recent") (limit 30) (offset 0))
+(defun search-public-repos (&key query language (sort "recent") (limit 30) (offset 0))
   "Public repos for the Explore page. QUERY filters name/description (ILIKE);
-SORT is recent|newest|name. Paginated with LIMIT/OFFSET."
+LANGUAGE filters on the stored primary_language; SORT is recent|newest|name.
+Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
   (let* ((order (cond ((equal sort "newest") "r.created_at DESC")
                       ((equal sort "name") "lower(r.name) ASC")
                       (t "COALESCE(r.last_pushed_at, r.updated_at) DESC")))
-         (like (when (and query (plusp (length (string-trim " " query))))
-                 (format nil "%~A%" (string-trim " " query))))
-         (sql (format nil "SELECT r.*, COALESCE(o.name, u.username) AS owner_name
+         (qq (and query (plusp (length (string-trim " " query))) (string-trim " " query)))
+         (like (and qq (format nil "%~A%" qq)))
+         (base "SELECT r.*, COALESCE(o.name, u.username) AS owner_name
                 FROM cave_repos r
                 LEFT JOIN cave_orgs o ON o.id = r.org_id
                 LEFT JOIN cave_users u ON u.id = r.owner_id
-                WHERE r.is_private = false~:[~; AND (r.name ILIKE $3 OR r.description ILIKE $3)~]
-                ORDER BY ~A LIMIT $1 OFFSET $2" like order)))
-    (if like
-        (postmodern:query sql limit offset like :plists)
-        (postmodern:query sql limit offset :plists))))
+                WHERE r.is_private = false"))
+    (cond
+      ((and like language)
+       (postmodern:query
+        (format nil "~A AND (r.name ILIKE $3 OR r.description ILIKE $3) AND r.primary_language = $4 ORDER BY ~A LIMIT $1 OFFSET $2" base order)
+        limit offset like language :plists))
+      (like
+       (postmodern:query
+        (format nil "~A AND (r.name ILIKE $3 OR r.description ILIKE $3) ORDER BY ~A LIMIT $1 OFFSET $2" base order)
+        limit offset like :plists))
+      (language
+       (postmodern:query
+        (format nil "~A AND r.primary_language = $3 ORDER BY ~A LIMIT $1 OFFSET $2" base order)
+        limit offset language :plists))
+      (t
+       (postmodern:query
+        (format nil "~A ORDER BY ~A LIMIT $1 OFFSET $2" base order)
+        limit offset :plists)))))
 
-(defun count-public-repos (&key query)
-  "Total public repos matching QUERY (for Explore pagination)."
-  (let ((like (when (and query (plusp (length (string-trim " " query))))
-                (format nil "%~A%" (string-trim " " query)))))
-    (or (if like
-            (postmodern:query
-             "SELECT COUNT(*) FROM cave_repos WHERE is_private = false
-              AND (name ILIKE $1 OR description ILIKE $1)" like :single)
-            (postmodern:query
-             "SELECT COUNT(*) FROM cave_repos WHERE is_private = false" :single))
+(defun count-public-repos (&key query language)
+  "Total public repos matching the Explore filters (for pagination)."
+  (let* ((qq (and query (plusp (length (string-trim " " query))) (string-trim " " query)))
+         (like (and qq (format nil "%~A%" qq)))
+         (base "SELECT COUNT(*) FROM cave_repos WHERE is_private = false"))
+    (or (cond
+          ((and like language)
+           (postmodern:query
+            (format nil "~A AND (name ILIKE $1 OR description ILIKE $1) AND primary_language = $2" base)
+            like language :single))
+          (like
+           (postmodern:query
+            (format nil "~A AND (name ILIKE $1 OR description ILIKE $1)" base) like :single))
+          (language
+           (postmodern:query
+            (format nil "~A AND primary_language = $1" base) language :single))
+          (t (postmodern:query base :single)))
         0)))
+
+(defun public-language-facets ()
+  "Primary languages across public repos with counts, for Explore filter chips."
+  (postmodern:query
+   "SELECT primary_language AS language, COUNT(*) AS n
+    FROM cave_repos WHERE is_private = false AND primary_language IS NOT NULL
+    GROUP BY primary_language ORDER BY n DESC, primary_language" :plists))
+
+(defun set-repo-primary-language (repo-id lang)
+  "Store a repo's primary language (NIL clears it)."
+  (postmodern:execute
+   (:update 'cave-repos :set 'primary-language (or lang :null)
+            :where (:= 'id repo-id))))
 
 (defun list-orgs ()
   "All organizations, alphabetical (for the Explore people/orgs directory)."

@@ -513,6 +513,13 @@ number of commits re-verified."
               (error (e)
                 (llog:warn "Dep scan enqueue failed"
                            :repo (format nil "~A/~A" owner repo-name)
+                           :error (princ-to-string e))))
+            ;; Refresh the stored primary language (powers Explore's filter).
+            (handler-case
+                (update-repo-primary-language owner repo-name (getf repo :id) default-branch)
+              (error (e)
+                (llog:warn "Primary-language update failed"
+                           :repo (format nil "~A/~A" owner repo-name)
                            :error (princ-to-string e))))))
         ;; Fire webhooks
         (dolist (r refs)
@@ -846,8 +853,15 @@ editing the landing copy is a git push — no redeploy."
 ;; ----------------------------------------------------------------------------
 ;; Routes: Org creation
 
+(defun update-repo-primary-language (owner repo-name repo-id ref)
+  "Compute and store REPO-ID's primary language (largest by bytes at REF)."
+  (set-repo-primary-language
+   repo-id (first (first (chamber-language-stats owner repo-name ref)))))
+
 (easy-routes:defroute explore-page ("/-/explore" :method :get) ()
   (let* ((q (hunchentoot:get-parameter "q"))
+         (lang (let ((l (hunchentoot:get-parameter "language")))
+                 (and l (plusp (length l)) l)))
          (sort (or (hunchentoot:get-parameter "sort") "recent"))
          (page (max 1 (or (parse-integer (or (hunchentoot:get-parameter "page") "1")
                                          :junk-allowed t)
@@ -856,11 +870,13 @@ editing the landing copy is a git push — no redeploy."
          (offset (* (1- page) per-page))
          (blank-q (or (null q) (zerop (length (string-trim " " q))))))
     (html-response
-     (view-explore :repos (search-public-repos :query q :sort sort
+     (view-explore :repos (search-public-repos :query q :language lang :sort sort
                                                :limit per-page :offset offset)
-                   :total (count-public-repos :query q)
+                   :total (count-public-repos :query q :language lang)
                    :query q :sort sort :page page :per-page per-page
-                   :trending (when (and blank-q (= page 1))
+                   :languages (public-language-facets)
+                   :current-language lang
+                   :trending (when (and blank-q (not lang) (= page 1))
                                (trending-public-repos :days 7 :limit 6))
                    :users (list-users)
                    :orgs (list-orgs)))))

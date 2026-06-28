@@ -83,6 +83,29 @@
       (disconnect-db)
       (format t "~&Re-verified ~D commit~:P.~%" n))))
 
+(defun make-backfill-languages-command ()
+  (clingon:make-command
+   :name "backfill-languages"
+   :description "Compute and store each repo's primary language (one-time)"
+   :options (list (make-config-option))
+   :handler #'handle-backfill-languages))
+
+(defun handle-backfill-languages (cmd)
+  (let ((config-path (clingon:getopt cmd :config)))
+    (load-config config-path)
+    (connect-db)
+    (let ((n 0))
+      (dolist (repo (list-all-repos))
+        (let* ((owner (getf repo :owner-name))
+               (name (getf repo :name))
+               (ref (or (chamber-get-default-branch owner name) "main"))
+               (primary (first (first (ignore-errors
+                                       (chamber-language-stats owner name ref))))))
+          (set-repo-primary-language (getf repo :id) primary)
+          (when primary (incf n))))
+      (disconnect-db)
+      (format t "~&Set primary language on ~D repo~:P.~%" n))))
+
 (defun make-usher-migrate-users-command ()
   (clingon:make-command
    :name "usher-migrate-users"
@@ -1602,6 +1625,7 @@ empty system repo gets populated at startup."
                        (make-serve-command)
                        (make-migrate-command)
                        (make-reverify-command)
+                       (make-backfill-languages-command)
                        (make-git-shell-command)
                        (make-git-proxy-command)
                        (make-update-keys-command)

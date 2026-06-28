@@ -809,7 +809,12 @@ CREATE TABLE cave_milestones (
 );
 CREATE INDEX idx_milestones_repo ON cave_milestones (repo_id, state);
 
-ALTER TABLE cave_issues ADD COLUMN milestone_id BIGINT REFERENCES cave_milestones(id) ON DELETE SET NULL;"))
+ALTER TABLE cave_issues ADD COLUMN milestone_id BIGINT REFERENCES cave_milestones(id) ON DELETE SET NULL;")
+
+    (57 . "-- Primary language per repo, computed on default-branch push, so Explore
+-- can filter/facet by language without recomputing from git each request.
+ALTER TABLE cave_repos ADD COLUMN primary_language VARCHAR(64);
+CREATE INDEX idx_repos_primary_language ON cave_repos (primary_language) WHERE primary_language IS NOT NULL;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
