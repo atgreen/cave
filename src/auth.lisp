@@ -20,27 +20,47 @@
   "Generate a random state parameter for OIDC CSRF protection."
   (ironclad:byte-array-to-hex-string (ironclad:random-data 16)))
 
-(defun oidc-authorization-url (state &key force-login)
+(defun generate-oidc-verifier ()
+  "Generate a PKCE code verifier (RFC 7636). Hex digits are all unreserved."
+  (ironclad:byte-array-to-hex-string (ironclad:random-data 32)))
+
+(defun oidc-code-challenge (verifier)
+  "S256 PKCE challenge for VERIFIER: unpadded base64url of its SHA-256."
+  (let* ((digest (ironclad:digest-sequence
+                  :sha256 (ironclad:ascii-string-to-byte-array verifier)))
+         (b64 (cl-base64:usb8-array-to-base64-string digest)))
+    (string-right-trim "=" (substitute #\_ #\/ (substitute #\- #\+ b64)))))
+
+(defun oidc-authorization-url (state &key force-login code-challenge nonce)
   "Build the OIDC authorization redirect URL (browser-facing).
    If FORCE-LOGIN is T, forces re-authentication (for sudo mode)."
-  (format nil "~A/protocol/openid-connect/auth?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email~@[&max_age=0~]"
+  (format nil "~A/authorize?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email&code_challenge=~A&code_challenge_method=S256&nonce=~A~@[&max_age=0~]"
           (config-value :oidc-issuer)
           (config-value :oidc-client-id)
           (hunchentoot:url-encode (oidc-redirect-uri))
           state
+          (hunchentoot:url-encode (or code-challenge ""))
+          (hunchentoot:url-encode (or nonce ""))
           force-login))
 
-(defun exchange-oidc-code (code)
-  "Exchange an OIDC authorization code for tokens. Returns parsed JSON hash-table or NIL."
+(defun exchange-oidc-code (code &optional code-verifier)
+  "Exchange an OIDC authorization code for tokens. Returns parsed JSON hash-table
+   or NIL. Authenticates with client_secret_basic."
   (handler-case
       (let ((response (dex:post
-                       (format nil "~A/protocol/openid-connect/token"
+                       (format nil "~A/token"
                                (oidc-issuer-internal))
+                       :headers `(("Authorization"
+                                   . ,(format nil "Basic ~A"
+                                       (cl-base64:string-to-base64-string
+                                        (format nil "~A:~A"
+                                                (config-value :oidc-client-id)
+                                                (or (config-value :oidc-client-secret) ""))))))
                        :content `(("grant_type" . "authorization_code")
                                   ("code" . ,code)
-                                  ("client_id" . ,(config-value :oidc-client-id))
-                                  ("client_secret" . ,(config-value :oidc-client-secret))
-                                  ("redirect_uri" . ,(oidc-redirect-uri))))))
+                                  ("redirect_uri" . ,(oidc-redirect-uri))
+                                  ,@(when code-verifier
+                                      `(("code_verifier" . ,code-verifier)))))))
         (let ((parsed (com.inuoe.jzon:parse response)))
           (llog:info "OIDC token exchange succeeded"
                      :has-access-token (if (gethash "access_token" parsed) "yes" "no"))
@@ -54,7 +74,7 @@
    Tries the internal issuer first, falls back to external."
   (handler-case
       (let ((response (dex:get
-                       (format nil "~A/protocol/openid-connect/userinfo"
+                       (format nil "~A/userinfo"
                                (oidc-issuer-internal))
                        :headers `(("Authorization" . ,(format nil "Bearer ~A" access-token))))))
         (com.inuoe.jzon:parse response))
@@ -63,12 +83,11 @@
       nil)))
 
 (defun oidc-user-is-admin-p (userinfo)
-  "Check if the OIDC userinfo includes the cave-admin realm role."
-  (let ((realm-access (gethash "realm_access" userinfo)))
-    (when realm-access
-      (let ((roles (gethash "roles" realm-access)))
-        (when roles
-          (find "cave-admin" roles :test #'string=))))))
+  "Check if the OIDC userinfo includes the cave-admin group.
+   Usher conveys roles via a top-level `groups` claim (a JSON array)."
+  (let ((groups (gethash "groups" userinfo)))
+    (when groups
+      (find "cave-admin" groups :test #'string=))))
 
 (defun provision-oidc-user (userinfo)
   "Create or update a local user from OIDC claims. Returns user plist."
@@ -116,6 +135,188 @@
                 'approval-status approval
            :returning '*)
           :plist))))))
+
+;;; --- Embedded Usher OIDC provider ---
+;;; Cave hosts its own OpenID Provider (Usher) in-process, mounted at the root
+;;; of this host. Cave is both the provider and the relying party. The endpoints
+;;; below are reserved top-level paths on this host.
+
+(defparameter *usher-endpoint-prefixes*
+  '("/authorize" "/token" "/userinfo"
+    "/.well-known/openid-configuration" "/.well-known/jwks.json"
+    "/totp/" "/verify-email" "/reset-password" "/social/")
+  "Root paths served by the embedded Usher provider (reserved on this host).")
+
+(defvar *usher-dispatch* nil "Cached embedded-Usher dispatch table.")
+
+(defun usher-endpoint-p (uri)
+  "True when URI is served by the embedded Usher provider."
+  (some (lambda (p) (or (string= uri p) (uiop:string-prefix-p p uri)))
+        *usher-endpoint-prefixes*))
+
+(defun dispatch-usher (request)
+  "Run the embedded Usher dispatch table for REQUEST; return the response."
+  (loop for d in *usher-dispatch*
+        for handler = (funcall d request)
+        when handler do (return (funcall handler))))
+
+(defun usher-keys-path ()
+  (merge-pathnames "usher-keys.json"
+                   (uiop:ensure-directory-pathname (config-value :data-dir))))
+
+(defun ensure-usher-client ()
+  "Register the cave OAuth client in the embedded provider from cave's own OIDC
+   config. Upserts on every boot, so the client secret is (re)hashed with the
+   current Argon2 policy."
+  (usher:store-add-client
+   (usher:provider-store usher::*provider*)
+   (usher:make-client :id (config-value :oidc-client-id)
+                      :type :confidential
+                      :secret-hash (usher:hash-password
+                                    (or (config-value :oidc-client-secret) ""))
+                      :name "Cave"
+                      :redirect-uris (list (oidc-redirect-uri)))))
+
+(defun init-usher ()
+  "Build and install the embedded Usher OIDC provider (idempotent). Migrates the
+   usher_* tables in cave's database, loads/persists signing keys, and registers
+   the cave client."
+  (setf usher:*config*
+        (usher:make-default-config
+         :issuer (config-value :oidc-issuer)
+         :tls '(:mode :none)
+         :totp-issuer "Cave"
+         ;; Tuned for this host's CPU (default 64 MiB/t=3 is ~3 s/hash on 2 vCPUs).
+         ;; OWASP-minimum-ish; existing hashes migrate via rehash-on-login.
+         :argon2 '(:variant :argon2i :m 19456 :t 2 :p 1)
+         :db (list :backend :postgres
+                   :host (config-value :db-host)
+                   :port (config-value :db-port)
+                   :name (config-value :db-name)
+                   :user (config-value :db-user)
+                   :password (config-value :db-password))))
+  (let ((keys (usher:ensure-signing-keys (usher-keys-path))))
+    (setf usher::*provider*
+          (usher:make-provider :store (usher::configured-store)
+                               :signing-keys keys)))
+  (ensure-usher-client)
+  (setf *usher-dispatch* (usher::make-dispatch-table))
+  (llog:info "Embedded Usher OIDC provider ready"
+             :issuer (config-value :oidc-issuer)))
+
+(defun usher-migrate-users (&key (force-admins '("atgreen")))
+  "Provision Usher accounts from the existing cave_users (username, email,
+   display name, is_admin). Accounts in FORCE-ADMINS are granted cave-admin too.
+   Skips users that already exist. Returns a list of (username . temp-password)
+   for newly created accounts — show these to the operator once."
+  (let ((results nil))
+    (dolist (row (postmodern:query
+                  (:select 'username 'email 'display-name 'is-admin
+                   :from 'cave-users)
+                  :rows))
+      (destructuring-bind (username email display-name is-admin) row
+        (let* ((real-email (and email (not (string-equal email "false")) email))
+               (admin (or (eq is-admin t)
+                          (member username force-admins :test #'string=)))
+               (temp (usher:random-token 9)))
+          (unless (usher:store-find-user-by-username
+                   (usher:provider-store usher::*provider*) username)
+            (usher-add-user username temp :email real-email
+                            :display-name display-name :admin admin)
+            (push (cons username temp) results)))))
+    (nreverse results)))
+
+;;; Self-service TOTP (two-factor) — operate on the current cave user's embedded
+;;; Usher account, in-process.
+
+(defun usher-current-account ()
+  "The embedded-Usher user for the current cave session, or NIL."
+  (and *current-user*
+       (usher:store-find-user-by-username
+        (usher:provider-store usher::*provider*)
+        (getf *current-user* :username))))
+
+(defun usher-totp-enabled-p ()
+  (let ((u (usher-current-account)))
+    (and u (usher:totp-enabled-p (usher:provider-store usher::*provider*) u))))
+
+(defun usher-totp-enroll ()
+  "Begin TOTP enrollment for the current user. Returns (values otpauth-uri secret)."
+  (let ((u (usher-current-account)))
+    (when u (usher:enroll-totp! (usher:provider-store usher::*provider*) u :issuer "Cave"))))
+
+(defun usher-totp-confirm (code)
+  "Activate the pending TOTP secret if CODE matches. On success returns a fresh
+   list of backup codes (plaintext, show once); NIL on failure."
+  (let* ((store (usher:provider-store usher::*provider*)) (u (usher-current-account)))
+    (when (and u (usher:confirm-totp! store u code))
+      (usher:generate-backup-codes store u :count 10))))
+
+(defun usher-totp-disable ()
+  "Disable TOTP (and clear backup codes) for the current user."
+  (let* ((store (usher:provider-store usher::*provider*)) (u (usher-current-account)))
+    (when u
+      (usher:store-cred-del store (usher:user-subject u) "totp")
+      (usher:store-cred-del store (usher:user-subject u) "totp-pending")
+      (usher:store-cred-del store (usher:user-subject u) "backup-code")
+      t)))
+
+(defun usher-backup-codes-regenerate ()
+  "Regenerate single-use backup codes for the current user; returns the codes."
+  (let* ((store (usher:provider-store usher::*provider*)) (u (usher-current-account)))
+    (when u (usher:generate-backup-codes store u :count 10))))
+
+(defun totp-qr-data-uri (otpauth-uri)
+  "An inline PNG data: URI of the QR code for OTPAUTH-URI."
+  (let ((bytes (flexi-streams:with-output-to-sequence (s)
+                 (cl-qrencode:encode-png-stream otpauth-uri s :version 8 :level :level-m))))
+    (format nil "data:image/png;base64,~A"
+            (cl-base64:usb8-array-to-base64-string bytes))))
+
+(defun usher-register-user (username email password)
+  "Self-service account creation: a new Usher user (active, not admin). The cave
+   pending-approval gate is applied when they first sign in (provision-oidc-user).
+   Returns :ok, :taken, or :invalid."
+  (let ((store (usher:provider-store usher::*provider*))
+        (uname (and username (string-trim '(#\Space #\Tab) username))))
+    (cond
+      ((or (null uname) (zerop (length uname))
+           (null password) (< (length password) 8))
+       :invalid)
+      ((usher:store-find-user-by-username store uname) :taken)
+      (t (usher:store-add-user
+          store (usher:make-user :subject (usher:random-uuid) :username uname
+                                 :name uname :email email :email-verified nil
+                                 :status "active"
+                                 :password-hash (usher:hash-password password)))
+         :ok))))
+
+(defun usher-set-password (username new-password)
+  "Set USERNAME's embedded-Usher password. Returns T on success, NIL if no such
+   user. Used by the self-service change-password flow."
+  (let* ((store (usher:provider-store usher::*provider*))
+         (user (usher:store-find-user-by-username store username)))
+    (when user
+      (setf (usher:user-password-hash user) (usher:hash-password new-password))
+      (usher:store-add-user store user)
+      t)))
+
+(defun usher-add-user (username password &key email display-name admin)
+  "Provision (or update) a local Usher user; optionally grant cave-admin.
+   For manually migrating accounts off Keycloak."
+  (let* ((store (usher:provider-store usher::*provider*))
+         (user (or (usher:store-find-user-by-username store username)
+                   (let ((u (usher:make-user :subject (usher:random-uuid)
+                                             :username username
+                                             :name (or display-name username)
+                                             :email email :email-verified (and email t)
+                                             :status "active"
+                                             :password-hash (usher:hash-password password))))
+                     (usher:store-add-user store u)
+                     u))))
+    (when admin (usher:add-user-group store user "cave-admin"))
+    (llog:info "Provisioned Usher user" :username username :admin (and admin t))
+    user))
 
 ;;; --- Sudo mode (step-up authentication) ---
 

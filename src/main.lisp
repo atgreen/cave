@@ -68,6 +68,29 @@
       (disconnect-db)
       (format t "~&~A migration~:P applied.~%" applied))))
 
+(defun make-usher-migrate-users-command ()
+  (clingon:make-command
+   :name "usher-migrate-users"
+   :description "Provision Usher accounts from existing cave_users (one-time)"
+   :options (list (make-config-option))
+   :handler #'handle-usher-migrate-users))
+
+(defun handle-usher-migrate-users (cmd)
+  (let ((config-path (clingon:getopt cmd :config)))
+    (load-config config-path)
+    (connect-db)
+    (init-usher)
+    (let ((created (usher-migrate-users)))
+      (disconnect-db)
+      (if created
+          (progn
+            (format t "~&Provisioned ~D Usher account~:P. Temporary passwords ~
+                       (change on first login):~%~%" (length created))
+            (loop for (username . pw) in created
+                  do (format t "  ~16A ~A~%" username pw))
+            (format t "~%"))
+          (format t "~&No new accounts (all cave_users already exist in Usher).~%")))))
+
 ;;; --- SERVE subcommand ---
 
 (defun make-serve-command ()
@@ -121,6 +144,13 @@
       (error (e)
         (format *error-output* "~&~A~%Run: cave-server migrate --config ~A~%"
                 e config-path)
+        (uiop:quit 1)))
+
+    ;; Initialize the embedded Usher OIDC provider (migrates usher_* tables,
+    ;; loads/persists signing keys, registers the cave client).
+    (handler-case (init-usher)
+      (error (e)
+        (format *error-output* "~&Embedded Usher init failed: ~A~%" e)
         (uiop:quit 1)))
 
     ;; Ensure cave org and cave-themes repo exist
@@ -1524,6 +1554,7 @@
    :authors '("Cave contributors")
    :license "MIT"
    :sub-commands (list (make-init-command)
+                       (make-usher-migrate-users-command)
                        (make-serve-command)
                        (make-migrate-command)
                        (make-git-shell-command)

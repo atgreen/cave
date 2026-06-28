@@ -45,6 +45,11 @@
                    (setf (hunchentoot:header-out :location) target
                          (hunchentoot:return-code*) 301)
                    (return-from hunchentoot:acceptor-dispatch-request "")))
+               ;; Embedded Usher OIDC provider — serve its endpoints before
+               ;; cave's own routes.
+               (when (and *usher-dispatch* (usher-endpoint-p uri))
+                 (return-from hunchentoot:acceptor-dispatch-request
+                   (dispatch-usher request)))
                ;; Intercept git smart HTTP before easy-routes dispatch
                (when (and (search ".git/" uri)
                           (or (search "/info/refs" uri)
@@ -586,19 +591,27 @@ the results. Skips deletes and zero-sha boundaries."
   (if *current-user*
       (hunchentoot:redirect "/")
       (let* ((next-url (sanitize-next-url (hunchentoot:get-parameter "next")))
-             (state (generate-oidc-state)))
+             (state (generate-oidc-state))
+             (verifier (generate-oidc-verifier)))
         ;; Store state + next-url in a short-lived cookie
         (hunchentoot:set-cookie "cave_oidc_state"
                                 :value (format nil "~A:~A" state next-url)
                                 :path "/"
                                 :http-only t
                                 :max-age 600)
-        (hunchentoot:redirect (oidc-authorization-url state)))))
+        ;; Store the PKCE code verifier for the callback
+        (hunchentoot:set-cookie "cave_oidc_verifier"
+                                :value verifier :path "/" :http-only t :max-age 600)
+        (hunchentoot:redirect (oidc-authorization-url
+                               state
+                               :code-challenge (oidc-code-challenge verifier)
+                               :nonce (generate-oidc-state))))))
 
 (easy-routes:defroute oidc-callback ("/-/auth/callback" :method :get) ()
   (let* ((code (hunchentoot:get-parameter "code"))
          (state (hunchentoot:get-parameter "state"))
          (cookie (hunchentoot:cookie-in "cave_oidc_state"))
+         (verifier (hunchentoot:cookie-in "cave_oidc_verifier"))
          (colon-pos (when cookie (position #\: cookie)))
          (saved-state (when colon-pos (subseq cookie 0 colon-pos)))
          (rest-of-cookie (when colon-pos (subseq cookie (1+ colon-pos))))
@@ -608,14 +621,15 @@ the results. Skips deletes and zero-sha boundaries."
                     (cond (is-sudo (subseq rest-of-cookie 5))
                           (rest-of-cookie rest-of-cookie)
                           (t "/")))))
-    ;; Clear the state cookie
+    ;; Clear the state + PKCE verifier cookies
     (hunchentoot:set-cookie "cave_oidc_state" :value "" :path "/" :max-age 0)
+    (hunchentoot:set-cookie "cave_oidc_verifier" :value "" :path "/" :max-age 0)
     ;; Validate state — if invalid, redirect to login (e.g. after password reset)
     (unless (and code state saved-state (string= state saved-state))
       (hunchentoot:redirect "/-/auth/login")
       (return-from oidc-callback nil))
     ;; Exchange code for tokens
-    (let ((tokens (exchange-oidc-code code)))
+    (let ((tokens (exchange-oidc-code code verifier)))
       (unless tokens
         (setf (hunchentoot:return-code*) 502)
         (return-from oidc-callback "Failed to exchange authorization code"))
@@ -658,28 +672,45 @@ the results. Skips deletes and zero-sha boundaries."
 (easy-routes:defroute sudo-redirect ("/-/sudo" :method :get) ()
   (if *current-user*
       (let* ((next-url (or (hunchentoot:get-parameter "next") "/-/settings"))
-             (state (generate-oidc-state)))
+             (state (generate-oidc-state))
+             (verifier (generate-oidc-verifier)))
         ;; Store state with sudo: prefix so callback knows to set sudo cookie
         (hunchentoot:set-cookie "cave_oidc_state"
                                 :value (format nil "~A:sudo:~A" state next-url)
                                 :path "/"
                                 :http-only t
                                 :max-age 600)
-        (hunchentoot:redirect (oidc-authorization-url state :force-login t)))
+        (hunchentoot:set-cookie "cave_oidc_verifier"
+                                :value verifier :path "/" :http-only t :max-age 600)
+        (hunchentoot:redirect (oidc-authorization-url
+                               state :force-login t
+                               :code-challenge (oidc-code-challenge verifier)
+                               :nonce (generate-oidc-state))))
       (hunchentoot:redirect "/-/auth/login")))
 
+(easy-routes:defroute register-page ("/-/register" :method :get) ()
+  (if *current-user*
+      (hunchentoot:redirect "/")
+      (html-response (view-register))))
+
+(easy-routes:defroute register-submit ("/-/register" :method :post) ()
+  (let ((username (hunchentoot:post-parameter "username"))
+        (email (hunchentoot:post-parameter "email"))
+        (password (hunchentoot:post-parameter "password")))
+    (case (usher-register-user username email password)
+      (:ok (hunchentoot:redirect "/-/auth/login"))
+      (:taken (html-response (view-register :error "That username is already taken."
+                                            :username username :email email)))
+      (t (html-response (view-register
+                         :error "Enter a username and a password of at least 8 characters."
+                         :username username :email email))))))
+
 (easy-routes:defroute logout ("/logout" :method :post) ()
+  ;; With the embedded provider the cave session IS the auth state — there is no
+  ;; separate IdP SSO session to end. Clear the session locally and go home.
   (delete-session (hunchentoot:cookie-in "cave_session"))
   (hunchentoot:set-cookie "cave_session" :value "" :path "/" :max-age 0)
-  ;; Redirect to Keycloak logout to end SSO session
-  (let ((issuer (config-value :oidc-issuer)))
-    (if issuer
-        (hunchentoot:redirect
-         (format nil "~A/protocol/openid-connect/logout?post_logout_redirect_uri=~A&client_id=~A"
-                 issuer
-                 (hunchentoot:url-encode (config-value :base-url))
-                 (config-value :oidc-client-id)))
-        (hunchentoot:redirect "/"))))
+  (hunchentoot:redirect (or (config-value :base-url) "/")))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Dashboard
@@ -802,6 +833,57 @@ the results. Skips deletes and zero-sha boundaries."
            (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
                           :api-tokens (list-api-tokens *current-user-id*)
                           :ssh-error (format nil "~A" e))))))))
+
+(easy-routes:defroute change-password-page ("/-/settings/password" :method :get) ()
+  (when (require-sudo "/-/settings/password")
+    (html-response (view-change-password))))
+
+(easy-routes:defroute change-password-submit ("/-/settings/password" :method :post) ()
+  (when (require-sudo "/-/settings/password")
+    (let ((new (hunchentoot:post-parameter "new_password"))
+          (confirm (hunchentoot:post-parameter "confirm_password")))
+      (cond
+        ((or (null new) (< (length new) 8))
+         (html-response (view-change-password
+                         :error "Password must be at least 8 characters.")))
+        ((not (string= new confirm))
+         (html-response (view-change-password :error "Passwords do not match.")))
+        ((usher-set-password (getf *current-user* :username) new)
+         (html-response (view-change-password :success t)))
+        (t
+         (html-response (view-change-password :error "Could not update password.")))))))
+
+(easy-routes:defroute totp-page ("/-/settings/totp" :method :get) ()
+  (when (require-sudo "/-/settings/totp")
+    (html-response (view-totp :enabled (usher-totp-enabled-p)))))
+
+(easy-routes:defroute totp-enroll-submit ("/-/settings/totp/enroll" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (multiple-value-bind (uri secret) (usher-totp-enroll)
+      (if uri
+          (html-response (view-totp-enroll :qr (totp-qr-data-uri uri) :secret secret))
+          (hunchentoot:redirect "/-/settings/totp")))))
+
+(easy-routes:defroute totp-confirm-submit ("/-/settings/totp/confirm" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (let* ((code (hunchentoot:post-parameter "code"))
+           (codes (and code (usher-totp-confirm code))))
+      (if codes
+          (html-response (view-totp-backup-codes :codes codes :enabled-now t))
+          (multiple-value-bind (uri secret) (usher-totp-enroll)
+            (html-response (view-totp-enroll :qr (and uri (totp-qr-data-uri uri))
+                                             :secret secret
+                                             :error "Invalid code — try again.")))))))
+
+(easy-routes:defroute totp-disable-submit ("/-/settings/totp/disable" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (usher-totp-disable)
+    (hunchentoot:redirect "/-/settings/totp")))
+
+(easy-routes:defroute totp-backup-codes-submit ("/-/settings/totp/backup-codes" :method :post) ()
+  (when (require-sudo "/-/settings/totp")
+    (let ((codes (usher-backup-codes-regenerate)))
+      (html-response (view-totp-backup-codes :codes codes)))))
 
 (easy-routes:defroute generate-ssh-key-submit
     ("/-/settings/ssh-keys/generate" :method :post) ()
