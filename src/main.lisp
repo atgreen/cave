@@ -391,9 +391,9 @@ empty system repo gets populated at startup."
    :description "Handle an SSH git operation (called by sshd, not directly)"
    :options (list
              (make-config-option)
-             (clingon:make-option :integer
+             (clingon:make-option :string
               :long-name "key-id" :key :key-id :required t
-              :description "SSH key ID from the database"))
+              :description "SSH key ID (integer for a user key, d<id> for a deploy key)"))
    :handler #'handle-git-shell))
 
 ;;; --- GIT-PROXY subcommand ---
@@ -589,6 +589,62 @@ empty system repo gets populated at startup."
       (error () nil))
     (nreverse shas)))
 
+(defun %pushed-refs-from-stdin ()
+  "Read pre-receive ref updates from stdin as a list of (old new ref) triples.
+Reads stdin once (it can't be re-read); callers derive shas from the result."
+  (let ((refs nil))
+    (handler-case
+        (loop for line = (read-line *standard-input* nil nil)
+              while line
+              do (let ((parts (uiop:split-string
+                               (string-trim '(#\Space #\Tab #\Return) line)
+                               :separator '(#\Space))))
+                   (when (>= (length parts) 3)
+                     (push (list (first parts) (second parts) (third parts)) refs))))
+      (error () nil))
+    (nreverse refs)))
+
+(defun %unsigned-commits (bare-path old new)
+  "SHAs among the pushed commits (OLD..NEW, or just NEW for a new branch) whose
+commit object carries no signature."
+  (let* ((zero (every (lambda (c) (char= c #\0)) old))
+         (range (if zero new (format nil "~A..~A" old new))))
+    (multiple-value-bind (out _e code)
+        (uiop:run-program (list "git" "-C" (namestring bare-path) "rev-list"
+                                (if zero "--max-count=50" "") range)
+                          :output '(:string :stripped t) :error-output nil
+                          :ignore-error-status t)
+      (declare (ignore _e))
+      (when (zerop code)
+        (loop for sha in (remove-if #'uiop:emptyp
+                                    (uiop:split-string out :separator '(#\Newline)))
+              unless (cave::git-commit-signature-info bare-path sha)
+                collect sha)))))
+
+(defun %enforce-protected-branches (repo refs bare-path pusher-id)
+  "Return a rejection reason string if any REF update violates a branch
+protection rule, else NIL. Direct-push protection is bypassed by repo admins."
+  (loop for (old new ref) in refs
+        for branch = (when (uiop:string-prefix-p "refs/heads/" ref) (subseq ref 11))
+        when branch
+          do (let ((prot (branch-protection (getf repo :id) branch)))
+               (when prot
+                 (let ((deleting (every (lambda (c) (char= c #\0)) new)))
+                   (cond
+                     ;; Block direct pushes/deletes (admins may override).
+                     ((and (getf prot :block-direct-push)
+                           (not (and pusher-id
+                                     (equal (repo-member-role (getf repo :id) pusher-id)
+                                            "admin"))))
+                      (return (format nil "branch '~A' is protected — open a pull request instead of pushing directly"
+                                      branch)))
+                     ;; Require signed commits on the protected branch.
+                     ((and (getf prot :require-signed-commits) (not deleting))
+                      (let ((unsigned (%unsigned-commits bare-path old new)))
+                        (when unsigned
+                          (return (format nil "branch '~A' requires signed commits — ~A unsigned commit~:P pushed"
+                                          branch (length unsigned))))))))))))
+
 (defun %git-head-sha (bare-path)
   "Resolve HEAD of a bare repo to a sha, or NIL (e.g. empty repo)."
   (let ((out (nth-value 0 (uiop:run-program
@@ -682,12 +738,29 @@ empty system repo gets populated at startup."
         (uiop:quit 0)) ;; Don't block push for unknown repos
       (let ((checks (remove-if-not (lambda (c) (getf c :enabled))
                                    (list-check-configs (getf repo :id))))
-            (disk-path (repo-disk-path owner name)))
-        ;; Nothing to enforce — accept without reading stdin or building worktrees.
+            (disk-path (repo-disk-path owner name))
+            ;; Read the ref updates once (stdin can't be re-read).
+            (refs (%pushed-refs-from-stdin)))
+        ;; Protected-branch enforcement runs first, even when no checks exist.
+        (let ((violation
+                (handler-case
+                    (%enforce-protected-branches
+                     repo refs disk-path
+                     (let ((p (uiop:getenv "CAVE_PUSH_USER_ID")))
+                       (when (and p (plusp (length p)))
+                         (parse-integer p :junk-allowed t))))
+                  (error () nil))))
+          (when violation
+            (format *error-output* "~&cave: push rejected — ~A~%" violation)
+            (disconnect-db)
+            (uiop:quit 1)))
+        ;; Nothing else to enforce — accept.
         (when (null checks)
           (disconnect-db)
           (uiop:quit 0))
-        (let* ((shas (or (%pushed-shas-from-stdin)
+        (let* ((shas (or (loop for (o n r) in refs
+                               unless (every (lambda (c) (char= c #\0)) n)
+                                 collect n)
                          (let ((h (%git-head-sha disk-path))) (when h (list h)))))
                (want-isolation (not (config-value :checks-allow-network)))
                (isolation-ok (and want-isolation (%check-net-isolation-available-p)))

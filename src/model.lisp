@@ -2195,6 +2195,93 @@ by repo secrets. Returns an alist (name . value)."
     (loop for (name . value) in alist
           when value do (format s "~A=~A~%" name value))))
 
+;;; ========================== PROTECTED BRANCHES ======================
+
+(defun add-protected-branch (repo-id pattern &key (block-direct-push t) require-signed-commits)
+  "Add or update a branch-protection rule."
+  (postmodern:execute
+   "INSERT INTO cave_protected_branches (repo_id, pattern, block_direct_push, require_signed_commits)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (repo_id, pattern) DO UPDATE
+      SET block_direct_push = EXCLUDED.block_direct_push,
+          require_signed_commits = EXCLUDED.require_signed_commits"
+   repo-id pattern block-direct-push require-signed-commits))
+
+(defun list-protected-branches (repo-id)
+  (postmodern:query
+   (:order-by (:select '* :from 'cave-protected-branches :where (:= 'repo-id repo-id))
+              'pattern)
+   :plists))
+
+(defun delete-protected-branch (id repo-id)
+  (postmodern:execute
+   (:delete-from 'cave-protected-branches
+    :where (:and (:= 'id id) (:= 'repo-id repo-id)))))
+
+(defun %branch-pattern-match-p (pattern branch)
+  "Match a protected-branch PATTERN against BRANCH: exact, `prefix/*`, or `*`."
+  (cond ((string= pattern "*") t)
+        ((string= pattern branch) t)
+        ((uiop:string-suffix-p "/*" pattern)
+         (uiop:string-prefix-p (subseq pattern 0 (- (length pattern) 1)) branch))
+        (t nil)))
+
+(defun branch-protection (repo-id branch)
+  "Return the protection rule covering BRANCH, or NIL. First match wins."
+  (loop for p in (list-protected-branches repo-id)
+        when (%branch-pattern-match-p (getf p :pattern) branch)
+          return p))
+
+;;; ========================== DEPLOY KEYS =============================
+
+(defun add-deploy-key (repo-id name public-key &key read-write)
+  "Add a deploy (per-repo) SSH key. Returns the key plist."
+  (postmodern:query
+   (:insert-into 'cave-deploy-keys
+    :set 'repo-id repo-id 'name name 'public-key public-key
+         'fingerprint (compute-ssh-fingerprint public-key)
+         'read-write (if read-write t nil)
+    :returning '*)
+   :plist))
+
+(defun list-deploy-keys (repo-id)
+  (postmodern:query
+   (:order-by (:select '* :from 'cave-deploy-keys :where (:= 'repo-id repo-id)) 'name)
+   :plists))
+
+(defun delete-deploy-key (id repo-id)
+  (postmodern:execute
+   (:delete-from 'cave-deploy-keys
+    :where (:and (:= 'id id) (:= 'repo-id repo-id)))))
+
+(defun find-deploy-key-by-id (id)
+  "Deploy key record by id, or NIL."
+  (postmodern:query
+   (:select '* :from 'cave-deploy-keys :where (:= 'id id)) :plist))
+
+(defun find-deploy-key-by-fingerprint (fingerprint)
+  "Deploy key (with its repo's owner/name) by SSH fingerprint, or NIL."
+  (postmodern:query
+   "SELECT d.*, r.name AS repo_name,
+           COALESCE(o.name, u.username) AS owner_name
+      FROM cave_deploy_keys d
+      JOIN cave_repos r ON r.id = d.repo_id
+      LEFT JOIN cave_orgs o ON o.id = r.org_id
+      LEFT JOIN cave_users u ON u.id = r.owner_id
+     WHERE d.fingerprint = $1"
+   fingerprint :plist))
+
+(defun all-deploy-keys-with-repo ()
+  "All deploy keys joined with owner/name, for the authorized_keys file."
+  (postmodern:query
+   "SELECT d.id, d.public_key, d.fingerprint, d.read_write, d.repo_id,
+           r.name AS repo_name, COALESCE(o.name, u.username) AS owner_name
+      FROM cave_deploy_keys d
+      JOIN cave_repos r ON r.id = d.repo_id
+      LEFT JOIN cave_orgs o ON o.id = r.org_id
+      LEFT JOIN cave_users u ON u.id = r.owner_id"
+   :plists))
+
 (defun close-pull-request (changeset-id)
   "Mark a pull request as closed (without merging)."
   (postmodern:execute

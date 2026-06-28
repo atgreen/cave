@@ -2747,7 +2747,7 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations runners registration-token message secrets)
+(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations runners registration-token message secrets protected-branches deploy-keys)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
@@ -2755,6 +2755,59 @@ function caveShowCommentForm(td) {
       (:h1 "Repository settings")
       (when message
         (:div.alert message))
+
+      ;; Protected branches
+      (:section
+       (:h2 "Protected branches")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-2)"
+        "Block direct pushes (force changes through pull requests) and/or require signed commits, enforced at push time. Patterns: exact (main), prefix (release/*), or * for all.")
+       (if protected-branches
+           (:ul.data-list
+            (dolist (p protected-branches)
+              (:li (:code (getf p :pattern))
+               (when (getf p :block-direct-push) (:span.badge :style "margin-left:.4rem" "no direct push"))
+               (when (getf p :require-signed-commits) (:span.badge :style "margin-left:.25rem" "signed"))
+               (:form :method "post" :style "display:inline;margin-left:.5rem"
+                :action (format nil "/~A/~A/settings/protect/~A/delete" owner-name repo-name (getf p :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No protected branches."))
+       (:form :method "post" :action (format nil "/~A/~A/settings/protect" owner-name repo-name)
+        (:div.field
+         (:label :for "pb_pattern" "Branch pattern")
+         (:input :type "text" :id "pb_pattern" :name "pattern" :required t :placeholder "main"))
+        (:label :style "display:block;font-size:.85rem"
+         (:input :type "checkbox" :name "block_direct_push" :value "1" :checked t)
+         " Block direct pushes (require PRs)")
+        (:label :style "display:block;font-size:.85rem;margin-bottom:.5rem"
+         (:input :type "checkbox" :name "require_signed_commits" :value "1")
+         " Require signed commits")
+        (:button.btn.btn-primary :type "submit" "Protect branch")))
+
+      ;; Deploy keys
+      (:section
+       (:h2 "Deploy keys")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-2)"
+        "Per-repo SSH keys for CI/deploy without a user account. Read-only by default; grant write to allow pushes.")
+       (if deploy-keys
+           (:ul.data-list
+            (dolist (k deploy-keys)
+              (:li (:strong (getf k :name)) (:code :style "margin-left:.4rem" (getf k :fingerprint))
+               (:span.badge :style "margin-left:.4rem" (if (getf k :read-write) "read/write" "read-only"))
+               (:form :method "post" :style "display:inline;margin-left:.5rem"
+                :action (format nil "/~A/~A/settings/deploy-keys/~A/delete" owner-name repo-name (getf k :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No deploy keys."))
+       (:form :method "post" :action (format nil "/~A/~A/settings/deploy-keys" owner-name repo-name)
+        (:div.field
+         (:label :for "dk_name" "Name")
+         (:input :type "text" :id "dk_name" :name "name" :required t :placeholder "ci-deploy"))
+        (:div.field
+         (:label :for "dk_key" "Public key")
+         (:textarea :id "dk_key" :name "public_key" :rows "3" :required t
+                    :placeholder "ssh-ed25519 AAAA..."))
+        (:label :style "display:block;font-size:.85rem;margin-bottom:.5rem"
+         (:input :type "checkbox" :name "read_write" :value "1") " Allow write (push)")
+        (:button.btn.btn-primary :type "submit" "Add deploy key")))
 
       ;; CI secrets
       (:section

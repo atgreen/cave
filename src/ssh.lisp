@@ -74,40 +74,50 @@
         (multiple-value-bind (owner-name repo-name) (parse-repo-from-path repo-path)
           (unless (and owner-name repo-name) (git-shell-fail "invalid repository path"))
 
-          (let ((key-record (find-ssh-key-by-id key-id)))
-            (unless key-record (git-shell-fail "invalid key"))
-
-            (let* ((user-id (getf key-record :user-id))
-                   (user (find-user-by-id user-id)))
-              (unless (and user (getf user :is-active))
-                (git-shell-fail "account disabled"))
-
-              (let ((repo (find-repo owner-name repo-name)))
+          (if (and (stringp key-id) (uiop:string-prefix-p "d" key-id))
+              ;; --- Deploy key: scoped to one repo; clone always, push iff RW ---
+              (let* ((deploy-id (parse-integer (subseq key-id 1) :junk-allowed t))
+                     (dk (and deploy-id (find-deploy-key-by-id deploy-id)))
+                     (repo (find-repo owner-name repo-name))
+                     (is-push (equal git-command "git-receive-pack")))
+                (unless dk (git-shell-fail "invalid key"))
                 (unless repo (git-shell-fail "repository not found"))
-
-                (let ((role (repo-member-role (getf repo :id) user-id))
-                      (is-push (equal git-command "git-receive-pack")))
-
-                  (when (and (getf repo :is-private) (not role))
-                    (git-shell-fail "repository not found"))
-                  (when (and is-push (not role))
-                    (git-shell-fail "permission denied"))
-
-                  ;; Push events are logged by the post-receive endpoint with
-                  ;; ref/count/tip metadata; SSH-time only logs clones.
-                  (unless is-push
-                    (log-event "git.clone"
-                               :user-id user-id
-                               :repo-id (getf repo :id)))
-                  (disconnect-db)
-
-                  ;; Write two lines to the REAL stdout (not the redirected one):
-                  ;; user-id, then disk path. cave-shell.sh parses both.
-                  (format saved-stdout "~D~%~A~%"
-                          user-id
-                          (namestring (repo-disk-path owner-name repo-name)))
-                  (finish-output saved-stdout)
-                  (uiop:quit 0))))))))))
+                (unless (eql (getf dk :repo-id) (getf repo :id))
+                  (git-shell-fail "repository not found"))
+                (when (and is-push (not (getf dk :read-write)))
+                  (git-shell-fail "permission denied (read-only deploy key)"))
+                (unless is-push (log-event "git.clone" :repo-id (getf repo :id)))
+                (disconnect-db)
+                (format saved-stdout "~D~%~A~%"
+                        0 (namestring (repo-disk-path owner-name repo-name)))
+                (finish-output saved-stdout)
+                (uiop:quit 0))
+              ;; --- User key (the common path) ---
+              (let* ((kid (parse-integer (princ-to-string key-id) :junk-allowed t))
+                     (key-record (and kid (find-ssh-key-by-id kid))))
+                (unless key-record (git-shell-fail "invalid key"))
+                (let* ((user-id (getf key-record :user-id))
+                       (user (find-user-by-id user-id)))
+                  (unless (and user (getf user :is-active))
+                    (git-shell-fail "account disabled"))
+                  (let ((repo (find-repo owner-name repo-name)))
+                    (unless repo (git-shell-fail "repository not found"))
+                    (let ((role (repo-member-role (getf repo :id) user-id))
+                          (is-push (equal git-command "git-receive-pack")))
+                      (when (and (getf repo :is-private) (not role))
+                        (git-shell-fail "repository not found"))
+                      (when (and is-push (not role))
+                        (git-shell-fail "permission denied"))
+                      (unless is-push
+                        (log-event "git.clone"
+                                   :user-id user-id
+                                   :repo-id (getf repo :id)))
+                      (disconnect-db)
+                      (format saved-stdout "~D~%~A~%"
+                              user-id
+                              (namestring (repo-disk-path owner-name repo-name)))
+                      (finish-output saved-stdout)
+                      (uiop:quit 0)))))))))))
 
 ;;; ========================== AUTHORIZED KEYS ==========================
 
@@ -118,13 +128,22 @@
           shell-path config-path (getf key-record :id)
           (config-value :http-port 8080) (getf key-record :public-key)))
 
+(defun deploy-authorized-keys-line (dk config-path shell-path)
+  "authorized_keys line for a deploy key. The key-id is `d<id>` so git-shell
+routes it to the deploy-key (repo-scoped) auth path."
+  (format nil "command=\"~A ~A d~A ~A\",~
+               no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ~A"
+          shell-path config-path (getf dk :id)
+          (config-value :http-port 8080) (getf dk :public-key)))
+
 (defun generate-authorized-keys (config-path shell-path)
-  "Generate the full authorized_keys file content from all active SSH keys."
-  (let ((keys (all-active-ssh-keys)))
-    (with-output-to-string (s)
-      (format s "# Managed by Cave — do not edit manually~%")
-      (dolist (key keys)
-        (format s "~A~%" (authorized-keys-line key config-path shell-path))))))
+  "Generate authorized_keys content from all active user SSH keys + deploy keys."
+  (with-output-to-string (s)
+    (format s "# Managed by Cave — do not edit manually~%")
+    (dolist (key (all-active-ssh-keys))
+      (format s "~A~%" (authorized-keys-line key config-path shell-path)))
+    (dolist (dk (all-deploy-keys-with-repo))
+      (format s "~A~%" (deploy-authorized-keys-line dk config-path shell-path)))))
 
 (defun write-authorized-keys (path config-path shell-path)
   "Write the authorized_keys file at PATH."

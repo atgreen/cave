@@ -857,7 +857,31 @@ CREATE TABLE cave_secrets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(scope, scope_id, name)
 );
-CREATE INDEX idx_secrets_scope ON cave_secrets (scope, scope_id);"))
+CREATE INDEX idx_secrets_scope ON cave_secrets (scope, scope_id);")
+
+    (61 . "-- Tier-2: protected branches (push-time enforcement) and deploy keys.
+CREATE TABLE cave_protected_branches (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  pattern VARCHAR(256) NOT NULL,
+  block_direct_push BOOLEAN NOT NULL DEFAULT TRUE,
+  require_signed_commits BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(repo_id, pattern)
+);
+CREATE INDEX idx_protected_branches ON cave_protected_branches (repo_id);
+
+CREATE TABLE cave_deploy_keys (
+  id BIGSERIAL PRIMARY KEY,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  public_key TEXT NOT NULL UNIQUE,
+  fingerprint VARCHAR(128) NOT NULL,
+  read_write BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_deploy_keys_repo ON cave_deploy_keys (repo_id);
+CREATE INDEX idx_deploy_keys_fp ON cave_deploy_keys (fingerprint);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

@@ -222,7 +222,10 @@
                                           owner-name repo-name)
                                   "")
                    :timeout-seconds (let ((t-s (getf job :timeout-seconds 0)))
-                                      (if (and t-s (plusp t-s)) t-s 300)))))
+                                      (if (and t-s (plusp t-s)) t-s 300))
+                   :secrets-env (if repo
+                                    (secrets-env-string (secrets-for-repo repo))
+                                    ""))))
 
 (defun handle-update-step-status (request ctx)
   "Update a workflow step's status."

@@ -1899,7 +1899,9 @@ leaking the viewer's IP or breaking HTTPS."
                            :webhooks (list-webhooks (getf repo :id))
                            :automations (list-automation-definitions (getf repo :id))
                            :runners (list-runners :scope "repo" :scope-id (getf repo :id))
-                           :secrets (list-secret-names "repo" (getf repo :id)))))))
+                           :secrets (list-secret-names "repo" (getf repo :id))
+                           :protected-branches (list-protected-branches (getf repo :id))
+                           :deploy-keys (list-deploy-keys (getf repo :id)))))))
 
 (easy-routes:defroute repo-secret-add-submit
     ("/:owner/:repo-name/settings/secrets" :method :post) ()
@@ -1925,6 +1927,56 @@ leaking the viewer's IP or breaking HTTPS."
         (return-from repo-secret-delete-submit "Forbidden"))
       (delete-secret "repo" (getf repo :id) name)
       (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(defmacro %with-repo-admin ((repo owner repo-name fail-form) &body body)
+  "Bind REPO from OWNER/REPO-NAME, requiring login + repo admin; else short-circuit."
+  `(when (require-login)
+     (let ((,repo (find-repo ,owner ,repo-name)))
+       (unless ,repo (return-from ,fail-form (not-found)))
+       (unless (equal (repo-member-role (getf ,repo :id) *current-user-id*) "admin")
+         (setf (hunchentoot:return-code*) 403)
+         (return-from ,fail-form "Forbidden"))
+       ,@body)))
+
+(easy-routes:defroute repo-protect-add-submit
+    ("/:owner/:repo-name/settings/protect" :method :post) ()
+  (%with-repo-admin (repo owner repo-name repo-protect-add-submit)
+    (let ((pattern (string-trim " " (or (hunchentoot:post-parameter "pattern") ""))))
+      (when (plusp (length pattern))
+        (add-protected-branch
+         (getf repo :id) pattern
+         :block-direct-push (equal (hunchentoot:post-parameter "block_direct_push") "1")
+         :require-signed-commits (equal (hunchentoot:post-parameter "require_signed_commits") "1"))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+
+(easy-routes:defroute repo-protect-delete-submit
+    ("/:owner/:repo-name/settings/protect/:id/delete" :method :post) ()
+  (%with-repo-admin (repo owner repo-name repo-protect-delete-submit)
+    (let ((pid (parse-integer id :junk-allowed t)))
+      (when pid (delete-protected-branch pid (getf repo :id))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+
+(easy-routes:defroute repo-deploy-key-add-submit
+    ("/:owner/:repo-name/settings/deploy-keys" :method :post) ()
+  (%with-repo-admin (repo owner repo-name repo-deploy-key-add-submit)
+    (let ((name (string-trim " " (or (hunchentoot:post-parameter "name") "")))
+          (key (string-trim '(#\Newline #\Return #\Space)
+                            (or (hunchentoot:post-parameter "public_key") ""))))
+      (when (and (plusp (length name)) (plusp (length key)))
+        (handler-case
+            (progn
+              (add-deploy-key (getf repo :id) name key
+                              :read-write (equal (hunchentoot:post-parameter "read_write") "1"))
+              (sync-authorized-keys))
+          (error () nil))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+
+(easy-routes:defroute repo-deploy-key-delete-submit
+    ("/:owner/:repo-name/settings/deploy-keys/:id/delete" :method :post) ()
+  (%with-repo-admin (repo owner repo-name repo-deploy-key-delete-submit)
+    (let ((kid (parse-integer id :junk-allowed t)))
+      (when kid (delete-deploy-key kid (getf repo :id)) (sync-authorized-keys)))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -2412,6 +2464,8 @@ leaking the viewer's IP or breaking HTTPS."
                              :automations (list-automation-definitions (getf repo :id))
                              :runners (list-runners :scope "repo" :scope-id (getf repo :id))
                              :secrets (list-secret-names "repo" (getf repo :id))
+                             :protected-branches (list-protected-branches (getf repo :id))
+                             :deploy-keys (list-deploy-keys (getf repo :id))
                              :registration-token token))))))
 
 (easy-routes:defroute repo-delete-runner
