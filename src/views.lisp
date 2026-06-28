@@ -2592,6 +2592,27 @@ function caveShowCommentForm(td) {
      (:form :method "post" :action "/-/admin/runners/token"
       (:button.btn.btn-primary :type "submit" "Generate registration token"))))))
 
+(defun view-change-password (&key error success)
+  "Render the self-service change-password page (behind sudo)."
+  (page (:title "Change password — Cave")
+    (:h1 "Change password")
+    (when error
+      (:p :style "color:var(--danger,#c0392b)" error))
+    (when success
+      (:p :style "color:var(--success,#27ae60)" "Your password has been changed."))
+    (:section
+     (:form :method "post" :action "/-/settings/password"
+      (:div.field
+       (:label :for "new_password" "New password")
+       (:input :id "new_password" :name "new_password" :type "password"
+               :autocomplete "new-password" :minlength "8" :required t))
+      (:div.field
+       (:label :for "confirm_password" "Confirm new password")
+       (:input :id "confirm_password" :name "confirm_password" :type "password"
+               :autocomplete "new-password" :minlength "8" :required t))
+      (:button.btn :type "submit" "Change password")))
+    (:p (:a :href "/-/settings" "← Back to settings"))))
+
 (defun view-settings (&key ssh-keys api-tokens new-token ssh-error
                            generated-private-key generated-key-name
                            runners registration-token)
@@ -2599,6 +2620,10 @@ function caveShowCommentForm(td) {
   (let ((cli-path (cli-download-path)))
     (page (:title "Settings — Cave")
       (:h1 "Settings")
+
+      (:section
+       (:h2 "Account")
+       (:p (:a :href "/-/settings/password" "Change password")))
 
       (:section
        (:h2 "Theme")

@@ -223,6 +223,16 @@
             (push (cons username temp) results)))))
     (nreverse results)))
 
+(defun usher-set-password (username new-password)
+  "Set USERNAME's embedded-Usher password. Returns T on success, NIL if no such
+   user. Used by the self-service change-password flow."
+  (let* ((store (usher:provider-store usher::*provider*))
+         (user (usher:store-find-user-by-username store username)))
+    (when user
+      (setf (usher:user-password-hash user) (usher:hash-password new-password))
+      (usher:store-add-user store user)
+      t)))
+
 (defun usher-add-user (username password &key email display-name admin)
   "Provision (or update) a local Usher user; optionally grant cave-admin.
    For manually migrating accounts off Keycloak."

@@ -823,6 +823,25 @@ the results. Skips deletes and zero-sha boundaries."
                           :api-tokens (list-api-tokens *current-user-id*)
                           :ssh-error (format nil "~A" e))))))))
 
+(easy-routes:defroute change-password-page ("/-/settings/password" :method :get) ()
+  (when (require-sudo "/-/settings/password")
+    (html-response (view-change-password))))
+
+(easy-routes:defroute change-password-submit ("/-/settings/password" :method :post) ()
+  (when (require-sudo "/-/settings/password")
+    (let ((new (hunchentoot:post-parameter "new_password"))
+          (confirm (hunchentoot:post-parameter "confirm_password")))
+      (cond
+        ((or (null new) (< (length new) 8))
+         (html-response (view-change-password
+                         :error "Password must be at least 8 characters.")))
+        ((not (string= new confirm))
+         (html-response (view-change-password :error "Passwords do not match.")))
+        ((usher-set-password (getf *current-user* :username) new)
+         (html-response (view-change-password :success t)))
+        (t
+         (html-response (view-change-password :error "Could not update password.")))))))
+
 (easy-routes:defroute generate-ssh-key-submit
     ("/-/settings/ssh-keys/generate" :method :post) ()
   (when (require-sudo "/-/settings")
