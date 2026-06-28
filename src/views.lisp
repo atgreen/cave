@@ -1914,10 +1914,25 @@ for in-progress checks, polling a JSON endpoint while anything runs."
       (:ul#checks-rows.checks-list (dolist (c checks) (render-check-row c))))
      (:script (:raw +checks-panel-js+)))))
 
+(defun view-interdiff (&key owner-name repo pr from-version to-version text)
+  "Render the interdiff (range-diff) between two PR rounds."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Interdiff #~A — Cave" (getf pr :number)))
+      (render-repo-tabs owner-name repo-name :pulls :repo repo)
+      (:h1 (format nil "PR #~A — interdiff: round ~A → round ~A"
+                   (getf pr :number) from-version to-version))
+      (:p (:a :href (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+           "← back to pull request"))
+      (if (and text (plusp (length text)))
+          (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);overflow-x:auto;font-size:.85rem;white-space:pre"
+           text)
+          (:p.empty "No differences between these rounds (or the commits are unavailable).")))))
+
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge can-override conflict-files stack stack-items diff-raw
                              diff-comments-json comment-action
-                             checks checks-rollup source-missing can-close code-owners)
+                             checks checks-rollup source-missing can-close code-owners
+                             versions)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -2098,6 +2113,29 @@ function caveShowCommentForm(td) {
 "
                     (or diff-comments-json "[]")
                     (com.inuoe.jzon:stringify (or comment-action ""))))))))
+
+      ;; Rounds: each push is a numbered, immutable round; reviews anchor to a
+      ;; round and consecutive rounds can be interdiffed (git range-diff).
+      (when (and versions (> (length versions) 1))
+        (:section
+         (:h2 :style "font-size:1rem" "Rounds")
+         (:ul.data-list
+          (loop for (v . rest) on versions
+                do (:li
+                    (:strong (format nil "Round ~A" (getf v :version)))
+                    (:code :style "margin-left:.4rem"
+                     (let ((h (getf v :head-commit)))
+                       (if (and h (>= (length h) 8)) (subseq h 0 8) h)))
+                    (let ((rel (format-relative-time (getf v :created-at))))
+                      (when rel
+                        (:span :style "color:var(--text-muted);font-size:.8rem;margin-left:.4rem" rel)))
+                    ;; Interdiff vs the previous round.
+                    (when rest
+                      (:a :style "margin-left:.5rem;font-size:.85rem"
+                       :href (format nil "/~A/~A/pulls/~A/interdiff?from=~A&to=~A"
+                                     org-name repo-name cs-num
+                                     (getf (first rest) :version) (getf v :version))
+                       (format nil "interdiff vs round ~A" (getf (first rest) :version)))))))))
 
       ;; Live CI checks panel (commit statuses + cave workflow jobs)
       (when (and checks-rollup (plusp (getf checks-rollup :total)))
@@ -2709,7 +2747,7 @@ function caveShowCommentForm(td) {
 
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations runners registration-token message)
+(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations runners registration-token message secrets)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
@@ -2717,6 +2755,31 @@ function caveShowCommentForm(td) {
       (:h1 "Repository settings")
       (when message
         (:div.alert message))
+
+      ;; CI secrets
+      (:section
+       (:h2 "Secrets")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-2)"
+        "Encrypted CI secrets, injected as environment variables into this repo's workflow jobs and masked in logs. Write-only — values can't be read back.")
+       (if secrets
+           (:ul.data-list
+            (dolist (s secrets)
+              (:li (:code s)
+               (:form :method "post" :style "display:inline;margin-left:.5rem"
+                :action (format nil "/~A/~A/settings/secrets/~A/delete"
+                                owner-name repo-name (hunchentoot:url-encode s))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No secrets."))
+       (:form :method "post"
+        :action (format nil "/~A/~A/settings/secrets" owner-name repo-name)
+        (:div.field
+         (:label :for "secret_name" "Name")
+         (:input :type "text" :id "secret_name" :name "name" :required t
+                 :placeholder "GHCR_TOKEN"))
+        (:div.field
+         (:label :for "secret_value" "Value")
+         (:input :type "password" :id "secret_value" :name "value" :required t))
+        (:button.btn.btn-primary :type "submit" "Add secret")))
 
       ;; Merge policy
       (:section

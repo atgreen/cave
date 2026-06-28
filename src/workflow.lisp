@@ -8,6 +8,17 @@
 ;;; Cave's internal dep-scan / dep-fix jobs are created directly and bypass
 ;;; this gate) ---
 
+(defun %nixery-image (deps)
+  "Build a Nixery on-the-fly image URL from nixpkgs names, so a workflow can say
+`dependencies: [sbcl, git]` instead of maintaining a Dockerfile. nixery.dev
+builds (and layer-caches) an image with the requested packages on demand."
+  (when deps
+    (let ((pkgs (remove-if #'uiop:emptyp
+                           (mapcar (lambda (d) (string-trim " " (princ-to-string d)))
+                                   (if (listp deps) deps (list deps))))))
+      (when pkgs
+        (format nil "nixery.dev/shell/~{~A~^/~}" pkgs)))))
+
 (defun %workflow-image-allowed-p (image)
   "True unless :workflows-image-allowlist is configured and IMAGE matches none
    of its prefixes. An unset allowlist (the default) permits any image."
@@ -103,7 +114,9 @@
           (let ((violation
                   (when (listp jobs-alist)
                     (loop for (job-name . job-spec) in jobs-alist
-                          for image = (cdr (assoc "image" job-spec :test #'equal))
+                          for image = (or (cdr (assoc "image" job-spec :test #'equal))
+                                          (%nixery-image
+                                           (cdr (assoc "dependencies" job-spec :test #'equal))))
                           for priv = (eq (cdr (assoc "privileged" job-spec :test #'equal)) t)
                           thereis (and job-name image
                                        (workflow-policy-violation image priv))))))
@@ -120,7 +133,10 @@
             (dolist (job-entry jobs-alist)
               (let* ((job-name (car job-entry))
                      (job-spec (cdr job-entry))
-                     (image (cdr (assoc "image" job-spec :test #'equal)))
+                     (image (or (cdr (assoc "image" job-spec :test #'equal))
+                                ;; No image? Build one on the fly from nix deps.
+                                (%nixery-image
+                                 (cdr (assoc "dependencies" job-spec :test #'equal)))))
                      (needs-raw (cdr (assoc "needs" job-spec :test #'equal)))
                      (needs (cond
                               ((null needs-raw) nil)

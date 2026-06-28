@@ -2091,6 +2091,110 @@ setting priority/high replaces priority/low. Plain labels are unaffected."
          'updated-at (:now)
     :where (:= 'id changeset-id))))
 
+(defun record-changeset-version (changeset-id version head-commit base-commit)
+  "Snapshot a PR round's commit range (idempotent on changeset+version)."
+  (postmodern:execute
+   "INSERT INTO cave_changeset_versions (changeset_id, version, head_commit, base_commit)
+    VALUES ($1, $2, $3, $4) ON CONFLICT (changeset_id, version) DO NOTHING"
+   changeset-id version head-commit (or base-commit :null)))
+
+(defun list-changeset-versions (changeset-id)
+  "All recorded rounds for a PR, newest version first."
+  (postmodern:query
+   (:order-by (:select '* :from 'cave-changeset-versions
+               :where (:= 'changeset-id changeset-id))
+              (:desc 'version))
+   :plists))
+
+(defun find-changeset-version (changeset-id version)
+  (postmodern:query
+   (:select '* :from 'cave-changeset-versions
+    :where (:and (:= 'changeset-id changeset-id) (:= 'version version)))
+   :plist))
+
+;;; ========================== CI SECRETS ==============================
+
+(defun %secret-key-octets ()
+  (ironclad:digest-sequence
+   :sha256 (sb-ext:string-to-octets (or (config-value :secret-key) "cave-default-key")
+                                    :external-format :utf-8)))
+
+(defun encrypt-secret (plaintext)
+  "AES-256-CBC encrypt PLAINTEXT; return base64(iv || ciphertext)."
+  (let* ((key (%secret-key-octets))
+         (iv (ironclad:make-random-salt 16))
+         (cipher (ironclad:make-cipher :aes :key key :mode :cbc
+                                       :initialization-vector iv))
+         (data (sb-ext:string-to-octets plaintext :external-format :utf-8))
+         (padlen (- 16 (mod (length data) 16)))
+         (padded (concatenate '(vector (unsigned-byte 8)) data
+                              (make-array padlen :element-type '(unsigned-byte 8)
+                                                 :initial-element padlen)))
+         (out (make-array (length padded) :element-type '(unsigned-byte 8))))
+    (ironclad:encrypt cipher padded out)
+    (cl-base64:usb8-array-to-base64-string
+     (concatenate '(vector (unsigned-byte 8)) iv out))))
+
+(defun decrypt-secret (b64)
+  "Inverse of ENCRYPT-SECRET."
+  (let* ((blob (cl-base64:base64-string-to-usb8-array b64))
+         (iv (subseq blob 0 16))
+         (ct (subseq blob 16))
+         (cipher (ironclad:make-cipher :aes :key (%secret-key-octets) :mode :cbc
+                                       :initialization-vector iv))
+         (out (make-array (length ct) :element-type '(unsigned-byte 8))))
+    (ironclad:decrypt cipher ct out)
+    (let ((padlen (aref out (1- (length out)))))
+      (sb-ext:octets-to-string (subseq out 0 (- (length out) padlen))
+                               :external-format :utf-8))))
+
+(defun set-secret (scope scope-id name value)
+  "Create or replace an encrypted secret for a repo/org scope."
+  (postmodern:execute
+   "INSERT INTO cave_secrets (scope, scope_id, name, value_encrypted)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (scope, scope_id, name)
+    DO UPDATE SET value_encrypted = EXCLUDED.value_encrypted"
+   scope scope-id name (encrypt-secret value)))
+
+(defun list-secret-names (scope scope-id)
+  "Names only (never values) of a scope's secrets, for the Settings UI."
+  (postmodern:query
+   (:order-by (:select 'name :from 'cave-secrets
+               :where (:and (:= 'scope scope) (:= 'scope-id scope-id)))
+              'name)
+   :column))
+
+(defun delete-secret (scope scope-id name)
+  (postmodern:execute
+   (:delete-from 'cave-secrets
+    :where (:and (:= 'scope scope) (:= 'scope-id scope-id) (:= 'name name)))))
+
+(defun decrypted-secrets (scope scope-id)
+  "Alist (name . value) for a scope, values decrypted. Internal use only."
+  (loop for row in (postmodern:query
+                    (:select 'name 'value-encrypted :from 'cave-secrets
+                     :where (:and (:= 'scope scope) (:= 'scope-id scope-id)))
+                    :rows)
+        collect (cons (first row) (ignore-errors (decrypt-secret (second row))))))
+
+(defun secrets-for-repo (repo)
+  "Merged secrets for a repo's CI job: org secrets (when org-owned), overridden
+by repo secrets. Returns an alist (name . value)."
+  (let ((merged nil)
+        (org-id (getf repo :org-id)))
+    (when (and org-id (not (eq org-id :null)))
+      (dolist (kv (decrypted-secrets "org" org-id)) (push kv merged)))
+    (dolist (kv (decrypted-secrets "repo" (getf repo :id)))
+      (setf merged (cons kv (remove (car kv) merged :key #'car :test #'equal))))
+    merged))
+
+(defun secrets-env-string (alist)
+  "Format (name . value) pairs as newline-joined KEY=VALUE for the runner."
+  (with-output-to-string (s)
+    (loop for (name . value) in alist
+          when value do (format s "~A=~A~%" name value))))
+
 (defun close-pull-request (changeset-id)
   "Mark a pull request as closed (without merging)."
   (postmodern:execute

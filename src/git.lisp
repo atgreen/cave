@@ -727,6 +727,24 @@ Returns a markdown string, or NIL when there is nothing to report."
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
+(defun git-merge-base (repo-path a b)
+  "Return the merge-base commit of A and B, or NIL."
+  (multiple-value-bind (out _err code) (git-run repo-path "merge-base" a b)
+    (declare (ignore _err))
+    (when (zerop code)
+      (let ((s (string-trim '(#\Newline #\Space #\Return) out)))
+        (when (plusp (length s)) s)))))
+
+(defun git-range-diff (repo-path base1 head1 base2 head2)
+  "Return `git range-diff base1..head1 base2..head2` — the interdiff between two
+PR rounds. NIL on error or when a commit is missing."
+  (multiple-value-bind (out _err code)
+      (git-run repo-path "range-diff"
+               (format nil "~A..~A" base1 head1)
+               (format nil "~A..~A" base2 head2))
+    (declare (ignore _err))
+    (when (zerop code) out)))
+
 (defun parse-hunk-header (line)
   "Parse @@ -old-start,old-count +new-start,new-count @@ from a hunk header.
    Returns (VALUES old-start new-start)."

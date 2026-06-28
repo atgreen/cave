@@ -38,6 +38,7 @@ message FetchTaskResponse {
   string image = 10;
   repeated StepSpec steps = 11;
   string clone_url = 12;
+  string secrets_env = 13;  // newline-joined KEY=VALUE secrets for the job
 }
 
 message AppendTaskLogRequest {
@@ -75,6 +76,7 @@ message TaskEvent {
   repeated StepSpec steps = 10;
   string clone_url = 11;
   bool privileged = 12;
+  string secrets_env = 13;  // newline-joined KEY=VALUE secrets for the job
 }
 
 message StepSpec {

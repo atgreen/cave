@@ -760,6 +760,24 @@ empty system repo gets populated at startup."
 
 ;;; --- RUNNER subcommand ---
 
+(defun %string-replace-all (string old new)
+  "Replace every occurrence of OLD with NEW in STRING."
+  (if (or (null old) (zerop (length old)))
+      string
+      (with-output-to-string (out)
+        (loop with olen = (length old)
+              for start = 0 then (+ pos olen)
+              for pos = (search old string :start2 start)
+              do (write-string string out :start start :end (or pos (length string)))
+              while pos do (write-string new out)))))
+
+(defun %mask-secrets (text values)
+  "Replace each secret VALUE in TEXT with *** so secrets never reach the log UI."
+  (let ((result text))
+    (dolist (v values result)
+      (when (and v (>= (length v) 4))   ; avoid masking trivially short values
+        (setf result (%string-replace-all result v "***"))))))
+
 (defun make-runner-command ()
   (clingon:make-command
    :name "runner"
@@ -964,6 +982,18 @@ empty system repo gets populated at startup."
                   (steps (slot-value task 'cave::steps))
                   (privileged (handler-case (slot-value task 'cave::privileged)
                                 (error () nil)))
+                  ;; CI secrets for this job: newline-joined KEY=VALUE, injected
+                  ;; as container env and masked in streamed logs.
+                  (secrets-env (handler-case (slot-value task 'cave::secrets-env)
+                                 (error () "")))
+                  (secret-pairs (when (and secrets-env (plusp (length secrets-env)))
+                                  (remove-if #'uiop:emptyp
+                                             (uiop:split-string secrets-env
+                                                                :separator '(#\Newline)))))
+                  (secret-values (loop for p in secret-pairs
+                                       for eq = (position #\= p)
+                                       when (and eq (< (1+ eq) (length p)))
+                                       collect (subseq p (1+ eq))))
                   ;; Base dir for per-job working trees. In production this is a
                   ;; NATIVE (ext4/xfs) host volume mounted into the rootless
                   ;; cave-runner, NOT the container's fuse-overlayfs /tmp: an
@@ -1045,6 +1075,8 @@ empty system repo gets populated at startup."
                           ;; and register QEMU binfmt for foreign-arch testing.
                           ;; Off by default so untrusted repos can't escalate.
                           (when privileged (list "--privileged"))
+                          ;; Inject CI secrets as environment variables.
+                          (loop for p in secret-pairs append (list "-e" p))
                           (list
                            ;; :Z relabels the bind mount with a private SELinux
                            ;; label so the container can write to it on
@@ -1107,9 +1139,10 @@ empty system repo gets populated at startup."
                                                          (when (> len sent)
                                                            ;; Send only new content since last send (max 64KB per call)
                                                            (let* ((new-start sent)
-                                                                  (chunk (subseq content new-start
-                                                                                 (min len (+ new-start 65536)))))
-                                                             (setf sent (+ new-start (length chunk)))
+                                                                  (raw (subseq content new-start
+                                                                               (min len (+ new-start 65536))))
+                                                                  (chunk (%mask-secrets raw secret-values)))
+                                                             (setf sent (+ new-start (length raw)))
                                                              (ag-grpc:grpc-call channel
                                                               "/cave.runner.RunnerService/AppendStepLog"
                                                               (make-instance 'cave::append-step-log-request

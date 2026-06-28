@@ -512,7 +512,13 @@ number of commits re-verified."
                          (not (every (lambda (c) (char= c #\0)) new)))
                 (let ((open-pr (find-pull-request-by-branch (getf repo :id) branch)))
                   (when (and open-pr (not (equal (getf open-pr :head-commit) new)))
-                    (update-pull-request-head (getf open-pr :id) new)))))))
+                    (update-pull-request-head (getf open-pr :id) new)
+                    ;; Snapshot the new round for interdiff.
+                    (let ((fresh (find-pull-request-by-id (getf open-pr :id))))
+                      (when fresh
+                        (record-changeset-version
+                         (getf fresh :id) (getf fresh :version) new
+                         (git-merge-base disk-path (getf fresh :target-branch) new))))))))))
         ;; Verify any signed commits in the pushed range, cache results
         (handler-case (verify-pushed-commits owner repo (repo-disk-path owner repo-name) refs)
           (error (e)
@@ -1892,7 +1898,33 @@ leaking the viewer's IP or breaking HTTPS."
                            :mirrors (list-mirrors (getf repo :id))
                            :webhooks (list-webhooks (getf repo :id))
                            :automations (list-automation-definitions (getf repo :id))
-                           :runners (list-runners :scope "repo" :scope-id (getf repo :id)))))))
+                           :runners (list-runners :scope "repo" :scope-id (getf repo :id))
+                           :secrets (list-secret-names "repo" (getf repo :id)))))))
+
+(easy-routes:defroute repo-secret-add-submit
+    ("/:owner/:repo-name/settings/secrets" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-secret-add-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-secret-add-submit "Forbidden"))
+      (let ((name (string-trim " " (or (hunchentoot:post-parameter "name") "")))
+            (value (or (hunchentoot:post-parameter "value") "")))
+        (when (and (plusp (length name)) (plusp (length value)))
+          (set-secret "repo" (getf repo :id) name value)))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
+(easy-routes:defroute repo-secret-delete-submit
+    ("/:owner/:repo-name/settings/secrets/:name/delete" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-secret-delete-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-secret-delete-submit "Forbidden"))
+      (delete-secret "repo" (getf repo :id) name)
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -2379,6 +2411,7 @@ leaking the viewer's IP or breaking HTTPS."
                              :webhooks (list-webhooks (getf repo :id))
                              :automations (list-automation-definitions (getf repo :id))
                              :runners (list-runners :scope "repo" :scope-id (getf repo :id))
+                             :secrets (list-secret-names "repo" (getf repo :id))
                              :registration-token token))))))
 
 (easy-routes:defroute repo-delete-runner
@@ -2786,6 +2819,10 @@ leaking the viewer's IP or breaking HTTPS."
                                       :source-branch source
                                       :target-branch target
                                       :head-commit head-commit)))
+        ;; Snapshot round 1 for interdiff.
+        (when head-commit
+          (record-changeset-version (getf pr :id) 1 head-commit
+                                    (git-merge-base disk-path target head-commit)))
         ;; Schedule automations
         (schedule-automations (getf repo :id) "changeset_opened"
                               :commit-sha head-commit
@@ -2865,6 +2902,7 @@ leaking the viewer's IP or breaking HTTPS."
                              (or (eql (getf pr :author-id) *current-user-id*)
                                  (member-of-repo-p repo))))
              (code-owners (ignore-errors (pr-code-owners owner repo-name pr)))
+             (versions (list-changeset-versions (getf pr :id)))
              (comments-json (if comment-hts
                                 (com.inuoe.jzon:stringify comment-hts)
                                 "[]")))
@@ -2879,7 +2917,35 @@ leaking the viewer's IP or breaking HTTPS."
                          :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
                                                  owner repo-name num)
                          :checks checks :checks-rollup checks-rollup
-                         :can-close can-close :code-owners code-owners))))))
+                         :can-close can-close :code-owners code-owners
+                         :versions versions))))))
+
+(easy-routes:defroute pull-request-interdiff
+    ("/:owner/:repo-name/pulls/:number/interdiff" :method :get) (&get from to)
+  "Show the interdiff (git range-diff) between two rounds of a pull request."
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from pull-request-interdiff repo))
+    (let* ((num (parse-integer number :junk-allowed t))
+           (pr (when num (find-pull-request (getf repo :id) num)))
+           (vf (and pr from (find-changeset-version (getf pr :id)
+                                                    (parse-integer from :junk-allowed t))))
+           (vt (and pr to (find-changeset-version (getf pr :id)
+                                                  (parse-integer to :junk-allowed t)))))
+      (unless (and pr vf vt) (return-from pull-request-interdiff (not-found)))
+      (let* ((disk (repo-disk-path owner repo-name))
+             (text (git-range-diff disk
+                                   (or (let ((b (getf vf :base-commit)))
+                                         (unless (eq b :null) b))
+                                       (getf vf :head-commit))
+                                   (getf vf :head-commit)
+                                   (or (let ((b (getf vt :base-commit)))
+                                         (unless (eq b :null) b))
+                                       (getf vt :head-commit))
+                                   (getf vt :head-commit))))
+        (html-response
+         (view-interdiff :owner-name owner :repo repo :pr pr
+                         :from-version (getf vf :version) :to-version (getf vt :version)
+                         :text text))))))
 
 (easy-routes:defroute pull-request-checks-json
     ("/:owner/:repo-name/pulls/:number/checks.json" :method :get) ()

@@ -830,7 +830,34 @@ CREATE TABLE cave_reactions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(target_type, target_id, user_id, emoji)
 );
-CREATE INDEX idx_reactions_target ON cave_reactions (target_type, target_id);"))
+CREATE INDEX idx_reactions_target ON cave_reactions (target_type, target_id);")
+
+    (59 . "-- Round-based review: an immutable snapshot of each PR version's commit
+-- range, so reviews anchor to a round and consecutive rounds can be interdiffed.
+CREATE TABLE cave_changeset_versions (
+  id BIGSERIAL PRIMARY KEY,
+  changeset_id BIGINT NOT NULL REFERENCES cave_changesets(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  head_commit VARCHAR(64) NOT NULL,
+  base_commit VARCHAR(64),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(changeset_id, version)
+);
+CREATE INDEX idx_changeset_versions ON cave_changeset_versions (changeset_id, version);")
+
+    (60 . "-- CI secrets, scoped to a repo or org, encrypted at rest with the
+-- instance key. Values are never returned to the UI, only to a job's runner.
+CREATE TABLE cave_secrets (
+  id BIGSERIAL PRIMARY KEY,
+  scope VARCHAR(8) NOT NULL CHECK (scope IN ('repo', 'org')),
+  scope_id BIGINT NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  value_encrypted TEXT NOT NULL,
+  created_by BIGINT REFERENCES cave_users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(scope, scope_id, name)
+);
+CREATE INDEX idx_secrets_scope ON cave_secrets (scope, scope_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
