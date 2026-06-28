@@ -2123,6 +2123,24 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
    repo-id commit-sha verified
    (or scheme :null) (or fingerprint :null) (or signer-user-id :null)))
 
+(defun repos-with-signatures ()
+  "Plists (:id :name :owner) for every repo that has recorded commit signatures.
+OWNER is the org name, or the username for a personal repo. Used by `reverify`."
+  (postmodern:query
+   "SELECT DISTINCT r.id, r.name, COALESCE(o.name, u.username) AS owner
+      FROM cave_commit_signatures s
+      JOIN cave_repos r ON r.id = s.repo_id
+      LEFT JOIN cave_orgs o ON o.id = r.org_id
+      LEFT JOIN cave_users u ON u.id = r.owner_id"
+   :plists))
+
+(defun repo-recorded-shas (repo-id)
+  "Commit SHAs that already have a signature row for REPO-ID."
+  (postmodern:query
+   (:select 'commit-sha :from 'cave-commit-signatures
+    :where (:= 'repo-id repo-id))
+   :column))
+
 (defun find-commit-signature (repo-id commit-sha)
   (postmodern:query
    (:select '* :from 'cave-commit-signatures

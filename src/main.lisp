@@ -68,6 +68,21 @@
       (disconnect-db)
       (format t "~&~A migration~:P applied.~%" applied))))
 
+(defun make-reverify-command ()
+  (clingon:make-command
+   :name "reverify"
+   :description "Re-verify recorded commit signatures against current keys"
+   :options (list (make-config-option))
+   :handler #'handle-reverify))
+
+(defun handle-reverify (cmd)
+  (let ((config-path (clingon:getopt cmd :config)))
+    (load-config config-path)
+    (connect-db)
+    (let ((n (reverify-all-signatures)))
+      (disconnect-db)
+      (format t "~&Re-verified ~D commit~:P.~%" n))))
+
 (defun make-usher-migrate-users-command ()
   (clingon:make-command
    :name "usher-migrate-users"
@@ -1557,6 +1572,7 @@
                        (make-usher-migrate-users-command)
                        (make-serve-command)
                        (make-migrate-command)
+                       (make-reverify-command)
                        (make-git-shell-command)
                        (make-git-proxy-command)
                        (make-update-keys-command)

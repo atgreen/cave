@@ -335,29 +335,13 @@ keys), so isolation only avoids transient read-during-rebuild flakiness."
              :input in :output nil :error-output nil :ignore-error-status t)))
         dir))))
 
-(defun verify-pushed-commits (owner-name repo disk-path refs)
-  "For each ref update, verify newly-introduced commits' signatures and cache
-the results. Skips deletes and zero-sha boundaries."
-  (declare (ignore owner-name))
-  (let* ((shas (loop for r in refs
-                     when (and (not (zero-sha-p (getf r :new))))
-                       append
-                       (let ((range (if (zero-sha-p (getf r :old))
-                                        (list (getf r :new))
-                                        (multiple-value-bind (out _err exit)
-                                            (git-run disk-path "rev-list"
-                                                     (format nil "~A..~A"
-                                                             (getf r :old) (getf r :new)))
-                                          (declare (ignore _err))
-                                          (if (zerop exit)
-                                              (remove-if #'uiop:emptyp
-                                                         (uiop:split-string
-                                                          out :separator '(#\Newline)))
-                                              nil)))))
-                         range)))
-         (shas (remove-duplicates shas :test #'equal)))
-    (when shas
-      (let ((signers (ensure-allowed-signers-file))
+(defun verify-commits (repo disk-path shas)
+  "Verify the signatures of SHAS in REPO (DISK-PATH is its bare repo) and upsert
+the results into cave_commit_signatures. The SSH allowed-signers file and the
+GPG keyring are built once for the whole batch. Shared by the push hook and the
+`reverify` command."
+  (when shas
+    (let ((signers (ensure-allowed-signers-file))
             (key->user (let ((h (make-hash-table :test 'equal)))
                          (dolist (k (all-ssh-keys-with-user))
                            (setf (gethash (getf k :fingerprint) h) (getf k :user-id)))
@@ -394,7 +378,44 @@ the results. Skips deletes and zero-sha boundaries."
                                                :scheme "gpg" :fingerprint fp
                                                :signer-user-id (and fp (gethash fp gpgkey->user))))))))
           (when gpg-home
-            (uiop:delete-directory-tree gpg-home :validate t :if-does-not-exist :ignore)))))))
+            (uiop:delete-directory-tree gpg-home :validate t :if-does-not-exist :ignore))))))
+
+(defun verify-pushed-commits (owner-name repo disk-path refs)
+  "For each ref update, verify newly-introduced commits' signatures and cache
+the results. Skips deletes and zero-sha boundaries."
+  (declare (ignore owner-name))
+  (let* ((shas (loop for r in refs
+                     when (and (not (zero-sha-p (getf r :new))))
+                       append
+                       (let ((range (if (zero-sha-p (getf r :old))
+                                        (list (getf r :new))
+                                        (multiple-value-bind (out _err exit)
+                                            (git-run disk-path "rev-list"
+                                                     (format nil "~A..~A"
+                                                             (getf r :old) (getf r :new)))
+                                          (declare (ignore _err))
+                                          (if (zerop exit)
+                                              (remove-if #'uiop:emptyp
+                                                         (uiop:split-string
+                                                          out :separator '(#\Newline)))
+                                              nil)))))
+                         range)))
+         (shas (remove-duplicates shas :test #'equal)))
+    (verify-commits repo disk-path shas)))
+
+(defun reverify-all-signatures ()
+  "Re-run verification for every commit that already has a signature row,
+across all repos, using the currently registered SSH and GPG keys. Returns the
+number of commits re-verified."
+  (let ((n 0))
+    (dolist (r (repos-with-signatures))
+      (let ((disk-path (ignore-errors
+                        (repo-disk-path (getf r :owner) (getf r :name))))
+            (shas (repo-recorded-shas (getf r :id))))
+        (when (and disk-path (probe-file disk-path) shas)
+          (verify-commits (list :id (getf r :id)) disk-path shas)
+          (incf n (length shas)))))
+    n))
 
 (easy-routes:defroute internal-post-receive
     ("/-/internal/hook/post-receive/:owner/:repo-name" :method :post) ()
