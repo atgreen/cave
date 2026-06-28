@@ -2683,7 +2683,7 @@ function caveShowCommentForm(td) {
       (dolist (c codes) (:li c))))
     (:p (:a.btn :href "/-/settings/totp" "Done"))))
 
-(defun view-settings (&key ssh-keys api-tokens new-token ssh-error
+(defun view-settings (&key ssh-keys gpg-keys api-tokens new-token ssh-error gpg-error
                            generated-private-key generated-key-name
                            runners registration-token)
   "Render user settings page."
@@ -2780,6 +2780,36 @@ export CAVE_TOKEN=<your-api-token>
          (:label :for "public_key" "Public key")
          (:textarea :id "public_key" :name "public_key" :rows "4" :required t
                     :placeholder "ssh-ed25519 AAAA..."))
+        (:button.btn :type "submit" "Add key")))
+
+      (:section
+       (:h2 "GPG keys")
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
+        "Register a GPG public key so your GPG-signed commits show as Verified.")
+       (if gpg-keys
+           (:ul.data-list
+            (dolist (k gpg-keys)
+              (:li
+               (:strong (getf k :name))
+               (:code (getf k :key-id))
+               (:form :method "post" :style "display:inline"
+                :action (format nil "/-/settings/gpg-keys/~A/delete" (getf k :id))
+                (:button.btn.btn-sm :type "submit" "Remove")))))
+           (:p.empty "No GPG keys registered."))
+
+       (:h3 "Add GPG key")
+       (when gpg-error (:div.alert.alert-error gpg-error))
+       (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:.5rem"
+        "Export with " (:code "gpg --armor --export <keyid>") " and paste the block below.")
+       (:form :method "post" :action "/-/settings/gpg-keys"
+        (:div.field
+         (:label :for "gpg_key_name" "Name")
+         (:input :type "text" :id "gpg_key_name" :name "name" :required t
+                 :placeholder "e.g. signing key"))
+        (:div.field
+         (:label :for "gpg_public_key" "Public key")
+         (:textarea :id "gpg_public_key" :name "public_key" :rows "6" :required t
+                    :placeholder "-----BEGIN PGP PUBLIC KEY BLOCK-----"))
         (:button.btn :type "submit" "Add key")))
 
       ;; Runners

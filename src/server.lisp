@@ -309,6 +309,32 @@ Returns the path."
     (write-allowed-signers entries path)
     path))
 
+(defun make-gpg-keyring (tag)
+  "Materialize a throwaway GnuPG home holding every registered GPG public key,
+so the sandboxed `git verify-commit` (with GNUPGHOME pointed here) can validate
+GPG-signed commits. Returns the homedir path, or NIL when no GPG keys are
+registered. The caller must delete the directory when done.
+
+Lives under /tmp because the git sandbox grants /tmp --rw but not the data dir;
+TAG (the repo id) keys it per-push so concurrent pushes never share a homedir
+mid-rebuild. The keyring content is identical for every push (all registered
+keys), so isolation only avoids transient read-during-rebuild flakiness."
+  (let ((keys (all-gpg-keys-with-user)))
+    (when keys
+      (let ((dir (uiop:ensure-directory-pathname
+                  (merge-pathnames (format nil "cave-gpg-~A/" tag)
+                                   (uiop:temporary-directory)))))
+        (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)
+        (ensure-directories-exist dir)
+        ;; gpg refuses to use a homedir more permissive than 0700.
+        (uiop:run-program (list "chmod" "700" (namestring dir)) :ignore-error-status t)
+        (dolist (k keys)
+          (with-input-from-string (in (getf k :public-key))
+            (uiop:run-program
+             (list "gpg" "--homedir" (namestring dir) "--batch" "--import")
+             :input in :output nil :error-output nil :ignore-error-status t)))
+        dir))))
+
 (defun verify-pushed-commits (owner-name repo disk-path refs)
   "For each ref update, verify newly-introduced commits' signatures and cache
 the results. Skips deletes and zero-sha boundaries."
@@ -335,26 +361,40 @@ the results. Skips deletes and zero-sha boundaries."
             (key->user (let ((h (make-hash-table :test 'equal)))
                          (dolist (k (all-ssh-keys-with-user))
                            (setf (gethash (getf k :fingerprint) h) (getf k :user-id)))
-                         h)))
-        (dolist (sha shas)
-          (multiple-value-bind (signed scheme)
-              (git-commit-signature-info disk-path sha)
-            (cond
-              ((not signed)
-               (record-commit-signature :repo-id (getf repo :id)
-                                        :commit-sha sha :verified nil :scheme nil))
-              ((eq scheme :ssh)
-               (let* ((verified (git-verify-commit disk-path sha signers))
-                      (fp (git-commit-signature-key disk-path sha)))
-                 (record-commit-signature :repo-id (getf repo :id)
-                                          :commit-sha sha :verified verified
-                                          :scheme "ssh" :fingerprint fp
-                                          :signer-user-id (gethash fp key->user))))
-              (t
-               ;; GPG: we don't verify (no GPG key store yet) — record as unsigned
-               (record-commit-signature :repo-id (getf repo :id)
-                                        :commit-sha sha :verified nil
-                                        :scheme "gpg")))))))))
+                         h))
+            ;; GPG keyring + fingerprint→user map, built once for this push.
+            (gpg-home (make-gpg-keyring (getf repo :id)))
+            (gpgkey->user (let ((h (make-hash-table :test 'equal)))
+                            (dolist (k (all-gpg-keys-with-user))
+                              (setf (gethash (getf k :key-id) h) (getf k :user-id)))
+                            h)))
+        (unwind-protect
+             (dolist (sha shas)
+               (multiple-value-bind (signed scheme)
+                   (git-commit-signature-info disk-path sha)
+                 (cond
+                   ((not signed)
+                    (record-commit-signature :repo-id (getf repo :id)
+                                             :commit-sha sha :verified nil :scheme nil))
+                   ((eq scheme :ssh)
+                    (let* ((verified (git-verify-commit disk-path sha signers))
+                           (fp (git-commit-signature-key disk-path sha)))
+                      (record-commit-signature :repo-id (getf repo :id)
+                                               :commit-sha sha :verified verified
+                                               :scheme "ssh" :fingerprint fp
+                                               :signer-user-id (gethash fp key->user))))
+                   (t
+                    ;; GPG: verify against the registered-key keyring (NIL when none).
+                    (let* ((verified (and gpg-home
+                                          (git-verify-commit-gpg disk-path sha gpg-home)))
+                           (fp (and verified
+                                    (git-commit-gpg-fingerprint disk-path sha gpg-home))))
+                      (record-commit-signature :repo-id (getf repo :id)
+                                               :commit-sha sha :verified verified
+                                               :scheme "gpg" :fingerprint fp
+                                               :signer-user-id (and fp (gethash fp gpgkey->user))))))))
+          (when gpg-home
+            (uiop:delete-directory-tree gpg-home :validate t :if-does-not-exist :ignore)))))))
 
 (easy-routes:defroute internal-post-receive
     ("/-/internal/hook/post-receive/:owner/:repo-name" :method :post) ()
@@ -809,6 +849,7 @@ the results. Skips deletes and zero-sha boundaries."
   (when (require-login)
     (html-response
      (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                    :gpg-keys (list-gpg-keys *current-user-id*)
                     :api-tokens (list-api-tokens *current-user-id*)
                     :runners (list-runners :scope "user" :scope-id *current-user-id*)))))
 
@@ -831,8 +872,31 @@ the results. Skips deletes and zero-sha boundaries."
         (error (e)
           (html-response
            (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                          :gpg-keys (list-gpg-keys *current-user-id*)
                           :api-tokens (list-api-tokens *current-user-id*)
                           :ssh-error (format nil "~A" e))))))))
+
+(easy-routes:defroute add-gpg-key-submit ("/-/settings/gpg-keys" :method :post) ()
+  (when (require-login)
+    (let ((name (hunchentoot:post-parameter "name"))
+          (public-key (string-trim '(#\Newline #\Return #\Space)
+                                   (or (hunchentoot:post-parameter "public_key") ""))))
+      (handler-case
+          (progn (add-gpg-key *current-user-id* name public-key)
+                 (hunchentoot:redirect "/-/settings"))
+        (error (e)
+          (html-response
+           (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                          :gpg-keys (list-gpg-keys *current-user-id*)
+                          :api-tokens (list-api-tokens *current-user-id*)
+                          :gpg-error (format nil "~A" e))))))))
+
+(easy-routes:defroute delete-gpg-key-submit
+    ("/-/settings/gpg-keys/:key-id/delete" :method :post) ()
+  (when (require-login)
+    (let ((kid (parse-integer key-id :junk-allowed t)))
+      (when kid (delete-gpg-key kid *current-user-id*)))
+    (hunchentoot:redirect "/-/settings")))
 
 (easy-routes:defroute change-password-page ("/-/settings/password" :method :get) ()
   (when (require-sudo "/-/settings/password")
@@ -896,12 +960,14 @@ the results. Skips deletes and zero-sha boundaries."
             (sync-authorized-keys)
             (html-response
              (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                            :gpg-keys (list-gpg-keys *current-user-id*)
                             :api-tokens (list-api-tokens *current-user-id*)
                             :generated-private-key private-key
                             :generated-key-name name)))
         (error (e)
           (html-response
            (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                          :gpg-keys (list-gpg-keys *current-user-id*)
                           :api-tokens (list-api-tokens *current-user-id*)
                           :ssh-error (format nil "~A" e))))))))
 
@@ -921,6 +987,7 @@ the results. Skips deletes and zero-sha boundaries."
         (declare (ignore _record))
         (html-response
          (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                        :gpg-keys (list-gpg-keys *current-user-id*)
                         :api-tokens (list-api-tokens *current-user-id*)
                         :new-token token-string))))))
 
@@ -937,6 +1004,7 @@ the results. Skips deletes and zero-sha boundaries."
                                             :created-by-id *current-user-id*)))
       (html-response
        (view-settings :ssh-keys (list-ssh-keys *current-user-id*)
+                      :gpg-keys (list-gpg-keys *current-user-id*)
                       :api-tokens (list-api-tokens *current-user-id*)
                       :runners (list-runners :scope "user" :scope-id *current-user-id*)
                       :registration-token token)))))

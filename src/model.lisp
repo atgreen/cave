@@ -180,6 +180,67 @@
    (:delete-from 'cave-ssh-keys
     :where (:and (:= 'id key-id) (:= 'user-id user-id)))))
 
+;;; ========================== GPG KEYS ==========================
+
+(defun gpg-key-fingerprint (armored-public-key)
+  "Parse ARMORED-PUBLIC-KEY with gpg and return its primary-key fingerprint
+   (uppercase hex string), or NIL if it cannot be parsed. Uses a throwaway
+   homedir so root's keyring is never touched and nothing is imported."
+  (let ((dir (uiop:ensure-directory-pathname
+              (merge-pathnames (format nil "gpgparse-~A/" (get-universal-time))
+                               (data-dir "tmp")))))
+    (ensure-directories-exist dir)
+    (uiop:run-program (list "chmod" "700" (namestring dir)) :ignore-error-status t)
+    (unwind-protect
+         (multiple-value-bind (out _err exit)
+             (with-input-from-string (in armored-public-key)
+               (uiop:run-program
+                (list "gpg" "--homedir" (namestring dir) "--batch" "--with-colons"
+                      "--import-options" "show-only" "--import")
+                :input in :output '(:string) :error-output '(:string)
+                :ignore-error-status t))
+           (declare (ignore _err))
+           (when (zerop exit)
+             ;; First "fpr:" record is the primary key; fingerprint is field 10.
+             (loop for line in (uiop:split-string out :separator '(#\Newline))
+                   when (uiop:string-prefix-p "fpr:" line)
+                     do (return (nth 9 (uiop:split-string line :separator '(#\:)))))))
+      (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))
+
+(defun add-gpg-key (user-id name public-key)
+  "Add a GPG public key for a user. Returns the key plist.
+   Signals an error if the key cannot be parsed."
+  (let ((fpr (gpg-key-fingerprint public-key)))
+    (unless fpr
+      (error "Could not parse GPG public key. Paste an ASCII-armored public key ~
+              (the output of `gpg --armor --export <keyid>`)."))
+    (postmodern:query
+     (:insert-into 'cave-gpg-keys
+      :set 'user-id user-id
+           'name name
+           'public-key public-key
+           'key-id fpr
+      :returning '*)
+     :plist)))
+
+(defun list-gpg-keys (user-id)
+  "List GPG keys for a user."
+  (postmodern:query
+   (:select '* :from 'cave-gpg-keys :where (:= 'user-id user-id))
+   :plists))
+
+(defun find-gpg-key-by-id (key-id)
+  "Find a GPG key record by ID."
+  (postmodern:query
+   (:select '* :from 'cave-gpg-keys :where (:= 'id key-id))
+   :plist))
+
+(defun delete-gpg-key (key-id user-id)
+  "Delete a GPG key (must belong to user)."
+  (postmodern:execute
+   (:delete-from 'cave-gpg-keys
+    :where (:and (:= 'id key-id) (:= 'user-id user-id)))))
+
 ;;; ========================== API TOKENS ==========================
 
 (defun create-api-token (user-id name)
@@ -2034,6 +2095,18 @@ the trailing DAYS days for a single repo. Used to render the Pulse chart."
             (:as 'cave-ssh-keys.user-id 'user-id)
     :from 'cave-ssh-keys
     :inner-join 'cave-users :on (:= 'cave-ssh-keys.user-id 'cave-users.id))
+   :plists))
+
+(defun all-gpg-keys-with-user ()
+  "All registered GPG keys joined with the owning user's email + username.
+   Used to build the ephemeral keyring for git verify-commit and to map a
+   signing fingerprint back to its user."
+  (postmodern:query
+   (:select 'cave-users.email 'cave-users.username
+            'cave-gpg-keys.public-key 'cave-gpg-keys.key-id
+            (:as 'cave-gpg-keys.user-id 'user-id)
+    :from 'cave-gpg-keys
+    :inner-join 'cave-users :on (:= 'cave-gpg-keys.user-id 'cave-users.id))
    :plists))
 
 (defun record-commit-signature (&key repo-id commit-sha verified scheme fingerprint signer-user-id)

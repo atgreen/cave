@@ -33,7 +33,7 @@ RUN make cave-server cave
 
 FROM fedora:42
 
-RUN dnf install -y openssh-server git pgbouncer && dnf clean all && \
+RUN dnf install -y openssh-server git pgbouncer gnupg2 && dnf clean all && \
     useradd -m -s /bin/bash cave && \
     mkdir -p /etc/ssh && \
     ssh-keygen -A && \

@@ -119,15 +119,24 @@
 
 (defun git-commit-signature-info (repo-path commit-sha)
   "Return (values has-signature scheme) for COMMIT-SHA.
-SCHEME is :ssh, :gpg, or NIL when unsigned."
+SCHEME is :ssh, :gpg, or NIL when unsigned.
+
+Reads the raw commit object's `gpgsig` header (via cat-file) rather than git's
+%GG verification output: %GG only carries gpg's status text (e.g. \"Can't check
+signature\"), never the armor marker, and producing it needs a keyring the
+sandbox doesn't grant. The header is parsed before the blank line that ends the
+commit headers, so a signature block quoted in the commit *message* is ignored."
   (multiple-value-bind (out _err exit)
-      (git-run repo-path "log" "-1" "--format=%GS%n%GG" commit-sha)
+      (git-run repo-path "cat-file" "commit" commit-sha)
     (declare (ignore _err))
-    (cond
-      ((not (zerop exit)) (values nil nil))
-      ((search "BEGIN SSH SIGNATURE" out) (values t :ssh))
-      ((search "BEGIN PGP SIGNATURE" out) (values t :gpg))
-      (t (values nil nil)))))
+    (if (not (zerop exit))
+        (values nil nil)
+        (let* ((sep (search (format nil "~%~%") out))
+               (headers (if sep (subseq out 0 sep) out)))
+          (cond
+            ((search "BEGIN SSH SIGNATURE" headers) (values t :ssh))
+            ((search "BEGIN PGP SIGNATURE" headers) (values t :gpg))
+            (t (values nil nil)))))))
 
 (defun git-commit-signature-key (repo-path commit-sha)
   "Return the SSH key fingerprint that signed COMMIT-SHA, or NIL."
@@ -146,6 +155,46 @@ SCHEME is :ssh, :gpg, or NIL when unsigned."
                "verify-commit" commit-sha)
     (declare (ignore _out _err))
     (zerop exit)))
+
+(defun git-verify-commit-gpg (repo-path commit-sha gnupghome)
+  "Verify COMMIT-SHA's GPG signature against the keyring in GNUPGHOME.
+Returns T when gpg reports a good signature from a key in that keyring.
+
+GNUPGHOME reaches the gpg child by prefixing the (sandboxed) command with
+`env GNUPGHOME=...`; the sandbox grants /tmp --rw, so a keyring materialized
+there is readable, and gpg/env live under /usr (--rox). Setting it per-process
+keeps concurrent pushes from racing on a shared global env var."
+  (let ((cmd (sandbox-wrap repo-path
+                           (list "/usr/bin/env"
+                                 (format nil "GNUPGHOME=~A" (namestring gnupghome))
+                                 "git" "-c" "safe.directory=*"
+                                 "-c" "gpg.program=gpg"
+                                 "-C" (namestring repo-path)
+                                 "verify-commit" commit-sha))))
+    (multiple-value-bind (_out _err exit)
+        (uiop:run-program cmd :output '(:string :stripped t)
+                              :error-output '(:string :stripped t)
+                              :ignore-error-status t)
+      (declare (ignore _out _err))
+      (zerop exit))))
+
+(defun git-commit-gpg-fingerprint (repo-path commit-sha gnupghome)
+  "Return the primary-key fingerprint (%GP) of COMMIT-SHA's GPG signer, resolved
+against the keyring in GNUPGHOME, or NIL. Matches the key_id stored for a key."
+  (let ((cmd (sandbox-wrap repo-path
+                           (list "/usr/bin/env"
+                                 (format nil "GNUPGHOME=~A" (namestring gnupghome))
+                                 "git" "-c" "safe.directory=*"
+                                 "-C" (namestring repo-path)
+                                 "log" "-1" "--format=%GP" commit-sha))))
+    (multiple-value-bind (out _err exit)
+        (uiop:run-program cmd :output '(:string :stripped t)
+                              :error-output '(:string :stripped t)
+                              :ignore-error-status t)
+      (declare (ignore _err))
+      (when (zerop exit)
+        (let ((trimmed (string-trim '(#\Space #\Newline #\Tab) out)))
+          (when (plusp (length trimmed)) trimmed))))))
 
 (defun write-allowed-signers (entries path)
   "Write an OpenSSH allowed_signers file. ENTRIES is a list of (principal pubkey)."

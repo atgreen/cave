@@ -764,7 +764,20 @@ CREATE TABLE cave_ocicl_projects (
 CREATE TABLE cave_scheduler_runs (
   task_name VARCHAR(64) PRIMARY KEY,
   last_run_at TIMESTAMPTZ
-);"))
+);")
+
+    (55 . "-- Registered GPG public keys, used to verify GPG-signed commits.
+-- Mirrors cave_ssh_keys. key_id holds the primary-key fingerprint (upper hex).
+CREATE TABLE cave_gpg_keys (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  name VARCHAR(128) NOT NULL,
+  public_key TEXT NOT NULL,
+  key_id VARCHAR(64) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_gpg_keys_keyid ON cave_gpg_keys (key_id);
+CREATE INDEX idx_gpg_keys_user_id ON cave_gpg_keys (user_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
