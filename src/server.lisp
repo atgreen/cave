@@ -689,17 +689,11 @@ the results. Skips deletes and zero-sha boundaries."
       (hunchentoot:redirect "/-/auth/login")))
 
 (easy-routes:defroute logout ("/logout" :method :post) ()
+  ;; With the embedded provider the cave session IS the auth state — there is no
+  ;; separate IdP SSO session to end. Clear the session locally and go home.
   (delete-session (hunchentoot:cookie-in "cave_session"))
   (hunchentoot:set-cookie "cave_session" :value "" :path "/" :max-age 0)
-  ;; Redirect to Keycloak logout to end SSO session
-  (let ((issuer (config-value :oidc-issuer)))
-    (if issuer
-        (hunchentoot:redirect
-         (format nil "~A/protocol/openid-connect/logout?post_logout_redirect_uri=~A&client_id=~A"
-                 issuer
-                 (hunchentoot:url-encode (config-value :base-url))
-                 (config-value :oidc-client-id)))
-        (hunchentoot:redirect "/"))))
+  (hunchentoot:redirect (or (config-value :base-url) "/")))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Dashboard

@@ -2547,12 +2547,6 @@ function caveShowCommentForm(td) {
           (:td (if (getf u :is-active) "yes" "no"))
           (:td (or (getf u :approval-status) "approved"))
           (:td (princ-to-string (getf u :created-at)))))))
-     (:p :style "margin-top:1rem"
-      (:a.btn :href (let ((issuer (config-value :oidc-issuer "")))
-                      (if (search "/realms/" issuer)
-                          (format nil "~A/admin/" (subseq issuer 0 (search "/realms/" issuer)))
-                          "#"))
-       "Manage users in Keycloak"))
 
     (:section
      (:h2 "Runners")
@@ -2622,10 +2616,6 @@ function caveShowCommentForm(td) {
       (:h1 "Settings")
 
       (:section
-       (:h2 "Account")
-       (:p (:a :href "/-/settings/password" "Change password")))
-
-      (:section
        (:h2 "Theme")
        (:form :method "post" :action "/-/settings/theme"
         (:div :style "display:flex;gap:var(--sp-2);align-items:end"
@@ -2646,14 +2636,8 @@ function caveShowCommentForm(td) {
       (:section
        (:h2 "Security")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
-        "Manage your password and two-factor authentication.")
-       (:a.btn :href (let ((issuer (config-value :oidc-issuer "")))
-                       (if (search "/realms/" issuer)
-                           (format nil "~A/account/#/security/signingin"
-                                   (subseq issuer 0 (+ (search "/realms/" issuer)
-                                                       (length "/realms/cave"))))
-                           "#"))
-        "Manage password & 2FA"))
+        "Change your password. (Re-authentication is required.)")
+       (:a.btn :href "/-/settings/password" "Change password"))
 
       (:section
        (:h2 "CLI")
