@@ -44,15 +44,20 @@
           force-login))
 
 (defun exchange-oidc-code (code &optional code-verifier)
-  "Exchange an OIDC authorization code for tokens. Returns parsed JSON hash-table or NIL."
+  "Exchange an OIDC authorization code for tokens. Returns parsed JSON hash-table
+   or NIL. Authenticates with client_secret_basic."
   (handler-case
       (let ((response (dex:post
                        (format nil "~A/token"
                                (oidc-issuer-internal))
+                       :headers `(("Authorization"
+                                   . ,(format nil "Basic ~A"
+                                       (cl-base64:string-to-base64-string
+                                        (format nil "~A:~A"
+                                                (config-value :oidc-client-id)
+                                                (or (config-value :oidc-client-secret) ""))))))
                        :content `(("grant_type" . "authorization_code")
                                   ("code" . ,code)
-                                  ("client_id" . ,(config-value :oidc-client-id))
-                                  ("client_secret" . ,(config-value :oidc-client-secret))
                                   ("redirect_uri" . ,(oidc-redirect-uri))
                                   ,@(when code-verifier
                                       `(("code_verifier" . ,code-verifier)))))))
@@ -130,6 +135,88 @@
                 'approval-status approval
            :returning '*)
           :plist))))))
+
+;;; --- Embedded Usher OIDC provider ---
+;;; Cave hosts its own OpenID Provider (Usher) in-process, mounted at the root
+;;; of this host. Cave is both the provider and the relying party. The endpoints
+;;; below are reserved top-level paths on this host.
+
+(defparameter *usher-endpoint-prefixes*
+  '("/authorize" "/token" "/userinfo"
+    "/.well-known/openid-configuration" "/.well-known/jwks.json"
+    "/totp/" "/verify-email" "/reset-password" "/social/")
+  "Root paths served by the embedded Usher provider (reserved on this host).")
+
+(defvar *usher-dispatch* nil "Cached embedded-Usher dispatch table.")
+
+(defun usher-endpoint-p (uri)
+  "True when URI is served by the embedded Usher provider."
+  (some (lambda (p) (or (string= uri p) (uiop:string-prefix-p p uri)))
+        *usher-endpoint-prefixes*))
+
+(defun dispatch-usher (request)
+  "Run the embedded Usher dispatch table for REQUEST; return the response."
+  (loop for d in *usher-dispatch*
+        for handler = (funcall d request)
+        when handler do (return (funcall handler))))
+
+(defun usher-keys-path ()
+  (merge-pathnames "usher-keys.json"
+                   (uiop:ensure-directory-pathname (config-value :data-dir))))
+
+(defun ensure-usher-client ()
+  "Register (idempotently) the cave OAuth client in the embedded provider,
+   from cave's own OIDC config."
+  (let ((store (usher:provider-store usher::*provider*)))
+    (unless (usher:store-find-client store (config-value :oidc-client-id))
+      (usher:store-add-client
+       store (usher:make-client :id (config-value :oidc-client-id)
+                                :type :confidential
+                                :secret-hash (usher:hash-password
+                                              (or (config-value :oidc-client-secret) ""))
+                                :name "Cave"
+                                :redirect-uris (list (oidc-redirect-uri)))))))
+
+(defun init-usher ()
+  "Build and install the embedded Usher OIDC provider (idempotent). Migrates the
+   usher_* tables in cave's database, loads/persists signing keys, and registers
+   the cave client."
+  (setf usher:*config*
+        (usher:make-default-config
+         :issuer (config-value :oidc-issuer)
+         :tls '(:mode :none)
+         :totp-issuer "Cave"
+         :db (list :backend :postgres
+                   :host (config-value :db-host)
+                   :port (config-value :db-port)
+                   :name (config-value :db-name)
+                   :user (config-value :db-user)
+                   :password (config-value :db-password))))
+  (let ((keys (usher:ensure-signing-keys (usher-keys-path))))
+    (setf usher::*provider*
+          (usher:make-provider :store (usher::configured-store)
+                               :signing-keys keys)))
+  (ensure-usher-client)
+  (setf *usher-dispatch* (usher::make-dispatch-table))
+  (llog:info "Embedded Usher OIDC provider ready"
+             :issuer (config-value :oidc-issuer)))
+
+(defun usher-add-user (username password &key email display-name admin)
+  "Provision (or update) a local Usher user; optionally grant cave-admin.
+   For manually migrating accounts off Keycloak."
+  (let* ((store (usher:provider-store usher::*provider*))
+         (user (or (usher:store-find-user-by-username store username)
+                   (let ((u (usher:make-user :subject (usher:random-uuid)
+                                             :username username
+                                             :name (or display-name username)
+                                             :email email :email-verified (and email t)
+                                             :status "active"
+                                             :password-hash (usher:hash-password password))))
+                     (usher:store-add-user store u)
+                     u))))
+    (when admin (usher:add-user-group store user "cave-admin"))
+    (llog:info "Provisioned Usher user" :username username :admin (and admin t))
+    user))
 
 ;;; --- Sudo mode (step-up authentication) ---
 

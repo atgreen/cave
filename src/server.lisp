@@ -45,6 +45,11 @@
                    (setf (hunchentoot:header-out :location) target
                          (hunchentoot:return-code*) 301)
                    (return-from hunchentoot:acceptor-dispatch-request "")))
+               ;; Embedded Usher OIDC provider — serve its endpoints before
+               ;; cave's own routes.
+               (when (and *usher-dispatch* (usher-endpoint-p uri))
+                 (return-from hunchentoot:acceptor-dispatch-request
+                   (dispatch-usher request)))
                ;; Intercept git smart HTTP before easy-routes dispatch
                (when (and (search ".git/" uri)
                           (or (search "/info/refs" uri)

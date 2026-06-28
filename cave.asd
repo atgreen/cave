@@ -22,6 +22,8 @@
                 :cl-bcrypt
                 :cl-base64
                 :flexi-streams
+                ;; Embedded OpenID Provider
+                :usher
                 ;; HTTP client (for OIDC token exchange)
                 :dexador
                 ;; URI parsing (SSRF validation of remote URLs)

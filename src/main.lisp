@@ -123,6 +123,13 @@
                 e config-path)
         (uiop:quit 1)))
 
+    ;; Initialize the embedded Usher OIDC provider (migrates usher_* tables,
+    ;; loads/persists signing keys, registers the cave client).
+    (handler-case (init-usher)
+      (error (e)
+        (format *error-output* "~&Embedded Usher init failed: ~A~%" e)
+        (uiop:quit 1)))
+
     ;; Ensure cave org and cave-themes repo exist
     (unless (find-org-by-name "cave")
       (handler-case
