@@ -13,12 +13,15 @@ are not built yet.
 ### Implemented
 
 - **Git hosting** — SSH push/clone with per-repo access control, plus anonymous read-only clone over HTTPS; pushing a new branch prints an "open a pull request" link back in the terminal
-- **Pull requests** — graduated review model (approve, approve with concerns, request changes); enforced merge-eligibility rules: required approvals, blocking change-requests, unresolved concerns, and required status checks (failing/pending checks block the merge); squash merge
+- **Deploy keys** — per-repo SSH keys for CI/automation without a user account; read-only by default, opt-in write. Managed in repo Settings; `authorized_keys` is regenerated automatically so access takes effect immediately
+- **Protected branches** — per-repo rules (exact name, `prefix/*` glob, or `*`) that block direct pushes (forcing changes through pull requests; repo admins may override) and/or require signed commits. Enforced at push time in the pre-receive hook, before any check runs
+- **Pull requests** — graduated review model (approve, approve with concerns, request changes); enforced merge-eligibility rules: required approvals, blocking change-requests, unresolved concerns, and required status checks (failing/pending checks block the merge); squash merge. Draft PRs, close/reopen (UI/API/CLI), and auto-merge (arms the PR to merge automatically once review + checks pass). Review rounds are recorded per re-push, with interdiff (range-diff) links to see what changed between rounds. CODEOWNERS auto-requests and notifies owners of touched paths
 - **Live checks panel** — pull requests show a GitHub-style checks panel combining external commit statuses and cave workflow jobs: a rollup summary (N failing / M in progress / K successful) plus per-check rows with green/red icons and spinners for in-progress checks, polled live while anything runs (the merge box refreshes once they settle)
 - **Issues** — create, list, comment, close/reopen; labels with label filtering, assignees, and milestones (with open/closed issue counts)
 - **Notifications** — in-app notification feed with an unread-count bell, plus per-repo watching (members are subscribed automatically; anyone can Watch); new issues, comments, PR reviews, and merges notify members + watchers. Email notifications too
 - **Releases** — tag-backed releases with markdown body and per-asset uploads (≤ 100 MB each), download counts; release notes auto-generated from commits since the previous tag when the body is left blank
 - **Commit status API** — external CI reports pass/fail per context on a commit; feeds merge eligibility and the checks panel
+- **CI secrets** — per-repo encrypted secrets (AES-256-CBC at rest) injected into workflow jobs as environment variables and masked in job logs; managed in repo Settings
 - **Supply-chain security** — CycloneDX SBOM ingest on push, dependency graph, OSV advisory-feed matching, severity-ranked dependency alerts with durable suppressions, and Dependabot-style auto-fix pull requests (speculative build before opening)
 - **Commit signature verification** — SSH- and GPG-signed commits validated against keys registered in Settings (SSH keys / GPG keys), verified on push with a "Verified" badge in the commit list; a `cave-server reverify` command backfills verification for existing history after a key is added
 - **Git subprocess sandboxing** — `git` push/clone, repo metadata reads, and pre-receive checks run inside a Landlock filesystem sandbox (via [landrun](https://github.com/Zouuup/landrun)) scoped to the target repo: a compromised git or check process can touch only its own repo plus read-only system paths — not other repos or host secrets (kernel-enforced cross-repo isolation). Gated by `:sandbox-landlock` (on by default); degrades to a no-op where the kernel lacks Landlock
@@ -28,7 +31,8 @@ are not built yet.
 - **Repo mirroring** — push to and pull from GitHub/GitLab/Codeberg, with scheduled sync
 - **Webhooks** — HTTP callbacks on push, PR, and issue events
 - **Pulse tab** — per-repo activity chart, total views, unique visitors, top contributors, referring sites (member-only)
-- **Public landing** — anonymous visitors get a list of public repos and recent activity, no login required
+- **Public landing** — anonymous visitors get a landing page driven by the `cave-landing` system repo (edit content with a git push), with a list of public repos and recent activity, no login required
+- **Explore** — discover public repos with search, sort, and trending; browse people; facet by language with colored language dots (`/-/explore`)
 - **User themes** — built-in (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
 - **Built-in identity (Usher)** — cave embeds its own OpenID Provider (Usher) in-process, so no external IdP is required: OIDC login, self-registration gated by admin approval, email verification, password reset, self-service password change, and 2FA (TOTP) with backup codes. SSH and GPG key management live in Settings. cave still speaks plain OIDC, so it can also federate to an external provider (e.g. Keycloak)
 - **Email** — SMTP via mailpit (dev) or any external relay (Resend / Postmark / SES / Fastmail …) configured per deploy
@@ -40,7 +44,7 @@ are not built yet.
 ### Experimental
 
 - **Stacked changesets** — dependent PRs are tracked and displayed as a stack, but there is no atomic "land stack" yet; members still merge one PR at a time (see *Planned*)
-- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back. Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`). Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides, secret masking in logs, and stronger runner-side isolation — so prefer trusted repos
+- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back. Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
 - **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
 
 ### Planned
@@ -329,7 +333,11 @@ cave-server serve          Start the web server
 cave-server init           Initialize the database
 cave-server migrate        Run pending migrations
 cave-server runner         Start an automation runner agent
-cave-server run-checks     Run pre-receive checks (called by git hook)
+cave-server run-checks     Run pre-receive checks + enforce protected branches
+                           (called by git hook)
+cave-server reverify       Backfill commit signature verification over history
+cave-server backfill-languages
+                           Recompute and store each repo's primary language
 cave-server sync-mirrors   Sync repo mirrors (push mirrors after each push)
 cave-server sync-themes    Sync user themes from a cave-themes repo
 cave-server update-keys    Regenerate SSH authorized_keys
