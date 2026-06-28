@@ -434,6 +434,21 @@ number of commits re-verified."
           (incf n (length shas)))))
     n))
 
+(defun parse-push-options (header)
+  "Split the X-Cave-Push-Options header into a list of option strings."
+  (when (and header (plusp (length header)))
+    (remove "" (mapcar (lambda (s) (string-trim " " s))
+                       (uiop:split-string header :separator '(#\,)))
+            :test #'equal)))
+
+(defun workflow-files-at (disk-path ref)
+  "List .cave/workflows/* file paths present at REF (for `push -o verbose-ci`)."
+  (multiple-value-bind (out err code)
+      (git-run disk-path "ls-tree" "--name-only" ref ".cave/workflows/")
+    (declare (ignore err))
+    (when (zerop code)
+      (remove-if #'uiop:emptyp (uiop:split-string out :separator '(#\Newline))))))
+
 (easy-routes:defroute internal-post-receive
     ("/-/internal/hook/post-receive/:owner/:repo-name" :method :post) ()
   ;; Only accept from localhost
@@ -444,9 +459,15 @@ number of commits re-verified."
     (unless repo
       (setf (hunchentoot:return-code*) 404)
       (return-from internal-post-receive "Not found"))
-    (let ((actor (let ((a (hunchentoot:get-parameter "actor")))
-                   (when (and a (plusp (length a)))
-                     (parse-integer a :junk-allowed t)))))
+    (let* ((actor (let ((a (hunchentoot:get-parameter "actor")))
+                    (when (and a (plusp (length a)))
+                      (parse-integer a :junk-allowed t))))
+           (push-options (parse-push-options
+                          (hunchentoot:header-in* :x-cave-push-options)))
+           (skip-ci (and (intersection push-options '("skip-ci" "ci-skip")
+                                       :test #'equal) t))
+           (verbose-ci (and (intersection push-options '("verbose-ci" "ci-verbose")
+                                          :test #'equal) t)))
       ;; Parse refs from POST body (one per line: oldsha newsha refname)
       (let ((body (hunchentoot:raw-post-data :force-text t))
             (refs nil))
@@ -470,12 +491,14 @@ number of commits re-verified."
             (schedule-automations (getf repo :id) "post_receive"
                                   :commit-sha (getf r :new)
                                   :ref (getf r :ref))
-            (handler-case
-                (parse-and-schedule-workflows (getf repo :id) "post_receive"
-                                              :commit-sha (getf r :new)
-                                              :ref (getf r :ref))
-              (error (e)
-                (llog:error "Workflow scheduling failed" :error (princ-to-string e))))
+            ;; `git push -o skip-ci` suppresses workflow scheduling.
+            (unless skip-ci
+              (handler-case
+                  (parse-and-schedule-workflows (getf repo :id) "post_receive"
+                                                :commit-sha (getf r :new)
+                                                :ref (getf r :ref))
+                (error (e)
+                  (llog:error "Workflow scheduling failed" :error (princ-to-string e)))))
             ;; Keep any open PR's head_commit in sync with its source branch tip,
             ;; so merge checks (and approval staleness) evaluate the actual head.
             ;; The version bump in update-pull-request-head re-stales prior
@@ -530,9 +553,11 @@ number of commits re-verified."
                            ("repository" . (("owner" . ,owner)
                                             ("name" . ,repo-name))))))))
     ;; Push-time hint (the post-receive hook echoes this back to the pusher):
-    ;; suggest opening a PR for newly pushed feature branches that have none.
+    ;; suggest opening a PR for newly pushed feature branches that have none,
+    ;; plus `git push -o verbose-ci` CI feedback.
     (let ((default-branch (or (chamber-get-default-branch owner repo-name) "main"))
           (base (config-value :base-url ""))
+          (disk (repo-disk-path owner repo-name))
           (lines nil))
       (dolist (r refs)
         (let* ((ref (getf r :ref))
@@ -546,7 +571,17 @@ number of commits re-verified."
                      (not (find-pull-request-by-branch (getf repo :id) branch)))
             (push (format nil "Open a pull request for '~A': ~A/~A/~A/pulls/new"
                           branch base owner repo-name)
-                  lines))))
+                  lines))
+          ;; verbose-ci: report which workflows would run for this ref.
+          (when (and verbose-ci new (not (every (lambda (c) (char= c #\0)) new)))
+            (let ((wf (ignore-errors (workflow-files-at disk new))))
+              (cond
+                (skip-ci (push "CI: skipped (push -o skip-ci)" lines))
+                ((null wf) (push "CI: no .cave/workflows found for this commit" lines))
+                (t (push (format nil "CI: ~D workflow file~:P (~{~A~^, ~})"
+                                 (length wf)
+                                 (mapcar #'file-namestring wf))
+                         lines)))))))
       (if lines (format nil "~{~A~^~%~}" (nreverse lines)) ""))))
 
 (defun valid-runner-request-p ()
@@ -818,6 +853,56 @@ number of commits re-verified."
 ;; ----------------------------------------------------------------------------
 ;; Routes: Dashboard
 
+(defun issue-template (owner repo-name)
+  "Return the repo's issue template body (.cave/issue_template.md or a .github
+fallback) at the default branch, or NIL when there is none."
+  (ignore-errors
+   (let ((ref (or (chamber-get-default-branch owner repo-name) "main")))
+     (loop for path in '(".cave/issue_template.md" ".github/ISSUE_TEMPLATE.md"
+                         ".github/issue_template.md" "ISSUE_TEMPLATE.md")
+           for content = (ignore-errors (chamber-get-blob owner repo-name ref path))
+           when (and content (plusp (length content))) return content))))
+
+(defun pr-code-owners (owner repo-name pr)
+  "Distinct CODEOWNERS owner tokens (e.g. @alice) for the files a PR changes,
+read from .cave/CODEOWNERS (or a fallback) at the default branch. NIL if none."
+  (ignore-errors
+   (let ((text (let ((ref (or (chamber-get-default-branch owner repo-name) "main")))
+                 (loop for path in '(".cave/CODEOWNERS" "CODEOWNERS" ".github/CODEOWNERS")
+                       for c = (ignore-errors (chamber-get-blob owner repo-name ref path))
+                       when (and c (plusp (length c))) return c))))
+     (when text
+       (let* ((rules (parse-codeowners text))
+              (disk (repo-disk-path owner repo-name))
+              (files (multiple-value-bind (out e code)
+                         (git-run disk "diff" "--name-only"
+                                  (format nil "~A...~A"
+                                          (getf pr :target-branch)
+                                          (getf pr :source-branch)))
+                       (declare (ignore e))
+                       (when (zerop code)
+                         (remove-if #'uiop:emptyp
+                                    (uiop:split-string out :separator '(#\Newline))))))
+              (owners nil))
+         (dolist (f files)
+           (dolist (o (codeowners-for-path rules f))
+             (pushnew o owners :test #'equal)))
+         (nreverse owners))))))
+
+(defun notify-code-owners (owner repo-name repo pr code-owners)
+  "In-app notify the @username code owners of a new PR (skipping the author)."
+  (dolist (token code-owners)
+    (when (uiop:string-prefix-p "@" token)
+      (let ((user (ignore-errors (find-user-by-username (subseq token 1)))))
+        (when (and user (not (eql (getf user :id) (getf pr :author-id))))
+          (ignore-errors
+           (create-notification
+            :user-id (getf user :id) :repo-id (getf repo :id) :kind "pr_codeowner"
+            :subject (format nil "You're a code owner on PR #~A: ~A → ~A"
+                             (getf pr :number) (getf pr :source-branch)
+                             (getf pr :target-branch))
+            :link (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number)))))))))
+
 (defun compute-landing-hero ()
   "Render the landing hero from cave/cave-landing:index.md, or NIL when that repo
 or file is absent. Cached by the file's blob sha (reuses the README cache), so
@@ -857,6 +942,32 @@ editing the landing copy is a git push — no redeploy."
   "Compute and store REPO-ID's primary language (largest by bytes at REF)."
   (set-repo-primary-language
    repo-id (first (first (chamber-language-stats owner repo-name ref)))))
+
+(easy-routes:defroute camo-proxy ("/-/camo/:sig/:hex" :method :get) ()
+  "Signed image proxy: verify the HMAC, SSRF-guard the target, fetch, and stream
+it only if it's an image. Lets rendered markdown show external images without
+leaking the viewer's IP or breaking HTTPS."
+  (let ((url (ignore-errors
+              (sb-ext:octets-to-string (ironclad:hex-string-to-byte-array hex)
+                                       :external-format :utf-8))))
+    (unless (and url (string= sig (camo-sig url)))
+      (setf (hunchentoot:return-code*) 403)
+      (return-from camo-proxy "forbidden"))
+    (handler-case
+        (let ((safe (ensure-safe-remote-url url)))
+          (multiple-value-bind (body status headers)
+              (dex:get safe :force-binary t :connect-timeout 5 :read-timeout 10
+                       :max-redirects 0)
+            (let ((ct (and headers (gethash "content-type" headers))))
+              (unless (and (eql status 200) ct (uiop:string-prefix-p "image/" ct))
+                (setf (hunchentoot:return-code*) 415)
+                (return-from camo-proxy "not an image"))
+              (setf (hunchentoot:content-type*) ct)
+              (setf (hunchentoot:header-out :cache-control) "public, max-age=86400")
+              body)))
+      (error ()
+        (setf (hunchentoot:return-code*) 502)
+        "fetch failed"))))
 
 (easy-routes:defroute explore-page ("/-/explore" :method :get) ()
   (let* ((q (hunchentoot:get-parameter "q"))
@@ -2474,9 +2585,10 @@ editing the landing copy is a git push — no redeploy."
     (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
       (unless repo (return-from new-issue-page repo))
       ;; Allow ?body=… so the blob-view line menu can pre-fill a permalink
-      ;; reference; the title field stays empty for the user to write.
+      ;; reference; otherwise fall back to the repo's issue template if present.
       (html-response (view-new-issue :owner-name owner :repo repo
-                                     :body (hunchentoot:get-parameter "body"))))))
+                                     :body (or (hunchentoot:get-parameter "body")
+                                               (issue-template owner repo-name)))))))
 
 (easy-routes:defroute create-issue-submit
     ("/:owner/:repo-name/issues/new" :method :post) ()
@@ -2503,17 +2615,63 @@ editing the landing copy is a git push — no redeploy."
     (let* ((num (parse-integer number :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from issue-page (not-found)))
-      (let ((ms-id (getf issue :milestone-id)))
+      (let* ((ms-id (getf issue :milestone-id))
+             (comments (list-issue-comments (getf issue :id)))
+             (comment-reactions (let ((h (make-hash-table)))
+                                  (dolist (c comments)
+                                    (setf (gethash (getf c :id) h)
+                                          (list-reactions "issue_comment" (getf c :id)
+                                                          *current-user-id*)))
+                                  h)))
         (html-response
          (view-issue :owner-name owner :repo repo :issue issue
                      :author (find-user-by-id (getf issue :author-id))
-                     :comments (list-issue-comments (getf issue :id))
+                     :comments comments
                      :labels (issue-labels (getf issue :id))
                      :assignees (issue-assignees (getf issue :id))
                      :milestone (when (and ms-id (not (eq ms-id :null)))
                                   (find-milestone ms-id))
                      :milestones (list-milestones (getf repo :id) :state "open")
+                     :reactions (list-reactions "issue" (getf issue :id) *current-user-id*)
+                     :comment-reactions comment-reactions
+                     :pinned (let ((p (getf issue :pin-order))) (and p (not (eq p :null))))
                      :can-edit (and (member-of-repo-p repo) t)))))))
+
+(easy-routes:defroute issue-react-submit
+    ("/:owner/:repo-name/issues/:number/react" :method :post) ()
+  (when (require-login)
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from issue-react-submit (not-found)))
+      (let* ((num (parse-integer number :junk-allowed t))
+             (issue (when num (find-issue (getf repo :id) num)))
+             (emoji (hunchentoot:post-parameter "emoji"))
+             (comment-id (parse-integer (or (hunchentoot:post-parameter "comment_id") "")
+                                        :junk-allowed t)))
+        (unless issue (return-from issue-react-submit (not-found)))
+        ;; Only allow a small fixed set of reaction emoji.
+        (when (member emoji '("👍" "👎" "😄" "🎉" "😕" "❤️" "🚀" "👀") :test #'equal)
+          (if comment-id
+              (toggle-reaction "issue_comment" comment-id *current-user-id* emoji)
+              (toggle-reaction "issue" (getf issue :id) *current-user-id* emoji)))
+        (hunchentoot:redirect
+         (format nil "/~A/~A/issues/~A" owner repo-name num))))))
+
+(easy-routes:defroute issue-pin-submit
+    ("/:owner/:repo-name/issues/:number/pin" :method :post) ()
+  (when (require-login)
+    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+      (unless repo (return-from issue-pin-submit (not-found)))
+      (unless (member-of-repo-p repo)
+        (setf (hunchentoot:return-code*) 403)
+        (return-from issue-pin-submit "Forbidden"))
+      (let* ((num (parse-integer number :junk-allowed t))
+             (issue (when num (find-issue (getf repo :id) num))))
+        (unless issue (return-from issue-pin-submit (not-found)))
+        (if (let ((p (getf issue :pin-order))) (and p (not (eq p :null))))
+            (unpin-issue (getf issue :id))
+            (pin-issue (getf issue :id) (getf repo :id)))
+        (hunchentoot:redirect
+         (format nil "/~A/~A/issues/~A" owner repo-name num))))))
 
 (easy-routes:defroute issue-meta-submit
     ("/:owner/:repo-name/issues/:number/meta" :method :post) ()
@@ -2633,6 +2791,10 @@ editing the landing copy is a git push — no redeploy."
                               :commit-sha head-commit
                               :ref source
                               :triggered-by-id *current-user-id*)
+        ;; Notify CODEOWNERS of the changed files.
+        (ignore-errors
+         (notify-code-owners owner repo-name repo pr
+                             (pr-code-owners owner repo-name pr)))
         (hunchentoot:redirect
          (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number)))))))
 
@@ -2702,6 +2864,7 @@ editing the landing copy is a git push — no redeploy."
              (can-close (and *current-user-id*
                              (or (eql (getf pr :author-id) *current-user-id*)
                                  (member-of-repo-p repo))))
+             (code-owners (ignore-errors (pr-code-owners owner repo-name pr)))
              (comments-json (if comment-hts
                                 (com.inuoe.jzon:stringify comment-hts)
                                 "[]")))
@@ -2716,7 +2879,7 @@ editing the landing copy is a git push — no redeploy."
                          :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
                                                  owner repo-name num)
                          :checks checks :checks-rollup checks-rollup
-                         :can-close can-close))))))
+                         :can-close can-close :code-owners code-owners))))))
 
 (easy-routes:defroute pull-request-checks-json
     ("/:owner/:repo-name/pulls/:number/checks.json" :method :get) ()
@@ -2805,6 +2968,8 @@ editing the landing copy is a git push — no redeploy."
                    :entity-id (getf review :id))
         (notify-pr-review repo owner repo-name pr state)
         (fire-webhooks (getf repo :id) "pull_request" (make-webhook-payload "pull_request.reviewed" :owner owner :repo repo-name :number (getf pr :number) :state state))
+        ;; An approval may make an auto-merge-armed PR eligible.
+        (try-auto-merge owner repo-name (getf pr :id))
         (hunchentoot:redirect
          (format nil "/~A/~A/pulls/~A" owner repo-name number))))))
 
@@ -2827,8 +2992,8 @@ editing the landing copy is a git push — no redeploy."
 
 (easy-routes:defroute pull-request-state-submit
     ("/:owner/:repo-name/pulls/:number/state" :method :post) ()
-  "Close or reopen a pull request (no merge). Allowed for the PR author or any
-repo member."
+  "Change a pull request's state: close/reopen, draft/ready, or arm/disarm
+auto-merge. Allowed for the PR author or any repo member."
   (when (require-login)
     (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
@@ -2838,14 +3003,89 @@ repo member."
                   (member-of-repo-p repo))
         (setf (hunchentoot:return-code*) 403)
         (return-from pull-request-state-submit "Forbidden"))
-      (let ((action (hunchentoot:post-parameter "action")))
+      (let ((action (hunchentoot:post-parameter "action"))
+            (open-p (and (not (getf pr :is-merged)) (not (getf pr :is-closed)))))
         (cond
           ((and (equal action "close") (not (getf pr :is-merged)))
            (close-pull-request (getf pr :id)))
           ((and (equal action "reopen")
                 (not (getf pr :is-merged)) (getf pr :is-closed))
-           (reopen-pull-request (getf pr :id)))))
+           (reopen-pull-request (getf pr :id)))
+          ((and (equal action "draft") open-p)
+           (set-pull-request-draft (getf pr :id) t))
+          ((and (equal action "ready") open-p)
+           (set-pull-request-draft (getf pr :id) nil))
+          ((and (equal action "auto-merge") open-p (not (getf pr :is-draft)))
+           (let ((s (hunchentoot:post-parameter "strategy")))
+             (set-pull-request-auto-merge
+              (getf pr :id)
+              (cond ((equal s "squash") "squash")
+                    ((equal s "fast-forward-only") "fast-forward-only")
+                    (t "merge"))
+              *current-user-id*)
+             ;; Maybe it's already eligible — merge right away.
+             (try-auto-merge owner repo-name (getf pr :id))))
+          ((equal action "disable-auto-merge")
+           (set-pull-request-auto-merge (getf pr :id) nil *current-user-id*))))
       (hunchentoot:redirect (format nil "/~A/~A/pulls/~A" owner repo-name num)))))
+
+(defun perform-pr-merge (owner repo-name pr repo strategy actor-id)
+  "Run the git merge for PR with STRATEGY, verify the target advanced, mark the
+PR merged, auto-delete the source branch if configured, and fire post-merge side
+effects. Returns (values OK MESSAGE). Caller is responsible for permission and
+eligibility checks."
+  (let* ((source (getf pr :source-branch))
+         (target (getf pr :target-branch))
+         (strategy (cond ((equal strategy "squash") "squash")
+                         ((equal strategy "fast-forward-only") "fast-forward-only")
+                         (t "merge")))
+         (message (format nil "Merge pull request #~A from ~A into ~A"
+                          (getf pr :number) source target))
+         (disk (repo-disk-path owner repo-name))
+         (already-merged (zerop (nth-value 2 (git-run disk "merge-base" "--is-ancestor"
+                                                      source target))))
+         (before (nth-value 0 (git-run disk "rev-parse" target)))
+         (merged (or already-merged
+                     (chamber-merge-branch owner repo-name source target
+                                           :strategy strategy :message message)))
+         (after (nth-value 0 (git-run disk "rev-parse" target))))
+    (cond
+      ((not merged)
+       (values nil (if (equal strategy "fast-forward-only")
+                       "Merge failed — not a fast-forward (the target branch has commits the source doesn't)."
+                       "Merge failed — conflicts?")))
+      ((and (not already-merged) before after (string= before after))
+       (values nil "Merge reported success but the target branch did not advance — aborted (storage may be degraded). The source branch was left intact."))
+      (t
+       (merge-pull-request (getf pr :id))
+       (when (getf repo :auto-delete-branch)
+         (chamber-delete-branch owner repo-name source))
+       (log-event "pr.merged" :user-id actor-id :repo-id (getf repo :id)
+                  :entity-type "pull_request" :entity-id (getf pr :id))
+       (notify-pr-merged repo owner repo-name pr)
+       (schedule-automations (getf repo :id) "changeset_merged"
+                             :commit-sha (getf pr :head-commit)
+                             :ref source :triggered-by-id actor-id)
+       (fire-webhooks (getf repo :id) "pull_request"
+                      (make-webhook-payload "pull_request.merged"
+                                            :owner owner :repo repo-name
+                                            :number (getf pr :number)))
+       (values t "merged")))))
+
+(defun try-auto-merge (owner repo-name pr-id)
+  "If PR-ID has auto-merge armed and is now eligible, merge it. Safe to call from
+any trigger (review submitted, status reported); a no-op otherwise."
+  (ignore-errors
+   (let* ((repo (find-repo owner repo-name))
+          (pr (and repo (find-pull-request-by-id pr-id)))
+          (strategy (and pr (getf pr :auto-merge-strategy))))
+     (when (and pr strategy (not (eq strategy :null))
+                (not (getf pr :is-merged)) (not (getf pr :is-closed))
+                (not (getf pr :is-draft))
+                (pull-request-mergeable-p (compute-merge-eligibility pr repo)))
+       (let ((by (getf pr :auto-merge-by)))
+         (perform-pr-merge owner repo-name pr repo strategy
+                           (unless (eq by :null) by)))))))
 
 (easy-routes:defroute merge-pull-request-submit
     ("/:owner/:repo-name/pulls/:number/merge" :method :post) ()
@@ -2909,63 +3149,13 @@ repo member."
                                        (loop for r in eligibility
                                              unless (getf r :pass)
                                              collect (getf r :description))))))
-      ;; Perform the actual git merge, then VERIFY the target branch actually
-      ;; advanced before marking merged / auto-deleting the source branch.
-      ;; chamber-merge-branch can report success without moving the target (e.g.
-      ;; when chamber storage is degraded); without this guard that silently
-      ;; marks the PR merged and deletes the branch while main never changes.
-      (let* ((source (getf pr :source-branch))
-             (target (getf pr :target-branch))
-             ;; Normalize the requested strategy to a known value; default to a
-             ;; --no-ff merge commit (GitHub/Gitea convention) so every PR leaves
-             ;; an auditable merge point in the target branch's history.
-             (raw-strategy (hunchentoot:post-parameter "strategy"))
-             (strategy (cond ((equal raw-strategy "squash") "squash")
-                             ((equal raw-strategy "fast-forward-only") "fast-forward-only")
-                             (t "merge")))
-             (message (format nil "Merge pull request #~A from ~A into ~A"
-                              (getf pr :number) source target))
-             (disk (repo-disk-path owner repo-name))
-             ;; If SOURCE is already an ancestor of TARGET there is nothing to
-             ;; merge — its commits are already in TARGET. git would report
-             ;; "Already up to date" and the ref legitimately would not move, so
-             ;; treat this as a successful no-op merge (mark the PR merged)
-             ;; rather than running a merge that trips the did-not-advance guard.
-             (already-merged (zerop (nth-value 2
-                                     (git-run disk "merge-base" "--is-ancestor"
-                                              source target))))
-             (before (nth-value 0 (git-run disk "rev-parse" target)))
-             (merged (or already-merged
-                         (chamber-merge-branch owner repo-name source target
-                                               :strategy strategy :message message)))
-             (after (nth-value 0 (git-run disk "rev-parse" target))))
-        (unless merged
-          (setf (hunchentoot:return-code*) 409)
-          (return-from merge-pull-request-submit
-            (if (equal strategy "fast-forward-only")
-                "Merge failed — not a fast-forward (the target branch has commits the source doesn't)."
-                "Merge failed — conflicts?")))
-        ;; Only a *real* merge that ran but left the ref unmoved is an error.
-        ;; An already-merged no-op is expected, so exempt it from the guard.
-        (when (and (not already-merged) before after (string= before after))
-          (setf (hunchentoot:return-code*) 409)
-          (return-from merge-pull-request-submit
-            "Merge reported success but the target branch did not advance — aborted (storage may be degraded). The source branch was left intact."))
-        (merge-pull-request (getf pr :id))
-        ;; Auto-delete source branch
-        (when (getf repo :auto-delete-branch)
-          (chamber-delete-branch owner repo-name (getf pr :source-branch))))
-      (log-event "pr.merged"
-                 :user-id *current-user-id*
-                 :repo-id (getf repo :id)
-                 :entity-type "pull_request"
-                 :entity-id (getf pr :id))
-      (notify-pr-merged repo owner repo-name pr)
-      (schedule-automations (getf repo :id) "changeset_merged"
-                            :commit-sha (getf pr :head-commit)
-                            :ref (getf pr :source-branch)
-                            :triggered-by-id *current-user-id*)
-      (fire-webhooks (getf repo :id) "pull_request" (make-webhook-payload "pull_request.merged" :owner owner :repo repo-name :number (getf pr :number)))
+      ;; Perform the merge via the shared helper (also used by auto-merge).
+      (let ((strategy (hunchentoot:post-parameter "strategy")))
+        (multiple-value-bind (ok msg)
+            (perform-pr-merge owner repo-name pr repo strategy *current-user-id*)
+          (unless ok
+            (setf (hunchentoot:return-code*) 409)
+            (return-from merge-pull-request-submit msg))))
       (hunchentoot:redirect
        (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
 
@@ -3259,13 +3449,13 @@ repo member."
         (unless (member state '("approve" "approve_with_concerns" "request_changes" "comment")
                         :test #'equal)
           (return-from api-submit-review (json-error "invalid state")))
-        (json-response
-         (create-review :changeset-id (getf pr :id)
-                        :reviewer-id *current-user-id*
-                        :state state
-                        :body (if (eq body 'null) nil body)
-                        :changeset-version (getf pr :version))
-         :status 201)))))
+        (let ((review (create-review :changeset-id (getf pr :id)
+                                     :reviewer-id *current-user-id*
+                                     :state state
+                                     :body (if (eq body 'null) nil body)
+                                     :changeset-version (getf pr :version))))
+          (try-auto-merge owner repo-name (getf pr :id))
+          (json-response review :status 201))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Commit Statuses
@@ -3290,14 +3480,17 @@ repo member."
            (target-url (gethash "target_url" json)))
       (unless (member state '("pending" "success" "failure" "error") :test #'equal)
         (return-from api-set-commit-status (json-error "invalid state")))
-      (json-response
-       (set-commit-status :repo-id (getf repo :id)
-                          :commit-sha sha
-                          :state state
-                          :context (or context "default")
-                          :description (when (and description (not (eq description 'null))) description)
-                          :target-url (when (and target-url (not (eq target-url 'null))) target-url))
-       :status 201))))
+      (let ((status (set-commit-status
+                     :repo-id (getf repo :id)
+                     :commit-sha sha
+                     :state state
+                     :context (or context "default")
+                     :description (when (and description (not (eq description 'null))) description)
+                     :target-url (when (and target-url (not (eq target-url 'null))) target-url))))
+        ;; A passing check may complete an auto-merge-armed PR at this head.
+        (dolist (p (pull-requests-armed-for-head (getf repo :id) sha))
+          (try-auto-merge owner repo-name (getf p :id)))
+        (json-response status :status 201)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Dependencies & security alerts
@@ -3456,7 +3649,7 @@ repo member."
   ;; Post-receive hook (calls back into running Cave server)
   (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
     (with-open-file (out hook-path :direction :output :if-exists :supersede)
-      (format out "#!/bin/bash~%# Forward ref updates to Cave; relay any push-time hints to the pusher.~%hint=$(curl -sf -X POST --data-binary @- \"http://localhost:~A/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\" 2>/dev/null)~%[ -n \"$hint\" ] && echo \"$hint\" >&2~%"
+      (format out "#!/bin/bash~%# Forward ref updates to Cave; relay push-time hints (and -o push options) to the pusher.~%opts=\"\"~%if [ -n \"$GIT_PUSH_OPTION_COUNT\" ]; then i=0; while [ \"$i\" -lt \"$GIT_PUSH_OPTION_COUNT\" ]; do eval \"v=\\$GIT_PUSH_OPTION_$i\"; opts=\"$opts${opts:+,}$v\"; i=$((i+1)); done; fi~%hint=$(curl -sf -X POST --data-binary @- -H \"X-Cave-Push-Options: $opts\" \"http://localhost:~A/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\" 2>/dev/null)~%[ -n \"$hint\" ] && echo \"$hint\" >&2~%"
               (config-value :http-port 8080) owner repo-name)
       (format out "cave-server sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
               owner repo-name)

@@ -1130,7 +1130,9 @@ Otherwise checks for null bytes."
          (rewritten (if raw-base-url
                         (rewrite-relative-img-src raw-html raw-base-url)
                         raw-html)))
-    (sanitize-html:sanitize rewritten)))
+    ;; Proxy external images through camo so rendering never leaks the viewer's
+    ;; IP to a third-party host (and mixed-content over HTTPS is fixed).
+    (camoify-img-src (sanitize-html:sanitize rewritten))))
 
 (defun rewrite-relative-img-src (html base-url)
   "Rewrite relative src= in <img> tags to use BASE-URL prefix."
@@ -1162,6 +1164,75 @@ Otherwise checks for null bytes."
                                             new-url
                                             (subseq result url-end)))
                   (setf pos (+ url-start (length new-url) 1))))))))))
+
+(defun camo-sig (image-url)
+  "HMAC-SHA256 hex of IMAGE-URL keyed by the instance secret."
+  (let ((mac (ironclad:make-mac :hmac
+              (sb-ext:string-to-octets (or (config-value :secret-key) "")
+                                       :external-format :utf-8)
+              :sha256)))
+    (ironclad:update-mac mac (sb-ext:string-to-octets image-url :external-format :utf-8))
+    (ironclad:byte-array-to-hex-string (ironclad:produce-mac mac))))
+
+(defun camo-url (image-url)
+  "Signed local proxy URL for an external IMAGE-URL — hides the viewer's IP from
+the remote host and fixes mixed-content (the proxy serves over the site's TLS)."
+  (format nil "/-/camo/~A/~A"
+          (camo-sig image-url)
+          (ironclad:byte-array-to-hex-string
+           (sb-ext:string-to-octets image-url :external-format :utf-8))))
+
+(defun camoify-img-src (html)
+  "Rewrite external <img src=\"http(s)://…\"> in HTML through the camo proxy."
+  (let ((result html) (pos 0))
+    (loop
+      (let ((img-pos (search "<img " result :start2 pos)))
+        (unless img-pos (return result))
+        (let ((src-pos (search "src=\"" result :start2 img-pos)))
+          (unless src-pos (return result))
+          (let* ((url-start (+ src-pos 5))
+                 (url-end (position #\" result :start url-start)))
+            (unless url-end (return result))
+            (let ((url (subseq result url-start url-end)))
+              (if (or (uiop:string-prefix-p "http://" url)
+                      (uiop:string-prefix-p "https://" url))
+                  (let ((new-url (camo-url url)))
+                    (setf result (concatenate 'string
+                                              (subseq result 0 url-start)
+                                              new-url
+                                              (subseq result url-end)))
+                    (setf pos (+ url-start (length new-url) 1)))
+                  (setf pos (1+ url-end))))))))))
+
+(defun parse-codeowners (text)
+  "Parse CODEOWNERS TEXT into a list of (pattern . owner-tokens), in file order."
+  (loop for line in (uiop:split-string text :separator '(#\Newline))
+        for trimmed = (string-trim '(#\Space #\Tab #\Return) line)
+        unless (or (uiop:emptyp trimmed) (uiop:string-prefix-p "#" trimmed))
+          collect (let ((parts (remove "" (uiop:split-string trimmed
+                                                             :separator '(#\Space #\Tab))
+                                       :test #'equal)))
+                    (cons (first parts) (rest parts)))))
+
+(defun codeowners-match-p (pattern path)
+  "A practical subset of gitignore-style matching for a CODEOWNERS PATTERN."
+  (let ((p pattern))
+    (cond
+      ((string= p "*") t)
+      ((uiop:string-prefix-p "/" p) (codeowners-match-p (subseq p 1) path))
+      ((uiop:string-suffix-p "/" p) (uiop:string-prefix-p p path))
+      ((uiop:string-prefix-p "*." p) (uiop:string-suffix-p (subseq p 1) path))
+      ((find #\/ p) (or (string= p path)
+                        (uiop:string-prefix-p (concatenate 'string p "/") path)))
+      (t (or (string= p (file-namestring path))
+             (uiop:string-suffix-p (concatenate 'string "/" p) path))))))
+
+(defun codeowners-for-path (rules path)
+  "Owner tokens for PATH per RULES (last matching rule wins, GitHub semantics)."
+  (let ((owners nil))
+    (dolist (rule rules owners)
+      (when (codeowners-match-p (car rule) path)
+        (setf owners (cdr rule))))))
 
 (defun file-language (filename)
   "Map a filename to a Monaco editor language identifier."

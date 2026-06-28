@@ -15,11 +15,39 @@
                  (flexi-streams:string-to-octets clean :external-format :utf-8)))))
     (format nil "https://gravatar.com/avatar/~A?d=identicon&s=~A" hash size)))
 
+(defun identicon-data-uri (seed)
+  "Deterministic GitHub-style identicon (5x5 mirrored grid) for SEED, as an
+inline SVG data URI. Self-contained — no external avatar service, so it never
+leaks the viewer's IP the way a remote Gravatar fetch would."
+  (let* ((bytes (ironclad:digest-sequence
+                 :sha256 (sb-ext:string-to-octets (or seed "anon") :external-format :utf-8)))
+         (color (format nil "#~2,'0x~2,'0x~2,'0x"
+                        ;; Bias toward mid-range so it's visible on light/dark.
+                        (+ 64 (mod (aref bytes 0) 160))
+                        (+ 64 (mod (aref bytes 1) 160))
+                        (+ 64 (mod (aref bytes 2) 160))))
+         (cells nil))
+    (loop for col from 0 below 3 do
+      (loop for row from 0 below 5 do
+        (when (evenp (aref bytes (+ 3 (+ (* col 5) row))))
+          (dolist (c (if (= col 2) (list 2) (list col (- 4 col))))
+            (push (cons c row) cells)))))
+    (let ((svg (with-output-to-string (s)
+                 (format s "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 5'>")
+                 (format s "<rect width='5' height='5' fill='#f0f0f0'/>")
+                 (dolist (cell cells)
+                   (format s "<rect x='~A' y='~A' width='1' height='1' fill='~A'/>"
+                           (car cell) (cdr cell) color))
+                 (format s "</svg>"))))
+      (format nil "data:image/svg+xml;base64,~A"
+              (cl-base64:string-to-base64-string svg)))))
+
 (defun render-avatar (email &key (size 20) (class "avatar"))
-  "Render a Gravatar img element."
+  "Render a deterministic identicon avatar for EMAIL."
   (spinneret:with-html
-    (:img :src (gravatar-url email :size size)
-     :class class :width (princ-to-string size) :height (princ-to-string size))))
+    (:img :src (identicon-data-uri email)
+     :class class :width (princ-to-string size) :height (princ-to-string size)
+     :style "border-radius:3px;vertical-align:middle")))
 
 (defun effective-theme ()
   "The active theme name.  Defaults to \"light\" unless the logged-in user has
@@ -1375,6 +1403,8 @@ document.addEventListener('DOMContentLoaded', function() {
              (:li
               (:a :href (format nil "/~A/~A/issues/~A" org-name repo-name
                                  (getf iss :number))
+               (let ((p (getf iss :pin-order)))
+                 (when (and p (not (eq p :null))) "📌 "))
                (:span.issue-number (format nil "#~A" (getf iss :number)))
                (format nil " ~A" (getf iss :title)))
               (dolist (l (and labels-by-issue (gethash (getf iss :id) labels-by-issue)))
@@ -1487,8 +1517,30 @@ document.addEventListener('DOMContentLoaded', function() {
         (:textarea :id "body" :name "body" :rows "12" (when body (princ body))))
        (:button.btn.btn-primary :type "submit" "Create issue")))))
 
+(defun render-reactions (reactions owner-name repo-name issue-num &key comment-id)
+  "Render a row of toggle reaction buttons (the 8 standard emoji), highlighting
+the viewer's own and showing counts. Logged-in only; posts to the react route."
+  (when *current-user*
+    (let ((by-emoji (let ((h (make-hash-table :test 'equal)))
+                      (dolist (r reactions) (setf (gethash (getf r :emoji) h) r))
+                      h)))
+      (spinneret:with-html
+        (:form :method "post"
+         :style "display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.4rem"
+         :action (format nil "/~A/~A/issues/~A/react" owner-name repo-name issue-num)
+         (when comment-id
+           (:input :type "hidden" :name "comment_id" :value (princ-to-string comment-id)))
+         (dolist (e '("👍" "👎" "😄" "🎉" "❤️" "🚀" "😕" "👀"))
+           (let* ((r (gethash e by-emoji))
+                  (n (and r (getf r :count)))
+                  (mine (and r (getf r :mine))))
+             (:button.btn.btn-sm :type "submit" :name "emoji" :value e
+              :style (format nil "padding:.05rem .4rem;font-size:.85rem~@[;border-color:var(--primary,#7c9a5e);color:var(--primary,#7c9a5e)~]" mine)
+              (format nil "~A~@[ ~A~]" e (and n (plusp n) n))))))))))
+
 (defun view-issue (&key owner-name repo issue author comments
-                        labels assignees milestone milestones can-edit)
+                        labels assignees milestone milestones can-edit
+                        reactions comment-reactions pinned)
   "Render an issue detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -1496,8 +1548,12 @@ document.addEventListener('DOMContentLoaded', function() {
     (page (:title (format nil "#~A ~A — Cave" issue-num (getf issue :title)))
       (render-repo-tabs org-name repo-name :issues :repo repo)
       (:div.issue-header
-       (:h1 (format nil "#~A ~A" issue-num (getf issue :title)))
-       (:span.badge (getf issue :status)))
+       (:h1 (format nil "~@[📌 ~]#~A ~A" pinned issue-num (getf issue :title)))
+       (:span.badge (getf issue :status))
+       (when can-edit
+         (:form :method "post" :style "display:inline;margin-left:.5rem"
+          :action (format nil "/~A/~A/issues/~A/pin" org-name repo-name issue-num)
+          (:button.btn.btn-sm :type "submit" (if pinned "Unpin" "Pin")))))
       (:div.issue-meta
        (render-avatar (getf author :email) :size 16)
        (format nil " Opened by ~A" (getf author :username)))
@@ -1542,6 +1598,7 @@ document.addEventListener('DOMContentLoaded', function() {
       (let ((ib (getf issue :body)))
         (when (and ib (not (eq ib :null)))
           (:div.issue-body (:raw (render-markdown ib)))))
+      (render-reactions reactions org-name repo-name issue-num)
 
       ;; Comments
       (:section
@@ -1553,7 +1610,11 @@ document.addEventListener('DOMContentLoaded', function() {
                (render-avatar (getf c :email) :size 16)
                (:strong (getf c :username))
                (:span.comment-date (princ-to-string (getf c :created-at))))
-              (:div.comment-body (:raw (render-markdown (getf c :body))))))
+              (:div.comment-body (:raw (render-markdown (getf c :body))))
+              (render-reactions (and comment-reactions
+                                     (gethash (getf c :id) comment-reactions))
+                                org-name repo-name issue-num
+                                :comment-id (getf c :id))))
            (:p.empty "No comments yet.")))
 
       ;; Comment form + close/reopen
@@ -1856,7 +1917,7 @@ for in-progress checks, polling a JSON endpoint while anything runs."
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
                              can-merge can-override conflict-files stack stack-items diff-raw
                              diff-comments-json comment-action
-                             checks checks-rollup source-missing can-close)
+                             checks checks-rollup source-missing can-close code-owners)
   "Render a pull request detail page."
   (let ((org-name owner-name)
         (repo-name (getf repo :name))
@@ -1866,6 +1927,8 @@ for in-progress checks, polling a JSON endpoint while anything runs."
 
       (:div.issue-header
        (:h1 (format nil "#~A ~A" cs-num (getf pr :source-branch)))
+       (when (getf pr :is-draft)
+         (:span.badge :style "background:var(--surface);color:var(--text-muted)" "draft"))
        (:span.badge
         (cond ((getf pr :is-merged) "merged")
               ((getf pr :is-closed) "closed")
@@ -1880,16 +1943,48 @@ for in-progress checks, polling a JSON endpoint while anything runs."
        (when (getf pr :head-commit)
          (:code :style "margin-left:.5rem" (getf pr :head-commit))))
 
-      ;; Close / reopen (author or repo member). Merged PRs can't be reopened.
+      ;; Code owners for the changed files (from CODEOWNERS).
+      (when code-owners
+        (:div :style "color:var(--text-muted);font-size:.85rem;margin:.25rem 0"
+         (format nil "Code owners: ~{~A~^ ~}" code-owners)))
+
+      ;; State controls (author or repo member); merged PRs are frozen.
       (when (and can-close (not (getf pr :is-merged)))
-        (:form :method "post" :style "margin:.5rem 0"
-         :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
-         (if (getf pr :is-closed)
-             (:button.btn.btn-sm :type "submit" :name "action" :value "reopen"
-              "Reopen pull request")
-             (:button.btn.btn-sm :type "submit" :name "action" :value "close"
-              :style "border-color:var(--red,#b04a4a);color:var(--red,#b04a4a)"
-              "Close pull request"))))
+        (let ((open-p (not (getf pr :is-closed)))
+              (am (getf pr :auto-merge-strategy)))
+          (:div :style "display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0;align-items:center"
+           ;; Close / reopen
+           (:form :method "post" :style "display:inline"
+            :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+            (if open-p
+                (:button.btn.btn-sm :type "submit" :name "action" :value "close"
+                 :style "border-color:var(--red,#b04a4a);color:var(--red,#b04a4a)"
+                 "Close pull request")
+                (:button.btn.btn-sm :type "submit" :name "action" :value "reopen"
+                 "Reopen pull request")))
+           ;; Draft / ready toggle (open PRs only)
+           (when open-p
+             (:form :method "post" :style "display:inline"
+              :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+              (if (getf pr :is-draft)
+                  (:button.btn.btn-sm :type "submit" :name "action" :value "ready"
+                   "Mark ready for review")
+                  (:button.btn.btn-sm :type "submit" :name "action" :value "draft"
+                   "Convert to draft"))))
+           ;; Auto-merge arm/disarm (open, non-draft PRs)
+           (when (and open-p (not (getf pr :is-draft)))
+             (if (and am (not (eq am :null)))
+                 (:form :method "post" :style "display:inline"
+                  :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+                  (:span :style "color:var(--text-muted);font-size:.85rem;margin-right:.35rem"
+                   (format nil "Auto-merge armed (~A)" am))
+                  (:button.btn.btn-sm :type "submit" :name "action" :value "disable-auto-merge"
+                   "Cancel auto-merge"))
+                 (:form :method "post" :style "display:inline"
+                  :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+                  (:input :type "hidden" :name "action" :value "auto-merge")
+                  (:button.btn.btn-sm :type "submit" :name "strategy" :value "merge"
+                   "Enable auto-merge")))))))
 
       ;; Source branch gone (e.g. pruned by a mirror sync): the diff can't be
       ;; computed and the PR can't be merged. Say so instead of "0 files".

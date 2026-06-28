@@ -1650,13 +1650,15 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
 
 (defun list-issues (repo-id &key (status "open") (limit 50) (offset 0))
   "List issues with optional status filter."
+  ;; Pinned issues first (pin_order ASC, NULLs last by Postgres default), then
+  ;; newest. Matches GitHub's pinned-on-top behavior.
   (if status
       (postmodern:query
        (:limit
         (:order-by
          (:select '* :from 'cave-issues
           :where (:and (:= 'repo-id repo-id) (:= 'status status)))
-         (:desc 'created-at))
+         (:asc 'pin-order) (:desc 'created-at))
         limit offset)
        :plists)
       (postmodern:query
@@ -1664,7 +1666,7 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
         (:order-by
          (:select '* :from 'cave-issues
           :where (:= 'repo-id repo-id))
-         (:desc 'created-at))
+         (:asc 'pin-order) (:desc 'created-at))
         limit offset)
        :plists)))
 
@@ -1699,15 +1701,33 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
               'label)
    :column))
 
+(defun %dedupe-scoped-labels (labels)
+  "Normalize LABELS, then enforce scoped/exclusive semantics: for labels of the
+form `scope/value` (e.g. priority/high) only the LAST one in a scope is kept, so
+setting priority/high replaces priority/low. Plain labels are unaffected."
+  (let ((clean (remove-duplicates
+                (remove-if #'uiop:emptyp
+                           (mapcar (lambda (s) (string-trim " " s)) labels))
+                :test #'equal :from-end t))
+        (seen-scopes (make-hash-table :test 'equal))
+        (result nil))
+    ;; Walk from the end so the last value in each scope wins.
+    (dolist (label (reverse clean))
+      (let ((slash (position #\/ label)))
+        (if (and slash (plusp slash))
+            (let ((scope (subseq label 0 slash)))
+              (unless (gethash scope seen-scopes)
+                (setf (gethash scope seen-scopes) t)
+                (push label result)))
+            (push label result))))
+    result))
+
 (defun set-issue-labels (issue-id labels)
-  "Replace an issue's labels with LABELS (a list of non-empty strings)."
+  "Replace an issue's labels with LABELS, honoring scoped/exclusive labels."
   (postmodern:with-transaction ()
     (postmodern:execute
      (:delete-from 'cave-issue-labels :where (:= 'issue-id issue-id)))
-    (dolist (label (remove-duplicates
-                    (remove-if #'uiop:emptyp
-                               (mapcar (lambda (s) (string-trim " " s)) labels))
-                    :test #'equal))
+    (dolist (label (%dedupe-scoped-labels labels))
       (postmodern:execute
        (:insert-into 'cave-issue-labels :set 'issue-id issue-id 'label label)))))
 
@@ -1870,6 +1890,54 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
   (postmodern:query
    (:select 'user-id :from 'cave-repo-watches :where (:= 'repo-id repo-id))
    :column))
+
+;;; ========================== PINNED ISSUES ===========================
+
+(defun pin-issue (issue-id repo-id)
+  "Pin an issue to the end of the repo's pinned list."
+  (let ((next (1+ (or (postmodern:query
+                       "SELECT COALESCE(MAX(pin_order), 0) FROM cave_issues WHERE repo_id = $1"
+                       repo-id :single)
+                      0))))
+    (postmodern:execute
+     (:update 'cave-issues :set 'pin-order next :where (:= 'id issue-id)))))
+
+(defun unpin-issue (issue-id)
+  (postmodern:execute
+   (:update 'cave-issues :set 'pin-order :null :where (:= 'id issue-id))))
+
+;;; ========================== REACTIONS ===============================
+
+(defun toggle-reaction (target-type target-id user-id emoji)
+  "Add EMOJI reaction if absent, remove it if present. Returns :added or :removed."
+  (if (postmodern:query
+       (:select t :from 'cave-reactions
+        :where (:and (:= 'target-type target-type) (:= 'target-id target-id)
+                     (:= 'user-id user-id) (:= 'emoji emoji)))
+       :single)
+      (progn
+        (postmodern:execute
+         (:delete-from 'cave-reactions
+          :where (:and (:= 'target-type target-type) (:= 'target-id target-id)
+                       (:= 'user-id user-id) (:= 'emoji emoji))))
+        :removed)
+      (progn
+        (postmodern:execute
+         "INSERT INTO cave_reactions (target_type, target_id, user_id, emoji)
+          VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING"
+         target-type target-id user-id emoji)
+        :added)))
+
+(defun list-reactions (target-type target-id &optional user-id)
+  "Reaction summary for a target: plists (:emoji :count :mine) ordered by count."
+  (postmodern:query
+   "SELECT emoji,
+           COUNT(*) AS count,
+           BOOL_OR(user_id = $3) AS mine
+    FROM cave_reactions
+    WHERE target_type = $1 AND target_id = $2
+    GROUP BY emoji ORDER BY count DESC, emoji"
+   target-type target-id (or user-id -1) :plists))
 
 ;;; ========================== ISSUE COMMENTS ==========================
 
@@ -2044,6 +2112,35 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
     :set 'is-merged t 'merged-at (:now) 'updated-at (:now)
     :where (:= 'id changeset-id))))
 
+(defun set-pull-request-draft (changeset-id draft)
+  "Mark a PR draft (work-in-progress) or ready. Clears auto-merge when drafting."
+  (postmodern:execute
+   (:update 'cave-changesets
+    :set 'is-draft (if draft t nil)
+         'auto-merge-strategy (if draft :null 'auto-merge-strategy)
+         'updated-at (:now)
+    :where (:= 'id changeset-id))))
+
+(defun set-pull-request-auto-merge (changeset-id strategy user-id)
+  "Arm (STRATEGY non-nil) or disarm (NIL) auto-merge for a PR."
+  (postmodern:execute
+   (:update 'cave-changesets
+    :set 'auto-merge-strategy (or strategy :null)
+         'auto-merge-by (if strategy user-id :null)
+         'updated-at (:now)
+    :where (:= 'id changeset-id))))
+
+(defun pull-requests-armed-for-head (repo-id commit-sha)
+  "Open, auto-merge-armed PRs whose head is COMMIT-SHA (for status-driven auto-merge)."
+  (postmodern:query
+   (:select '* :from 'cave-changesets
+    :where (:and (:= 'repo-id repo-id)
+                 (:= 'head-commit commit-sha)
+                 (:= 'is-merged nil)
+                 (:= 'is-closed nil)
+                 (:not (:is-null 'auto-merge-strategy))))
+   :plists))
+
 ;;; ========================== STACKS ==========================
 
 (defun create-stack (&key repo-id name base-branch)
@@ -2162,6 +2259,11 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
                 :pass (and (not (getf pr :is-merged))
                            (not (getf pr :is-closed))))
           rules)
+
+    ;; Rule 1a: Not a draft. A draft PR is a work-in-progress and never merges
+    ;; (manually or via auto-merge) until marked ready.
+    (when (getf pr :is-draft)
+      (push (list :description "Pull request is a draft" :pass nil) rules))
 
     ;; Rule 1b: No merge conflicts with the target branch. Detected in-memory
     ;; with git merge-tree (no worktree) so the PR page can warn — and the merge

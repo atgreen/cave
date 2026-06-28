@@ -814,7 +814,23 @@ ALTER TABLE cave_issues ADD COLUMN milestone_id BIGINT REFERENCES cave_milestone
     (57 . "-- Primary language per repo, computed on default-branch push, so Explore
 -- can filter/facet by language without recomputing from git each request.
 ALTER TABLE cave_repos ADD COLUMN primary_language VARCHAR(64);
-CREATE INDEX idx_repos_primary_language ON cave_repos (primary_language) WHERE primary_language IS NOT NULL;"))
+CREATE INDEX idx_repos_primary_language ON cave_repos (primary_language) WHERE primary_language IS NOT NULL;")
+
+    (58 . "-- Tier-0: draft + auto-merge on PRs, pinned issues, emoji reactions.
+ALTER TABLE cave_changesets ADD COLUMN is_draft BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE cave_changesets ADD COLUMN auto_merge_strategy VARCHAR(32);
+ALTER TABLE cave_changesets ADD COLUMN auto_merge_by BIGINT REFERENCES cave_users(id);
+ALTER TABLE cave_issues ADD COLUMN pin_order INTEGER;
+CREATE TABLE cave_reactions (
+  id BIGSERIAL PRIMARY KEY,
+  target_type VARCHAR(16) NOT NULL,   -- 'issue' or 'issue_comment'
+  target_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL REFERENCES cave_users(id) ON DELETE CASCADE,
+  emoji VARCHAR(16) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(target_type, target_id, user_id, emoji)
+);
+CREATE INDEX idx_reactions_target ON cave_reactions (target_type, target_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
