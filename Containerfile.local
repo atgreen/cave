@@ -21,7 +21,7 @@ RUN git clone --depth 1 --branch v0.1.14 https://github.com/Zouuup/landrun.git /
 
 FROM fedora:42
 
-RUN dnf install -y openssh-server git openssl && dnf clean all && \
+RUN dnf install -y openssh-server git openssl gnupg2 && dnf clean all && \
     useradd -m -s /bin/bash cave && \
     mkdir -p /etc/ssh && \
     ssh-keygen -A && \
