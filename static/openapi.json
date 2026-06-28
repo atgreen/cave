@@ -4,7 +4,7 @@
     "title": "Cave API",
     "version": "v1",
     "description": "REST API for the Cave code forge. Authenticate with a personal API token (Settings → API Tokens) using the `Authorization: Bearer <token>` header. Read endpoints on public repositories work without authentication.\n\nTimestamps are RFC 3339 UTC strings. Errors use `{ \"error\": \"message\" }` with a 4xx/5xx status.",
-    "license": { "name": "MIT" }
+    "license": { "name": "MIT", "identifier": "MIT" }
   },
   "servers": [
     { "url": "/", "description": "This Cave instance" }
