@@ -20,27 +20,42 @@
   "Generate a random state parameter for OIDC CSRF protection."
   (ironclad:byte-array-to-hex-string (ironclad:random-data 16)))
 
-(defun oidc-authorization-url (state &key force-login)
+(defun generate-oidc-verifier ()
+  "Generate a PKCE code verifier (RFC 7636). Hex digits are all unreserved."
+  (ironclad:byte-array-to-hex-string (ironclad:random-data 32)))
+
+(defun oidc-code-challenge (verifier)
+  "S256 PKCE challenge for VERIFIER: unpadded base64url of its SHA-256."
+  (let* ((digest (ironclad:digest-sequence
+                  :sha256 (ironclad:ascii-string-to-byte-array verifier)))
+         (b64 (cl-base64:usb8-array-to-base64-string digest)))
+    (string-right-trim "=" (substitute #\_ #\/ (substitute #\- #\+ b64)))))
+
+(defun oidc-authorization-url (state &key force-login code-challenge nonce)
   "Build the OIDC authorization redirect URL (browser-facing).
    If FORCE-LOGIN is T, forces re-authentication (for sudo mode)."
-  (format nil "~A/protocol/openid-connect/auth?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email~@[&max_age=0~]"
+  (format nil "~A/authorize?response_type=code&client_id=~A&redirect_uri=~A&state=~A&scope=openid%20profile%20email&code_challenge=~A&code_challenge_method=S256&nonce=~A~@[&max_age=0~]"
           (config-value :oidc-issuer)
           (config-value :oidc-client-id)
           (hunchentoot:url-encode (oidc-redirect-uri))
           state
+          (hunchentoot:url-encode (or code-challenge ""))
+          (hunchentoot:url-encode (or nonce ""))
           force-login))
 
-(defun exchange-oidc-code (code)
+(defun exchange-oidc-code (code &optional code-verifier)
   "Exchange an OIDC authorization code for tokens. Returns parsed JSON hash-table or NIL."
   (handler-case
       (let ((response (dex:post
-                       (format nil "~A/protocol/openid-connect/token"
+                       (format nil "~A/token"
                                (oidc-issuer-internal))
                        :content `(("grant_type" . "authorization_code")
                                   ("code" . ,code)
                                   ("client_id" . ,(config-value :oidc-client-id))
                                   ("client_secret" . ,(config-value :oidc-client-secret))
-                                  ("redirect_uri" . ,(oidc-redirect-uri))))))
+                                  ("redirect_uri" . ,(oidc-redirect-uri))
+                                  ,@(when code-verifier
+                                      `(("code_verifier" . ,code-verifier)))))))
         (let ((parsed (com.inuoe.jzon:parse response)))
           (llog:info "OIDC token exchange succeeded"
                      :has-access-token (if (gethash "access_token" parsed) "yes" "no"))
@@ -54,7 +69,7 @@
    Tries the internal issuer first, falls back to external."
   (handler-case
       (let ((response (dex:get
-                       (format nil "~A/protocol/openid-connect/userinfo"
+                       (format nil "~A/userinfo"
                                (oidc-issuer-internal))
                        :headers `(("Authorization" . ,(format nil "Bearer ~A" access-token))))))
         (com.inuoe.jzon:parse response))
@@ -63,12 +78,11 @@
       nil)))
 
 (defun oidc-user-is-admin-p (userinfo)
-  "Check if the OIDC userinfo includes the cave-admin realm role."
-  (let ((realm-access (gethash "realm_access" userinfo)))
-    (when realm-access
-      (let ((roles (gethash "roles" realm-access)))
-        (when roles
-          (find "cave-admin" roles :test #'string=))))))
+  "Check if the OIDC userinfo includes the cave-admin group.
+   Usher conveys roles via a top-level `groups` claim (a JSON array)."
+  (let ((groups (gethash "groups" userinfo)))
+    (when groups
+      (find "cave-admin" groups :test #'string=))))
 
 (defun provision-oidc-user (userinfo)
   "Create or update a local user from OIDC claims. Returns user plist."

@@ -586,19 +586,27 @@ the results. Skips deletes and zero-sha boundaries."
   (if *current-user*
       (hunchentoot:redirect "/")
       (let* ((next-url (sanitize-next-url (hunchentoot:get-parameter "next")))
-             (state (generate-oidc-state)))
+             (state (generate-oidc-state))
+             (verifier (generate-oidc-verifier)))
         ;; Store state + next-url in a short-lived cookie
         (hunchentoot:set-cookie "cave_oidc_state"
                                 :value (format nil "~A:~A" state next-url)
                                 :path "/"
                                 :http-only t
                                 :max-age 600)
-        (hunchentoot:redirect (oidc-authorization-url state)))))
+        ;; Store the PKCE code verifier for the callback
+        (hunchentoot:set-cookie "cave_oidc_verifier"
+                                :value verifier :path "/" :http-only t :max-age 600)
+        (hunchentoot:redirect (oidc-authorization-url
+                               state
+                               :code-challenge (oidc-code-challenge verifier)
+                               :nonce (generate-oidc-state))))))
 
 (easy-routes:defroute oidc-callback ("/-/auth/callback" :method :get) ()
   (let* ((code (hunchentoot:get-parameter "code"))
          (state (hunchentoot:get-parameter "state"))
          (cookie (hunchentoot:cookie-in "cave_oidc_state"))
+         (verifier (hunchentoot:cookie-in "cave_oidc_verifier"))
          (colon-pos (when cookie (position #\: cookie)))
          (saved-state (when colon-pos (subseq cookie 0 colon-pos)))
          (rest-of-cookie (when colon-pos (subseq cookie (1+ colon-pos))))
@@ -608,14 +616,15 @@ the results. Skips deletes and zero-sha boundaries."
                     (cond (is-sudo (subseq rest-of-cookie 5))
                           (rest-of-cookie rest-of-cookie)
                           (t "/")))))
-    ;; Clear the state cookie
+    ;; Clear the state + PKCE verifier cookies
     (hunchentoot:set-cookie "cave_oidc_state" :value "" :path "/" :max-age 0)
+    (hunchentoot:set-cookie "cave_oidc_verifier" :value "" :path "/" :max-age 0)
     ;; Validate state — if invalid, redirect to login (e.g. after password reset)
     (unless (and code state saved-state (string= state saved-state))
       (hunchentoot:redirect "/-/auth/login")
       (return-from oidc-callback nil))
     ;; Exchange code for tokens
-    (let ((tokens (exchange-oidc-code code)))
+    (let ((tokens (exchange-oidc-code code verifier)))
       (unless tokens
         (setf (hunchentoot:return-code*) 502)
         (return-from oidc-callback "Failed to exchange authorization code"))
@@ -658,14 +667,20 @@ the results. Skips deletes and zero-sha boundaries."
 (easy-routes:defroute sudo-redirect ("/-/sudo" :method :get) ()
   (if *current-user*
       (let* ((next-url (or (hunchentoot:get-parameter "next") "/-/settings"))
-             (state (generate-oidc-state)))
+             (state (generate-oidc-state))
+             (verifier (generate-oidc-verifier)))
         ;; Store state with sudo: prefix so callback knows to set sudo cookie
         (hunchentoot:set-cookie "cave_oidc_state"
                                 :value (format nil "~A:sudo:~A" state next-url)
                                 :path "/"
                                 :http-only t
                                 :max-age 600)
-        (hunchentoot:redirect (oidc-authorization-url state :force-login t)))
+        (hunchentoot:set-cookie "cave_oidc_verifier"
+                                :value verifier :path "/" :http-only t :max-age 600)
+        (hunchentoot:redirect (oidc-authorization-url
+                               state :force-login t
+                               :code-challenge (oidc-code-challenge verifier)
+                               :nonce (generate-oidc-state))))
       (hunchentoot:redirect "/-/auth/login")))
 
 (easy-routes:defroute logout ("/logout" :method :post) ()
