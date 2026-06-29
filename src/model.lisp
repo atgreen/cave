@@ -1103,7 +1103,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
 
 (defun create-workflow-job (&key workflow-run-id name image needs runs-on
                                 (timeout-seconds 0) continue-on-error privileged
-                                cache-paths (env "") (matrix ""))
+                                cache-paths (env "") (matrix "") (output-defs ""))
   "Create a workflow job. NEEDS is a list of job name strings.
    RUNS-ON is a list of label strings the runner must have.
    TIMEOUT-SECONDS is the max job duration (0 means use default).
@@ -1126,9 +1126,19 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
            'cache-paths cache-str
            'env (or env "")
            'matrix (or matrix "")
+           'output-defs (or output-defs "")
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
+
+(defun set-job-outputs (job-id outputs-json)
+  "Store a job's resolved job-level outputs (a JSON object string) so dependent
+   jobs can read them via the needs.<job>.outputs context."
+  (when (and outputs-json (stringp outputs-json) (plusp (length outputs-json)))
+    (postmodern:execute
+     (:update 'cave-workflow-jobs
+      :set 'outputs outputs-json
+      :where (:= 'id job-id)))))
 
 (defun list-workflow-jobs (workflow-run-id)
   "List all jobs for a workflow run."

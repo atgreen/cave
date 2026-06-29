@@ -879,7 +879,7 @@ prefix and downcasing the key."
             (when downcase (setf k (string-downcase k)))
             (setf (gethash k h) v)))))))
 
-(defun %gha-context (env-pairs secret-pairs steps-map job-status &optional matrix-map)
+(defun %gha-context (env-pairs secret-pairs steps-map job-status &optional matrix-map needs-map)
   "Assemble the ${{ }} evaluation context for the runner from the data it has:
 github.* / runner.* (from the GITHUB_*/RUNNER_* env), env.*, secrets.*, the
 accumulated steps.* outputs, job.status, and the strategy matrix.* combo."
@@ -895,6 +895,7 @@ accumulated steps.* outputs, job.status, and the strategy matrix.* combo."
       (setf (gethash "secrets" ctx) (%pairs->map secret-pairs))
       (setf (gethash "steps" ctx) (or steps-map (make-hash-table :test 'equal)))
       (setf (gethash "matrix" ctx) (or matrix-map (make-hash-table :test 'equal)))
+      (setf (gethash "needs" ctx) (or needs-map (make-hash-table :test 'equal)))
       (setf (gethash "status" job) (or job-status "success"))
       (setf (gethash "job" ctx) job)
       ctx)))
@@ -907,6 +908,16 @@ conclusion (outcome after continue-on-error coalesces failures to success)."
           (gethash "outcome" h) outcome
           (gethash "conclusion" h) conclusion)
     h))
+
+(defun %outputs->json (pairs)
+  "Serialize resolved job outputs (a list of (name . string-value)) to a JSON
+object string. Empty list -> \"\"."
+  (if (null pairs)
+      ""
+      (format nil "{~{~A~^,~}}"
+              (mapcar (lambda (p)
+                        (format nil "\"~A\":\"~A\"" (%json-escape (car p)) (%json-escape (cdr p))))
+                      pairs))))
 
 (defun %runner-arch ()
   "GitHub-Actions-style RUNNER_ARCH for the host CPU."
@@ -1174,6 +1185,15 @@ conclusion (outcome after continue-on-error coalesces failures to success)."
                                     (when (and (stringp mj) (plusp (length mj)))
                                       (com.inuoe.jzon:parse mj)))
                                 (error () nil)))
+                  ;; needs.<job>.outputs/result for ${{ needs.* }} (JSON object).
+                  (needs-map (handler-case
+                                 (let ((nj (slot-value task 'cave::needs-json)))
+                                   (when (and (stringp nj) (plusp (length nj)))
+                                     (com.inuoe.jzon:parse nj)))
+                               (error () nil)))
+                  ;; Job-level outputs: NAME=<expr> to resolve after the steps run.
+                  (output-defs (handler-case (slot-value task 'cave::output-defs)
+                                 (error () "")))
                   (job-env-pairs (%cave-mirror-pairs
                                   (append (%kv-lines->pairs context-env)
                                           (list "RUNNER_OS=Linux"
@@ -1183,6 +1203,8 @@ conclusion (outcome after continue-on-error coalesces failures to success)."
                   ;; Carried forward across steps via $GITHUB_ENV / $GITHUB_PATH.
                   (acc-env nil)
                   (acc-path nil)
+                  ;; Resolved job-level outputs (JSON), reported with final status.
+                  (resolved-outputs-json "")
                   ;; Log masks: CI secrets + anything a step emits via ::add-mask::.
                   (masks (copy-list secret-values))
                   (container-name (format nil "cave-job-~A" job-id))
@@ -1316,7 +1338,7 @@ conclusion (outcome after continue-on-error coalesces failures to success)."
                                (gha-ctx (%gha-context (append job-env-pairs acc-env step-env-pairs)
                                                       secret-pairs steps-table
                                                       (if job-failed "failure" "success")
-                                                      matrix-map))
+                                                      matrix-map needs-map))
                                (should-run (if (and if-cond (plusp (length if-cond)))
                                                (gha-expression-true-p if-cond gha-ctx)
                                                (not job-failed))))
@@ -1482,7 +1504,21 @@ conclusion (outcome after continue-on-error coalesces failures to success)."
                                       (format t "    continue-on-error: proceeding despite failure~%"))
                                     (when (and (not ok) (not step-continue-on-error))
                                       (setf job-failed t))))))))
-                      (when job-failed (setf overall-success nil)))))
+                      (when job-failed (setf overall-success nil))
+                      ;; Resolve job-level outputs: against the final steps context.
+                      (when (plusp (length output-defs))
+                        (let ((final-ctx (%gha-context (append job-env-pairs acc-env)
+                                                       secret-pairs steps-table
+                                                       (if job-failed "failure" "success")
+                                                       matrix-map needs-map))
+                              (outs nil))
+                          (dolist (kv (%kv-lines->pairs output-defs))
+                            (let ((eqpos (position #\= kv)))
+                              (when eqpos
+                                (push (cons (subseq kv 0 eqpos)
+                                            (interpolate-gha (subseq kv (1+ eqpos)) final-ctx))
+                                      outs))))
+                          (setf resolved-outputs-json (%outputs->json (nreverse outs))))))))
                     ;; Stop and remove container
                     (uiop:run-program (list "podman" "rm" "-f" container-name)
                                       :output :string :error-output :string

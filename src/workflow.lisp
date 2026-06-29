@@ -257,6 +257,10 @@ builds (and layer-caches) an image with the requested packages on demand."
                      (job-env (concatenate 'string wf-env
                                            (%env-map->string
                                             (cdr (assoc "env" job-spec :test #'equal)))))
+                     ;; Job-level outputs: NAME=<expr>; the runner resolves the
+                     ;; ${{ }} against its final steps context and reports back.
+                     (job-output-defs (%env-map->string
+                                       (cdr (assoc "outputs" job-spec :test #'equal))))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
                   (let* ((strategy (cdr (assoc "strategy" job-spec :test #'equal)))
@@ -281,6 +285,7 @@ builds (and layer-caches) an image with the requested packages on demand."
                                  :privileged (eq job-privileged t)
                                  :cache-paths cache-paths
                                  :matrix matrix-json
+                                 :output-defs job-output-defs
                                  :env job-env)))
                     (llog:info "Created workflow job"
                                :job job-display-name :job-id (getf job :id))
@@ -391,6 +396,26 @@ builds (and layer-caches) an image with the requested packages on demand."
           (maybe-apply-ocicl-fix-run run-id)
           ;; Speculative dependency-fix builds: open the PR if green, else hold.
           (advance-speculative-fix-for-run run-id))))))
+
+(defun job-needs-context (job)
+  "Build the needs.* JSON for JOB: {dep-name: {\"outputs\": {...}, \"result\": status}}
+   for each job JOB needs (same workflow run). Returns \"\" when JOB has no needs."
+  (let ((needs (parse-needs-string (getf job :needs))))
+    (if (null needs)
+        ""
+        (let ((sibs (list-workflow-jobs (getf job :workflow-run-id)))
+              (parts nil))
+          (dolist (n needs)
+            (let ((dep (find n sibs :key (lambda (x) (getf x :name)) :test #'equal)))
+              (when dep
+                (let ((outs (getf dep :outputs))
+                      (res (getf dep :status)))
+                  (push (format nil "~S:{\"outputs\":~A,\"result\":~S}"
+                                n
+                                (if (and (stringp outs) (plusp (length outs))) outs "{}")
+                                (if (stringp res) res "success"))
+                        parts)))))
+          (if parts (format nil "{~{~A~^,~}}" (nreverse parts)) "")))))
 
 (defun job-depends-on-p (job dep-name)
   "Check if JOB depends on DEP-NAME."

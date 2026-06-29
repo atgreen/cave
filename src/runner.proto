@@ -54,6 +54,7 @@ message AppendTaskLogResponse {
 message UpdateTaskStatusRequest {
   int64 run_id = 1;
   string status = 2;
+  string outputs_json = 3;  // resolved job-level outputs as a JSON object (for needs.<job>.outputs)
 }
 
 message UpdateTaskStatusResponse {
@@ -81,6 +82,8 @@ message TaskEvent {
   string cache_mounts = 14; // newline-joined VOLUME\tCONTAINER_PATH cache mounts
   string context_env = 15;  // newline-joined KEY=VALUE: GITHUB_*/CAVE_* context + workflow/job env
   string matrix_json = 16;  // strategy.matrix combo for this job as a JSON object (for ${{ matrix.* }})
+  string output_defs = 17;  // newline-joined NAME=<expr>: job-level outputs: to resolve after the steps run
+  string needs_json = 18;   // {jobname: {outputs:{...}, result: "success"}} for ${{ needs.* }}
 }
 
 message StepSpec {

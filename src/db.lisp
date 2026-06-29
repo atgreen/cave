@@ -900,7 +900,12 @@ ALTER TABLE cave_workflow_steps ADD COLUMN id_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE cave_workflow_steps ADD COLUMN if_cond TEXT NOT NULL DEFAULT '';")
 
     (66 . "-- strategy.matrix combination for this job as a JSON object.
-ALTER TABLE cave_workflow_jobs ADD COLUMN matrix TEXT NOT NULL DEFAULT '';"))
+ALTER TABLE cave_workflow_jobs ADD COLUMN matrix TEXT NOT NULL DEFAULT '';")
+
+    (67 . "-- Job-level outputs: NAME=expr defs (resolved by the runner) and the
+-- resolved values as a JSON object (consumed via needs.<job>.outputs).
+ALTER TABLE cave_workflow_jobs ADD COLUMN output_defs TEXT NOT NULL DEFAULT '';
+ALTER TABLE cave_workflow_jobs ADD COLUMN outputs TEXT NOT NULL DEFAULT '';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

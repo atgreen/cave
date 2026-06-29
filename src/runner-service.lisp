@@ -145,6 +145,11 @@
               (when (and job-id job-status)
                 (unless (update-job-status-for-runner job-id runner-id job-status)
                   (error "runner is not assigned to this workflow job"))
+                ;; Persist resolved job-level outputs before unblocking dependents.
+                (let ((outs (handler-case (slot-value request 'cave::outputs-json)
+                              (error () ""))))
+                  (when (and (stringp outs) (plusp (length outs)))
+                    (set-job-outputs job-id outs)))
                 (let ((job (postmodern:query
                             (:select '* :from 'cave-workflow-jobs :where (:= 'id job-id))
                             :plist)))
@@ -290,7 +295,10 @@ RUNNER_*/file-protocol vars)."
                                                  (%github-context-env run repo owner-name repo-name job)
                                                  (let ((e (getf job :env))) (if (and e (not (eq e :null))) e "")))
                                     "")
-                   :matrix-json (let ((m (getf job :matrix))) (if (and m (not (eq m :null))) m "")))))
+                   :matrix-json (let ((m (getf job :matrix))) (if (and m (not (eq m :null))) m ""))
+                   ;; Job-level outputs: to resolve, and the upstream needs.* context.
+                   :output-defs (let ((o (getf job :output-defs))) (if (and o (not (eq o :null))) o ""))
+                   :needs-json (job-needs-context job))))
 
 (defun handle-update-step-status (request ctx)
   "Update a workflow step's status."
