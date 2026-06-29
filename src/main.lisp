@@ -194,6 +194,70 @@ empty system repo gets populated at startup."
       (when (and (find-repo "cave" name) (system-repo-empty-p "cave" name))
         (seed-system-repo "cave" name seed-subdir commit-msg)))))
 
+(defun seed-action-repo (owner name seed-subdir commit-msg tags)
+  "Like SEED-SYSTEM-REPO, but also creates each tag in TAGS (e.g. (\"v4\"))
+pointing at the seeded commit — actions are referenced owner/repo@<tag>."
+  (let* ((seed-dir (merge-pathnames seed-subdir (app-root)))
+         (disk-path (repo-disk-path owner name))
+         (tmpdir (format nil "/tmp/cave-seed-~A"
+                         (ironclad:byte-array-to-hex-string (ironclad:random-data 4)))))
+    (if (not (probe-file seed-dir))
+        (llog:warn "Action repo seed dir missing" :dir (namestring seed-dir))
+        (handler-case
+            (progn
+              (uiop:run-program (list "git" "clone" (namestring disk-path) tmpdir)
+                                :output :string :error-output :string)
+              (uiop:run-program (list "git" "-C" tmpdir "symbolic-ref" "HEAD" "refs/heads/main")
+                                :ignore-error-status t)
+              (uiop:run-program (format nil "cp -r ~A* ~A/" (namestring seed-dir) tmpdir)
+                                :output :string :error-output :string :force-shell t)
+              (uiop:run-program (list "git" "-C" tmpdir "add" "-A")
+                                :output :string :error-output :string)
+              (uiop:run-program (list "git" "-C" tmpdir
+                                      "-c" "user.name=Cave" "-c" "user.email=cave@localhost"
+                                      "commit" "-m" commit-msg)
+                                :output :string :error-output :string)
+              (uiop:run-program (list "git" "-C" tmpdir "push" "origin" "HEAD:main")
+                                :output :string :error-output :string)
+              ;; Tags (e.g. the floating major v4) so uses: owner/repo@v4 resolves.
+              (dolist (tag tags)
+                (uiop:run-program (list "git" "-C" tmpdir "tag" "-f" tag)
+                                  :ignore-error-status t :output :string :error-output :string)
+                (uiop:run-program (list "git" "-C" tmpdir "push" "-f" "origin"
+                                        (format nil "refs/tags/~A" tag))
+                                  :ignore-error-status t :output :string :error-output :string))
+              (uiop:run-program (list "git" "-C" (namestring disk-path)
+                                      "symbolic-ref" "HEAD" "refs/heads/main")
+                                :ignore-error-status t)
+              (llog:info "Seeded action repo" :repo (format nil "~A/~A" owner name) :tags tags))
+          (error (e)
+            (llog:warn "Failed to seed action repo"
+                       :repo (format nil "~A/~A" owner name)
+                       :error (princ-to-string e)))))
+    (uiop:run-program (list "rm" "-rf" tmpdir) :ignore-error-status t)))
+
+(defun ensure-action-repo (name description seed-subdir commit-msg tags)
+  "Ensure actions/NAME exists (DB row + bare repo) and is seeded+tagged from
+SEED-SUBDIR when empty. The `actions` org hosts cave-native uses: actions as
+real, browsable repos."
+  (let ((org (find-org-by-name "actions")))
+    (when org
+      (unless (find-repo "actions" name)
+        (handler-case
+            (progn
+              (postmodern:query
+               (:insert-into 'cave-repos
+                :set 'org-id (getf org :id) 'name name 'description description
+                :returning '*)
+               :plist)
+              (init-bare-repo "actions" name)
+              (llog:info "Created action repo" :repo (format nil "actions/~A" name)))
+          (error (e)
+            (llog:warn "Failed to create action repo"
+                       :repo name :error (princ-to-string e)))))
+      (when (and (find-repo "actions" name) (system-repo-empty-p "actions" name))
+        (seed-action-repo "actions" name seed-subdir commit-msg tags)))))
+
 ;;; --- SERVE subcommand ---
 
 (defun make-serve-command ()
@@ -274,6 +338,22 @@ empty system repo gets populated at startup."
                         "static/seed/cave-themes/" "Seed example theme and documentation")
     (ensure-system-repo "cave-landing" "Landing page content for this Cave instance"
                         "static/seed/cave-landing/" "Seed default landing page")
+
+    ;; The `actions` org hosts cave-native uses: actions as real, browsable repos.
+    (unless (find-org-by-name "actions")
+      (handler-case
+          (progn
+            (postmodern:query
+             (:insert-into 'cave-orgs
+              :set 'name "actions"
+                   'display-name "Actions"
+                   'description "Cave-native uses: actions"
+              :returning '*)
+             :plist)
+            (llog:info "Created actions org"))
+        (error () nil)))
+    (ensure-action-repo "checkout" "Check out the workflow repository (cave-native)"
+                        "static/seed/actions/checkout/" "Seed actions/checkout" '("v4"))
 
     (let ((port (or port-override (config-value :http-port 8080))))
       (bt2:with-lock-held (*server-lock*)

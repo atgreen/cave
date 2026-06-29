@@ -1,0 +1,43 @@
+name: 'Checkout'
+description: >
+  Check out the workflow repository into the workspace. cave-native action:
+  in the GitHub model the workspace starts empty, so a job runs this first to
+  populate it. Resolved cave-local (no github.com).
+author: 'Cave'
+
+inputs:
+  repository:
+    description: 'Repository to check out (owner/repo). Defaults to the workflow repository. (Override not supported yet.)'
+    required: false
+    default: ''
+  ref:
+    description: 'The branch, tag, or SHA to check out. Defaults to the triggering ref.'
+    required: false
+    default: ''
+  path:
+    description: 'Relative directory under the workspace to check out into.'
+    required: false
+    default: ''
+  fetch-depth:
+    description: 'Number of commits to fetch. 0 fetches full history.'
+    required: false
+    default: '1'
+  submodules:
+    description: 'Check out submodules: true (top-level), recursive, or false.'
+    required: false
+    default: 'false'
+  clean:
+    description: 'Run git clean before fetching. (Reserved; not yet honored.)'
+    required: false
+    default: 'true'
+
+outputs:
+  ref:
+    description: 'The ref that was checked out.'
+  commit:
+    description: 'The commit SHA that was checked out.'
+
+# cave runs this in-process on the runner via the built-in Lisp action registry.
+runs:
+  using: 'lisp'
+  main: 'cave:action-checkout'
