@@ -289,7 +289,8 @@ RUNNER_*/file-protocol vars)."
                                     (concatenate 'string
                                                  (%github-context-env run repo owner-name repo-name job)
                                                  (let ((e (getf job :env))) (if (and e (not (eq e :null))) e "")))
-                                    ""))))
+                                    "")
+                   :matrix-json (let ((m (getf job :matrix))) (if (and m (not (eq m :null))) m "")))))
 
 (defun handle-update-step-status (request ctx)
   "Update a workflow step's status."

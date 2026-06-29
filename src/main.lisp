@@ -879,10 +879,10 @@ prefix and downcasing the key."
             (when downcase (setf k (string-downcase k)))
             (setf (gethash k h) v)))))))
 
-(defun %gha-context (env-pairs secret-pairs steps-map job-status)
+(defun %gha-context (env-pairs secret-pairs steps-map job-status &optional matrix-map)
   "Assemble the ${{ }} evaluation context for the runner from the data it has:
 github.* / runner.* (from the GITHUB_*/RUNNER_* env), env.*, secrets.*, the
-accumulated steps.* outputs, and job.status."
+accumulated steps.* outputs, job.status, and the strategy matrix.* combo."
   (flet ((prefixed (pre) (remove-if-not (lambda (p) (uiop:string-prefix-p pre p)) env-pairs)))
     (let ((ctx (make-hash-table :test 'equal))
           (job (make-hash-table :test 'equal)))
@@ -894,6 +894,7 @@ accumulated steps.* outputs, and job.status."
       (setf (gethash "env" ctx) (%pairs->map env-pairs))
       (setf (gethash "secrets" ctx) (%pairs->map secret-pairs))
       (setf (gethash "steps" ctx) (or steps-map (make-hash-table :test 'equal)))
+      (setf (gethash "matrix" ctx) (or matrix-map (make-hash-table :test 'equal)))
       (setf (gethash "status" job) (or job-status "success"))
       (setf (gethash "job" ctx) job)
       ctx)))
@@ -1167,6 +1168,12 @@ conclusion (outcome after continue-on-error coalesces failures to success)."
                   ;; plus RUNNER_*; injected as container env at create time.
                   (context-env (handler-case (slot-value task 'cave::context-env)
                                  (error () "")))
+                  ;; strategy.matrix combo for ${{ matrix.* }} (JSON object).
+                  (matrix-map (handler-case
+                                  (let ((mj (slot-value task 'cave::matrix-json)))
+                                    (when (and (stringp mj) (plusp (length mj)))
+                                      (com.inuoe.jzon:parse mj)))
+                                (error () nil)))
                   (job-env-pairs (%cave-mirror-pairs
                                   (append (%kv-lines->pairs context-env)
                                           (list "RUNNER_OS=Linux"
@@ -1308,7 +1315,8 @@ conclusion (outcome after continue-on-error coalesces failures to success)."
                                ;; ${{ }} context with the accumulated steps.* + job status.
                                (gha-ctx (%gha-context (append job-env-pairs acc-env step-env-pairs)
                                                       secret-pairs steps-table
-                                                      (if job-failed "failure" "success")))
+                                                      (if job-failed "failure" "success")
+                                                      matrix-map))
                                (should-run (if (and if-cond (plusp (length if-cond)))
                                                (gha-expression-true-p if-cond gha-ctx)
                                                (not job-failed))))

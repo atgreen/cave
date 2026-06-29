@@ -4,6 +4,66 @@
 
 (in-package #:cave)
 
+(defun %matrix-cartesian (kvs)
+  "KVS is an alist of (key . value-list). Returns a list of combos, each an
+alist (key . value) — the cartesian product."
+  (if (null kvs)
+      (list nil)
+      (let ((rest (%matrix-cartesian (cdr kvs)))
+            (key (caar kvs))
+            (vals (let ((v (cdar kvs))) (if (listp v) v (list v)))))
+        (loop for val in vals
+              nconc (loop for r in rest collect (cons (cons key val) r))))))
+
+(defun %combo-matches-p (combo entry)
+  "True if COMBO has the same value for every key present in ENTRY."
+  (every (lambda (e)
+           (let ((cv (assoc (car e) combo :test #'equal)))
+             (and cv (equal (cdr cv) (cdr e)))))
+         entry))
+
+(defun %matrix-combos (matrix)
+  "Expand a parsed `matrix:` alist into a list of combos (each an alist
+key->value), applying include/exclude. NIL matrix -> (NIL) — one plain job."
+  (if (not (and (listp matrix) (consp (car matrix))))
+      (list nil)
+      (let* ((includes (cdr (assoc "include" matrix :test #'equal)))
+             (excludes (cdr (assoc "exclude" matrix :test #'equal)))
+             (base (remove-if (lambda (e) (member (car e) '("include" "exclude") :test #'equal))
+                              matrix))
+             (combos (%matrix-cartesian base)))
+        ;; exclude: drop combos matching any exclude entry
+        (when excludes
+          (setf combos (remove-if (lambda (c) (some (lambda (ex) (%combo-matches-p c ex)) excludes))
+                                  combos)))
+        ;; include: merge into matching combos, else append as standalone
+        (dolist (inc includes)
+          (let ((matched nil))
+            (setf combos
+                  (mapcar (lambda (c)
+                            (let ((overlap (remove-if-not (lambda (e) (assoc (car e) c :test #'equal)) inc)))
+                              (if (and overlap (%combo-matches-p c overlap))
+                                  (progn (setf matched t)
+                                         (append inc (remove-if (lambda (e) (assoc (car e) inc :test #'equal)) c)))
+                                  c)))
+                          combos))
+            (unless matched (setf combos (append combos (list inc))))))
+        (or combos (list nil)))))
+
+(defun %matrix->json (combo)
+  "Serialize a matrix COMBO (alist) to a JSON object string for storage/transport."
+  (if (null combo)
+      ""
+      (format nil "{~{~A~^,~}}"
+              (mapcar (lambda (e)
+                        (let ((v (cdr e)))
+                          (format nil "\"~A\":~A" (car e)
+                                  (cond ((eq v t) "true")
+                                        ((null v) "false")
+                                        ((numberp v) (princ-to-string v))
+                                        (t (format nil "\"~A\"" (%json-escape (princ-to-string v))))))))
+                      combo))))
+
 (defun %strip-expr-wrapper (v)
   "An `if:` value may be a bare expression (success()) or wrapped (${{ … }}).
 Return the bare expression string (\"\" for nil/non-string)."
@@ -199,19 +259,31 @@ builds (and layer-caches) an image with the requested packages on demand."
                                             (cdr (assoc "env" job-spec :test #'equal)))))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
-                  (let ((job (create-workflow-job
-                              :workflow-run-id (getf run :id)
-                              :name job-name
-                              :image image
-                              :needs needs
-                              :runs-on runs-on
-                              :timeout-seconds job-timeout
-                              :continue-on-error (eq job-continue-on-error t)
-                              :privileged (eq job-privileged t)
-                              :cache-paths cache-paths
-                              :env job-env)))
+                  (let* ((strategy (cdr (assoc "strategy" job-spec :test #'equal)))
+                         (matrix (and (listp strategy)
+                                      (cdr (assoc "matrix" strategy :test #'equal))))
+                         (combos (%matrix-combos matrix)))
+                   (dolist (matrix-combo combos)
+                    (let* ((matrix-json (%matrix->json matrix-combo))
+                           (job-display-name
+                             (if matrix-combo
+                                 (format nil "~A (~{~A~^, ~})" job-name
+                                         (mapcar #'cdr matrix-combo))
+                                 job-name))
+                           (job (create-workflow-job
+                                 :workflow-run-id (getf run :id)
+                                 :name job-display-name
+                                 :image image
+                                 :needs needs
+                                 :runs-on runs-on
+                                 :timeout-seconds job-timeout
+                                 :continue-on-error (eq job-continue-on-error t)
+                                 :privileged (eq job-privileged t)
+                                 :cache-paths cache-paths
+                                 :matrix matrix-json
+                                 :env job-env)))
                     (llog:info "Created workflow job"
-                               :job job-name :job-id (getf job :id))
+                               :job job-display-name :job-id (getf job :id))
                     ;; Create steps
                     (when (and steps-raw (listp steps-raw))
                       (loop for step-spec in steps-raw
@@ -237,7 +309,7 @@ builds (and layer-caches) an image with the requested packages on demand."
                                     :continue-on-error (eq step-continue-on-error t)
                                     :env step-env
                                     :id-name step-id
-                                    :if-cond step-if))))))))))
+                                    :if-cond step-if))))))))))))
         run)))))
 
 (defun rerun-workflow (run-id)

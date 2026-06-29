@@ -80,6 +80,7 @@ message TaskEvent {
   string secrets_env = 13;  // newline-joined KEY=VALUE secrets for the job
   string cache_mounts = 14; // newline-joined VOLUME\tCONTAINER_PATH cache mounts
   string context_env = 15;  // newline-joined KEY=VALUE: GITHUB_*/CAVE_* context + workflow/job env
+  string matrix_json = 16;  // strategy.matrix combo for this job as a JSON object (for ${{ matrix.* }})
 }
 
 message StepSpec {

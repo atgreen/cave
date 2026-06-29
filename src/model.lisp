@@ -1103,7 +1103,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
 
 (defun create-workflow-job (&key workflow-run-id name image needs runs-on
                                 (timeout-seconds 0) continue-on-error privileged
-                                cache-paths (env ""))
+                                cache-paths (env "") (matrix ""))
   "Create a workflow job. NEEDS is a list of job name strings.
    RUNS-ON is a list of label strings the runner must have.
    TIMEOUT-SECONDS is the max job duration (0 means use default).
@@ -1125,6 +1125,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
            'privileged (if privileged t nil)
            'cache-paths cache-str
            'env (or env "")
+           'matrix (or matrix "")
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
