@@ -96,26 +96,67 @@
 ;;; actions/checkout
 ;;; --------------------------------------------------------------------------
 
+(defun %action-base-from-clone-url (clone-url)
+  "Derive the base URL hosting repos from a clone URL:
+   <base>/<owner>/<repo>.git -> <base>. NIL if it can't be derived."
+  (when (and clone-url (plusp (length clone-url)))
+    (let* ((u (string-right-trim "/" clone-url))
+           (u (if (uiop:string-suffix-p ".git" u) (subseq u 0 (- (length u) 4)) u))
+           (s1 (position #\/ u :from-end t))
+           (u2 (and s1 (subseq u 0 s1)))
+           (s2 (and u2 (position #\/ u2 :from-end t))))
+      (and s2 (subseq u2 0 s2)))))
+
+(defun %authed-url (url token)
+  "Embed TOKEN in URL as cave's git http scheme (https://TOKEN@host/...).
+   URL unchanged if TOKEN is empty."
+  (if (and token (plusp (length token)))
+      (let ((pos (search "://" url)))
+        (if pos
+            (format nil "~A://~A@~A" (subseq url 0 pos) token (subseq url (+ pos 3)))
+            url))
+      url))
+
+(defun %sparse-patterns (sparse)
+  "Split a multi-line `sparse-checkout` value into non-empty patterns."
+  (remove-if (lambda (s) (zerop (length s)))
+             (mapcar (lambda (s) (string-trim '(#\Space #\Return #\Tab) s))
+                     (uiop:split-string sparse :separator '(#\Newline)))))
+
 (defun action-checkout (ctx inputs)
-  "Native `actions/checkout`, run IN the job container via (getf ctx :exec).
-   Clones the workflow repo into the workspace (or a `path:` subdir), checks out
-   `ref:` (else the triggering commit), and honors `fetch-depth` (0 = full
-   history) and `submodules`. Sets the `ref`/`commit` outputs. The clone lands in
-   the container's filesystem (where the run: steps see it), and `git` runs from
-   the job image. Returns (values ok-p outputs log)."
+  "Native `actions/checkout` — compatible with GitHub's checkout@v4. Runs IN the
+   job container via (getf ctx :exec), so the repo, git state, and `path:` land in
+   the container where run: steps see them. Honors: repository, ref, token,
+   persist-credentials, path, clean, filter, sparse-checkout(+cone-mode),
+   fetch-depth (0 = full), fetch-tags, lfs, submodules, set-safe-directory. Sets
+   the `ref`/`commit` outputs. `ssh-key` is unsupported (warns). Returns
+   (values ok-p outputs log)."
   (let* ((exec (getf ctx :exec))
          (workspace (or (getf ctx :workspace) "/workspace"))
-         (clone-url (getf ctx :clone-url))
+         (orig-clone-url (getf ctx :clone-url))
          (commit (getf ctx :commit-sha))
          (job-ref (getf ctx :ref))
-         (path-in (gethash "path" inputs))
-         (ref-in (gethash "ref" inputs))
+         (job-token (getf ctx :job-token))
          (repo-in (gethash "repository" inputs))
+         (own-repo-p (or (null repo-in) (zerop (length repo-in))))
+         (token (let ((tk (gethash "token" inputs)))
+                  (if (and tk (plusp (length tk))) tk job-token)))
+         (persist (not (equal (gethash "persist-credentials" inputs) "false")))
+         (ref-in (gethash "ref" inputs))
+         (path-in (gethash "path" inputs))
          (depth (let ((d (gethash "fetch-depth" inputs)))
-                  (if (and d (plusp (length d)))
-                      (or (parse-integer d :junk-allowed t) 1)
-                      1)))
+                  (if (and d (plusp (length d))) (or (parse-integer d :junk-allowed t) 1) 1)))
+         (fetch-tags (equal (gethash "fetch-tags" inputs) "true"))
+         (filter (gethash "filter" inputs))
+         (sparse (gethash "sparse-checkout" inputs))
+         (cone (not (equal (gethash "sparse-checkout-cone-mode" inputs) "false")))
+         (lfs (equal (gethash "lfs" inputs) "true"))
          (submodules (gethash "submodules" inputs))
+         (clean (not (equal (gethash "clean" inputs) "false")))
+         (safe-dir (not (equal (gethash "set-safe-directory" inputs) "false")))
+         (ssh-key (gethash "ssh-key" inputs))
+         (base (%action-base-from-clone-url orig-clone-url))
+         (clone-url (if own-repo-p orig-clone-url (and base (format nil "~A/~A.git" base repo-in))))
          (target (if (and path-in (plusp (length path-in)))
                      (format nil "~A/~A" workspace path-in)
                      workspace))
@@ -126,6 +167,7 @@
              (multiple-value-bind (code out) (funcall exec (cons "git" args))
                (when (and out (plusp (length out))) (format log "~A~%" out))
                code))
+           (git-q (&rest args) (funcall exec (cons "git" args)))
            (git-out (&rest args)
              (multiple-value-bind (code out) (funcall exec (cons "git" args))
                (declare (ignore code))
@@ -133,41 +175,57 @@
       (when (null exec)
         (format log "checkout: no container exec available.~%")
         (return-from action-checkout (values nil outputs (get-output-stream-string log))))
-      ;; cave-local only: a different `repository:` would need chamber resolution.
-      (when (and repo-in (plusp (length repo-in)))
-        (format log "checkout: 'repository:' override is not supported yet; ~
-                     checking out the workflow's own repo.~%"))
-      (when (or (null clone-url) (zerop (length clone-url)))
-        (format log "checkout: no clone URL available for this job.~%")
+      (when (and ssh-key (plusp (length ssh-key)))
+        (format log "::warning::checkout: 'ssh-key' is not supported on cave; ignoring (use token auth).~%"))
+      (when (null clone-url)
+        (format log "checkout: cannot resolve repository '~A' (no base URL).~%" repo-in)
         (return-from action-checkout (values nil outputs (get-output-stream-string log))))
       (funcall exec (list "mkdir" "-p" target))
-      (format log "checkout: cloning into ~A~%" target)
-      ;; Clone (shallow unless fetch-depth: 0).
-      (let ((args (list "clone")))
-        (when (plusp depth)
-          (setf args (append args (list "--depth" (princ-to-string depth)))))
-        (setf args (append args (list clone-url target)))
-        (unless (zerop (apply #'git args))
-          (format log "checkout: clone failed~%")
-          (setf ok nil)))
-      ;; Check out the requested ref (or the triggering commit). The clone only
-      ;; fetched the default-branch tip, so explicitly fetch the triggering ref —
-      ;; a real ref is reliably fetchable, unlike a bare SHA — then check out the
-      ;; commit (now present), falling back to the fetched ref tip.
+      (when safe-dir (git-q "config" "--global" "--add" "safe.directory" target))
+      (let ((authed (%authed-url clone-url token))
+            (has-git (zerop (git-q "-C" target "rev-parse" "--git-dir"))))
+        ;; clean: reuse + clean an existing checkout; else clone fresh (= clean).
+        (if (and has-git clean)
+            (progn
+              (format log "checkout: cleaning existing checkout in ~A~%" target)
+              (git "-C" target "clean" "-ffdx")
+              (git "-C" target "reset" "--hard")
+              (git "-C" target "remote" "set-url" "origin" authed))
+            (progn
+              (format log "checkout: cloning ~A into ~A~%"
+                      (if own-repo-p "the repository" repo-in) target)
+              (let ((args (list "clone")))
+                (when (plusp depth) (setf args (append args (list "--depth" (princ-to-string depth)))))
+                (when (and filter (plusp (length filter)))
+                  (setf args (append args (list (format nil "--filter=~A" filter)))))
+                (when (and sparse (plusp (length sparse))) (setf args (append args (list "--no-checkout"))))
+                (setf args (append args (list authed target)))
+                (unless (zerop (apply #'git args))
+                  (format log "checkout: clone failed~%")
+                  (setf ok nil))))))
+      ;; sparse-checkout
+      (when (and ok sparse (plusp (length sparse)))
+        (git "-C" target "sparse-checkout" "init" (if cone "--cone" "--no-cone"))
+        (apply #'git "-C" target "sparse-checkout" "set" (%sparse-patterns sparse)))
+      ;; Fetch the triggering ref (reliably fetchable, unlike a bare SHA), then
+      ;; check out the commit (now present), falling back to the fetched ref tip.
       (when ok
         (let ((fetch-ref (cond ((and ref-in (plusp (length ref-in))) ref-in)
-                               ((and job-ref (plusp (length job-ref))) job-ref)
+                               ((and own-repo-p job-ref (plusp (length job-ref))) job-ref)
                                (t nil)))
-              (checkout-target (cond ((and commit (plusp (length commit))) commit)
-                                     ((and ref-in (plusp (length ref-in))) ref-in)
+              (checkout-target (cond ((and ref-in (plusp (length ref-in))) ref-in)
+                                     ((and own-repo-p commit (plusp (length commit))) commit)
                                      (t nil))))
           (when fetch-ref
             (apply #'git "-C" target "fetch"
                    (append (when (plusp depth) (list "--depth" (princ-to-string depth)))
+                           (when fetch-tags (list "--tags"))
                            (list "origin" fetch-ref))))
+          (when (and (not fetch-ref) fetch-tags)
+            (git "-C" target "fetch" "--tags" "origin"))
           (when checkout-target
             (unless (zerop (git "-C" target "checkout" checkout-target))
-              (if (and fetch-ref (zerop (git "-C" target "checkout" "FETCH_HEAD")))
+              (if (and fetch-ref (zerop (git-q "-C" target "checkout" "FETCH_HEAD")))
                   (format log "checkout: ~A not found; checked out ~A tip instead~%"
                           checkout-target fetch-ref)
                   (progn
@@ -177,14 +235,27 @@
       (when (and ok (member submodules '("true" "recursive") :test #'equal))
         (apply #'git "-C" target "submodule" "update" "--init"
                (when (equal submodules "recursive") (list "--recursive"))))
-      ;; Outputs: resolved commit + ref.
+      ;; Git LFS (needs git-lfs in the job image).
+      (when (and ok lfs)
+        (unless (zerop (git-q "-C" target "lfs" "pull"))
+          (format log "::warning::checkout: 'lfs: true' but git-lfs is unavailable in the job image.~%")))
+      ;; persist-credentials: strip the token from the remote when not persisting.
+      (when (and ok token (plusp (length token)) (not persist))
+        (git-q "-C" target "remote" "set-url" "origin" clone-url))
+      ;; Outputs.
       (when ok
         (setf (gethash "commit" outputs) (git-out "-C" target "rev-parse" "HEAD")
               (gethash "ref" outputs) (or (and ref-in (plusp (length ref-in)) ref-in)
-                                          job-ref "")))
+                                          (and own-repo-p job-ref) "")))
       (values ok outputs (get-output-stream-string log)))))
 
 (register-builtin-action "actions/checkout"
   :fn #'action-checkout
-  :inputs '(("repository" . "") ("ref" . "") ("path" . "")
-            ("fetch-depth" . "1") ("submodules" . "false") ("clean" . "true")))
+  :inputs '(("repository" . "") ("ref" . "") ("token" . "")
+            ("ssh-key" . "") ("ssh-known-hosts" . "") ("ssh-strict" . "true")
+            ("ssh-user" . "git") ("persist-credentials" . "true") ("path" . "")
+            ("clean" . "true") ("filter" . "") ("sparse-checkout" . "")
+            ("sparse-checkout-cone-mode" . "true") ("fetch-depth" . "1")
+            ("fetch-tags" . "false") ("show-progress" . "true") ("lfs" . "false")
+            ("submodules" . "false") ("set-safe-directory" . "true")
+            ("github-server-url" . "")))

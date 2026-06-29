@@ -1023,7 +1023,10 @@ object string. Empty list -> \"\"."
    Non-built-in owner/repo@ref are resolved cave-local from the chamber and run
    sandboxed in the container (see %run-fetched-action). Streams the log, fills
    STEP-OUTPUTS, returns an exit code (0 ok, 1 failure / unsupported)."
-  (flet ((emit (text)
+  ;; Mask the job-scoped token: actions may embed it in a clone URL / git output.
+  (let ((masks (let ((jt (getf ctx :job-token)))
+                 (if (and jt (plusp (length jt))) (cons jt masks) masks))))
+   (flet ((emit (text)
            (ignore-errors
             (ag-grpc:grpc-call channel
              "/cave.runner.RunnerService/AppendStepLog"
@@ -1065,18 +1068,7 @@ object string. Empty list -> \"\"."
                ;; --- non-built-in: resolve from the chamber, run sandboxed ---
                (%run-fetched-action owner repo ref with-pairs gha-ctx full-ctx
                                     step-outputs container-name action-base
-                                    #'emit))))))))
-
-(defun %action-base-from-clone-url (clone-url)
-  "Derive the base URL hosting action repos from the workflow clone URL:
-   <base>/<owner>/<repo>.git -> <base>. NIL if it can't be derived."
-  (when (and clone-url (plusp (length clone-url)))
-    (let* ((u (string-right-trim "/" clone-url))
-           (u (if (uiop:string-suffix-p ".git" u) (subseq u 0 (- (length u) 4)) u))
-           (s1 (position #\/ u :from-end t))
-           (u2 (and s1 (subseq u 0 s1)))
-           (s2 (and u2 (position #\/ u2 :from-end t))))
-      (and s2 (subseq u2 0 s2)))))
+                                    #'emit)))))))))
 
 (defun %run-lisp-action-sandboxed (action-dir main-file inputs ctx step-outputs emit)
   "Run a fetched `using: lisp` action in a DEDICATED cave-actions container —

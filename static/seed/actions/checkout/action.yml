@@ -1,35 +1,92 @@
 name: 'Checkout'
 description: >
-  Check out the workflow repository into the workspace. cave-native action:
-  in the GitHub model the workspace starts empty, so a job runs this first to
-  populate it. Resolved cave-local (no github.com).
+  Check out a git repository into the workspace. cave-native, GitHub
+  checkout@v4-compatible: in the GitHub model the workspace starts empty, so a
+  job runs this first to populate it. Resolved cave-local (no github.com); runs
+  inside the job container.
 author: 'Cave'
 
 inputs:
   repository:
-    description: 'Repository to check out (owner/repo). Defaults to the workflow repository. (Override not supported yet.)'
+    description: 'Repository name (owner/repo). Default: the workflow repository.'
     required: false
     default: ''
   ref:
-    description: 'The branch, tag, or SHA to check out. Defaults to the triggering ref.'
+    description: 'The branch, tag, or SHA to check out. Default: the triggering ref.'
     required: false
     default: ''
+  token:
+    description: 'Token used to fetch the repository (default: the job-scoped token).'
+    required: false
+    default: ''
+  ssh-key:
+    description: 'SSH private key for fetching. Not supported on cave (use token).'
+    required: false
+    default: ''
+  ssh-known-hosts:
+    description: 'Known hosts for SSH. Not supported on cave.'
+    required: false
+    default: ''
+  ssh-strict:
+    description: 'Strict SSH host-key checking. Not supported on cave.'
+    required: false
+    default: 'true'
+  ssh-user:
+    description: 'SSH user. Not supported on cave.'
+    required: false
+    default: 'git'
+  persist-credentials:
+    description: 'Keep the fetch credentials configured for later git steps.'
+    required: false
+    default: 'true'
   path:
-    description: 'Relative directory under the workspace to check out into.'
+    description: 'Relative path under the workspace to check out into.'
     required: false
     default: ''
+  clean:
+    description: 'Clean the workspace (git clean -ffdx && reset --hard) before fetching.'
+    required: false
+    default: 'true'
+  filter:
+    description: 'Partial-clone filter (e.g. blob:none).'
+    required: false
+    default: ''
+  sparse-checkout:
+    description: 'Newline-separated patterns for a sparse checkout.'
+    required: false
+    default: ''
+  sparse-checkout-cone-mode:
+    description: 'Use cone mode for sparse checkout.'
+    required: false
+    default: 'true'
   fetch-depth:
     description: 'Number of commits to fetch. 0 fetches full history.'
     required: false
     default: '1'
+  fetch-tags:
+    description: 'Also fetch tags (even with a shallow fetch-depth).'
+    required: false
+    default: 'false'
+  show-progress:
+    description: 'Show fetch progress (cosmetic; accepted for compatibility).'
+    required: false
+    default: 'true'
+  lfs:
+    description: 'Download Git-LFS files (needs git-lfs in the job image).'
+    required: false
+    default: 'false'
   submodules:
     description: 'Check out submodules: true (top-level), recursive, or false.'
     required: false
     default: 'false'
-  clean:
-    description: 'Run git clean before fetching. (Reserved; not yet honored.)'
+  set-safe-directory:
+    description: 'Add the workspace to git safe.directory.'
     required: false
     default: 'true'
+  github-server-url:
+    description: 'Server URL. Accepted for compatibility; cave resolves cave-local.'
+    required: false
+    default: ''
 
 outputs:
   ref:
@@ -37,7 +94,8 @@ outputs:
   commit:
     description: 'The commit SHA that was checked out.'
 
-# cave runs this in-process on the runner via the built-in Lisp action registry.
+# cave runs this in-process on the runner via the built-in Lisp action registry;
+# its git effects happen inside the job container.
 runs:
   using: 'lisp'
   main: 'cave:action-checkout'

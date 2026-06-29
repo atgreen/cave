@@ -486,9 +486,13 @@ Actions syntax so existing `run:`-based workflows port with little change:
   - **Built-in `actions/*`** — cave-authored, compiled into the runner. They run
     as in-runner *orchestrators* that effect their changes **in the job
     container** via `podman exec` (so they share the `run:` steps' filesystem and
-    environment, like GitHub driving a container job). `actions/checkout` clones
-    the repo into the container honoring `ref`, `path`, `fetch-depth` (`0` = full
-    history), and `submodules`, and sets `commit`/`ref` outputs.
+    environment, like GitHub driving a container job). `actions/checkout` is
+    **GitHub `checkout@v4`-compatible**: it honors `repository`, `ref`, `token` +
+    `persist-credentials`, `path`, `clean`, `filter`, `sparse-checkout`
+    (+`-cone-mode`), `fetch-depth` (`0` = full history), `fetch-tags`, `lfs`,
+    `submodules`, and `set-safe-directory`, and sets `commit`/`ref` outputs.
+    (`ssh-key`/SSH auth is unsupported — use `token`; for `pull_request` cave
+    checks out the triggering commit rather than a synthetic merge ref.)
   - **Third-party `owner/repo@ref`** — fetched from the chamber and run in a
     dedicated **`cave-actions` container** (a `using: lisp` action), sharing only
     the workspace + the file-command runtime dir. Untrusted code never enters the
