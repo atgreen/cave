@@ -103,8 +103,12 @@ section { margin-bottom: var(--sp-8); }
   font-weight: 700;
   font-size: .95rem;
   letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
 }
 .nav-brand:hover { color: var(--accent); }
+.nav-logo { width: 1.25em; height: 1.25em; flex: 0 0 auto; }
 .nav-right { display: flex; align-items: center; gap: var(--sp-4); }
 .nav-user {
   color: var(--text-secondary);

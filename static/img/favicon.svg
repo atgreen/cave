@@ -1,4 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="4" fill="#131216"/>
-  <text x="16" y="23" text-anchor="middle" font-family="monospace" font-weight="700" font-size="20" fill="#e8a84c">C</text>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 256 256"
+     width="256"
+     height="256">
+
+  <g fill="#111">
+
+    <!-- Handle -->
+    <path d="
+      M128 28
+      C152 28 168 44 168 68
+      V88
+      H152
+      V68
+      C152 54 142 44 128 44
+      C114 44 104 54 104 68
+      V88
+      H88
+      V68
+      C88 44 104 28 128 28Z"/>
+
+    <!-- Top -->
+    <rect x="72" y="86" width="112" height="16" rx="8"/>
+
+    <!-- Body -->
+    <path d="
+      M84 102
+      H172
+      C180 102 186 108 186 116
+      L176 192
+      C175 205 165 216 152 216
+      H104
+      C91 216 81 205 80 192
+      L70 116
+      C70 108 76 102 84 102Z"/>
+
+  </g>
+
+  <!-- Flame cutout -->
+  <path fill="#fff"
+        d="
+          M128 185
+          C112 174 110 156 119 144
+          C124 137 129 129 128 114
+          C145 128 154 143 154 160
+          C154 176 143 185 128 185Z"/>
+
 </svg>

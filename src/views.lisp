@@ -79,7 +79,9 @@ explicitly chosen another theme."
        (:body
         (:nav.nav
          (:div.nav-inner
-          (:a.nav-brand :href "/" "Cave")
+          (:a.nav-brand :href "/"
+           (:raw "<svg class=\"nav-logo\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M128 28C152 28 168 44 168 68V88H152V68C152 54 142 44 128 44C114 44 104 54 104 68V88H88V68C88 44 104 28 128 28Z\"/><rect x=\"72\" y=\"86\" width=\"112\" height=\"16\" rx=\"8\"/><path fill-rule=\"evenodd\" d=\"M84 102H172C180 102 186 108 186 116L176 192C175 205 165 216 152 216H104C91 216 81 205 80 192L70 116C70 108 76 102 84 102Z M128 185C112 174 110 156 119 144C124 137 129 129 128 114C145 128 154 143 154 160C154 176 143 185 128 185Z\"/></svg>")
+           (:span "Cave"))
           (:div.nav-right
            (if *current-user*
                (progn
