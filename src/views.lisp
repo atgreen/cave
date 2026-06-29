@@ -80,7 +80,7 @@ explicitly chosen another theme."
         (:nav.nav
          (:div.nav-inner
           (:a.nav-brand :href "/"
-           (:raw "<svg class=\"nav-logo\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M128 28C152 28 168 44 168 68V88H152V68C152 54 142 44 128 44C114 44 104 54 104 68V88H88V68C88 44 104 28 128 28Z\"/><rect x=\"72\" y=\"86\" width=\"112\" height=\"16\" rx=\"8\"/><path fill-rule=\"evenodd\" d=\"M84 102H172C180 102 186 108 186 116L176 192C175 205 165 216 152 216H104C91 216 81 205 80 192L70 116C70 108 76 102 84 102Z M128 185C112 174 110 156 119 144C124 137 129 129 128 114C145 128 154 143 154 160C154 176 143 185 128 185Z\"/></svg>")
+           (:raw "<svg class=\"nav-logo\" viewBox=\"0 0 256 256\" aria-hidden=\"true\"><g fill=\"none\" stroke=\"currentColor\" stroke-width=\"16\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M104 62a24 24 0 0 1 48 0\"/><line x1=\"104\" y1=\"62\" x2=\"104\" y2=\"78\"/><line x1=\"152\" y1=\"62\" x2=\"152\" y2=\"78\"/><path d=\"M84 84H172\"/><path d=\"M92 92H164\"/><path d=\"M96 92L84 176Q84 188 96 188H160Q172 188 172 176L160 92\"/><path d=\"M92 196H164\"/></g><g fill=\"currentColor\"><path d=\"M112 142l-14 14 14 14 8-8 -6-6 6-6z\"/><rect x=\"123\" y=\"136\" width=\"10\" height=\"40\" rx=\"5\" transform=\"rotate(15 128 156)\"/><path d=\"M144 142l14 14 -14 14 -8-8 6-6 -6-6z\"/></g></svg>")
            (:span "Cave"))
           (:div.nav-right
            (if *current-user*

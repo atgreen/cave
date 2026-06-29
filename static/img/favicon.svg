@@ -1,48 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg"
-     viewBox="0 0 256 256"
-     width="256"
-     height="256">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
 
-  <g fill="#111">
+  <!-- Circular background -->
+  <circle cx="128" cy="128" r="120" fill="#111"></circle>
+
+  <!-- Lantern -->
+  <g fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
 
     <!-- Handle -->
+    <path d="M104 62
+             a24 24 0 0 1 48 0"></path>
+
+    <!-- Handle legs -->
+    <line x1="104" y1="62" x2="104" y2="78"></line>
+    <line x1="152" y1="62" x2="152" y2="78"></line>
+
+    <!-- Roof -->
+    <path d="M84 84
+             H172"></path>
+
+    <!-- Roof lip -->
+    <path d="M92 92
+             H164"></path>
+
+    <!-- Lantern body -->
     <path d="
-      M128 28
-      C152 28 168 44 168 68
-      V88
-      H152
-      V68
-      C152 54 142 44 128 44
-      C114 44 104 54 104 68
-      V88
-      H88
-      V68
-      C88 44 104 28 128 28Z"/>
+      M96 92
+      L84 176
+      Q84 188 96 188
+      H160
+      Q172 188 172 176
+      L160 92"></path>
 
-    <!-- Top -->
-    <rect x="72" y="86" width="112" height="16" rx="8"/>
-
-    <!-- Body -->
-    <path d="
-      M84 102
-      H172
-      C180 102 186 108 186 116
-      L176 192
-      C175 205 165 216 152 216
-      H104
-      C91 216 81 205 80 192
-      L70 116
-      C70 108 76 102 84 102Z"/>
-
+    <!-- Base -->
+    <path d="M92 196 H164"></path>
   </g>
 
-  <!-- Flame cutout -->
-  <path fill="#fff"
-        d="
-          M128 185
-          C112 174 110 156 119 144
-          C124 137 129 129 128 114
-          C145 128 154 143 154 160
-          C154 176 143 185 128 185Z"/>
+  <!-- Code symbol -->
+  <g fill="#fff">
+    <path d="M112 142
+             l-14 14
+             14 14
+             8-8
+             -6-6
+             6-6z"></path>
+
+    <rect x="123" y="136" width="10" height="40" rx="5" transform="rotate(15 128 156)"></rect>
+
+    <path d="M144 142
+             l14 14
+             -14 14
+             -8-8
+             6-6
+             -6-6z"></path>
+  </g>
 
 </svg>
