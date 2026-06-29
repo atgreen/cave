@@ -1103,7 +1103,8 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
 
 (defun create-workflow-job (&key workflow-run-id name image needs runs-on
                                 (timeout-seconds 0) continue-on-error privileged
-                                cache-paths (env "") (matrix "") (output-defs ""))
+                                cache-paths (env "") (matrix "") (output-defs "")
+                                base-name)
   "Create a workflow job. NEEDS is a list of job name strings.
    RUNS-ON is a list of label strings the runner must have.
    TIMEOUT-SECONDS is the max job duration (0 means use default).
@@ -1117,6 +1118,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
      (:insert-into 'cave-workflow-jobs
       :set 'workflow-run-id workflow-run-id
            'name name
+           'base-name (or base-name name)
            'image image
            'needs needs-str
            'runs-on runs-on-str
@@ -1222,7 +1224,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
                    AND NOT EXISTS ( ~
                      SELECT 1 FROM cave_workflow_jobs dep ~
                      WHERE dep.workflow_run_id = wj.workflow_run_id ~
-                       AND dep.name = ANY(string_to_array(wj.needs, ',')) ~
+                       AND dep.base_name = ANY(string_to_array(wj.needs, ',')) ~
                        AND dep.status != 'success') ~
                    AND (wj.runs_on = '' OR string_to_array(wj.runs_on, ',') <@ string_to_array(~A, ',')) ~
                    ~A ~

@@ -277,6 +277,7 @@ builds (and layer-caches) an image with the requested packages on demand."
                            (job (create-workflow-job
                                  :workflow-run-id (getf run :id)
                                  :name job-display-name
+                                 :base-name job-name
                                  :image image
                                  :needs needs
                                  :runs-on runs-on
@@ -345,7 +346,9 @@ builds (and layer-caches) an image with the requested packages on demand."
    If the job failed, skip dependent jobs. If succeeded, unblock dependents.
    When all jobs are terminal, finalize the workflow run."
   (let* ((run-id (getf job :workflow-run-id))
-         (job-name (getf job :name))
+         ;; Dependents reference the YAML key (base name); for a matrix job all
+         ;; its expanded instances share one base name.
+         (job-base-name (or (getf job :base-name) (getf job :name)))
          (job-status (getf job :status))
          (continue-on-error (eq (getf job :continue-on-error) t))
          (all-jobs (list-workflow-jobs run-id)))
@@ -353,12 +356,13 @@ builds (and layer-caches) an image with the requested packages on demand."
     (when (and (equal job-status "failure") (not continue-on-error))
       (dolist (j all-jobs)
         (when (and (member (getf j :status) '("queued" "blocked") :test #'equal)
-                   (job-depends-on-p j job-name))
+                   (job-depends-on-p j job-base-name))
           (update-job-status (getf j :id) "skipped")
           ;; Transitively skip jobs depending on the skipped job
           (check-workflow-job-completion
            (list :workflow-run-id run-id
                  :name (getf j :name)
+                 :base-name (getf j :base-name)
                  :status "skipped")))))
     ;; If succeeded (or failed with continue-on-error): unblock waiting jobs
     (when (or (equal job-status "success")
@@ -367,13 +371,18 @@ builds (and layer-caches) an image with the requested packages on demand."
         (dolist (j refreshed-jobs)
           (when (equal (getf j :status) "blocked")
             (let ((needs (parse-needs-string (getf j :needs))))
+              ;; Every instance of every needed base name must have succeeded
+              ;; (or failed under continue-on-error) — matrix fan-in waits on all.
               (when (every (lambda (dep-name)
-                            (let ((dep (find dep-name refreshed-jobs
-                                             :key (lambda (x) (getf x :name))
-                                             :test #'equal)))
-                              (and dep (or (equal (getf dep :status) "success")
-                                           (and (equal (getf dep :status) "failure")
-                                                (eq (getf dep :continue-on-error) t))))))
+                            (let ((deps (remove-if-not
+                                         (lambda (x) (equal (getf x :base-name) dep-name))
+                                         refreshed-jobs)))
+                              (and deps
+                                   (every (lambda (dep)
+                                            (or (equal (getf dep :status) "success")
+                                                (and (equal (getf dep :status) "failure")
+                                                     (eq (getf dep :continue-on-error) t))))
+                                          deps))))
                           needs)
                 (update-job-status (getf j :id) "queued")))))))
     ;; Check if all jobs are terminal → finalize run
@@ -397,23 +406,43 @@ builds (and layer-caches) an image with the requested packages on demand."
           ;; Speculative dependency-fix builds: open the PR if green, else hold.
           (advance-speculative-fix-for-run run-id))))))
 
+(defun %merge-job-outputs (deps)
+  "Merge the resolved-outputs JSON objects of DEPS (a base name's job instances)
+   into one JSON object string (last writer wins). \"{}\" when none."
+  (let ((merged (make-hash-table :test 'equal)))
+    (dolist (d deps)
+      (let ((o (getf d :outputs)))
+        (when (and (stringp o) (plusp (length o)))
+          (handler-case
+              (let ((h (com.inuoe.jzon:parse o)))
+                (when (hash-table-p h)
+                  (maphash (lambda (k v) (setf (gethash k merged) v)) h)))
+            (error () nil)))))
+    (if (zerop (hash-table-count merged))
+        "{}"
+        (com.inuoe.jzon:stringify merged))))
+
 (defun job-needs-context (job)
   "Build the needs.* JSON for JOB: {dep-name: {\"outputs\": {...}, \"result\": status}}
-   for each job JOB needs (same workflow run). Returns \"\" when JOB has no needs."
+   for each needed base name (same workflow run). A matrix dependency fans in:
+   its instances' outputs merge and result is success only if all succeeded.
+   Returns \"\" when JOB has no needs."
   (let ((needs (parse-needs-string (getf job :needs))))
     (if (null needs)
         ""
         (let ((sibs (list-workflow-jobs (getf job :workflow-run-id)))
               (parts nil))
           (dolist (n needs)
-            (let ((dep (find n sibs :key (lambda (x) (getf x :name)) :test #'equal)))
-              (when dep
-                (let ((outs (getf dep :outputs))
-                      (res (getf dep :status)))
+            (let ((deps (remove-if-not (lambda (x) (equal (getf x :base-name) n)) sibs)))
+              (when deps
+                (let ((result (if (every (lambda (d)
+                                           (or (equal (getf d :status) "success")
+                                               (and (equal (getf d :status) "failure")
+                                                    (eq (getf d :continue-on-error) t))))
+                                         deps)
+                                  "success" "failure")))
                   (push (format nil "~S:{\"outputs\":~A,\"result\":~S}"
-                                n
-                                (if (and (stringp outs) (plusp (length outs))) outs "{}")
-                                (if (stringp res) res "success"))
+                                n (%merge-job-outputs deps) result)
                         parts)))))
           (if parts (format nil "{~{~A~^,~}}" (nreverse parts)) "")))))
 

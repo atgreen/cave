@@ -477,10 +477,11 @@ Actions syntax so existing `run:`-based workflows port with little change:
   `include`/`exclude`), each exposing its combo as `${{ matrix.* }}`.
 - **Job `outputs:` + `needs.<job>.outputs`/`needs.<job>.result`** — a job resolves
   its declared `outputs:` from its steps and publishes them to dependent jobs.
+  A `needs:` on a matrix job **fans in**: the dependent waits on every expanded
+  instance, its `outputs` merge, and `result` is `success` only if all succeeded.
 
-Not yet supported: `uses:` actions (Docker/JS/composite/reusable workflows),
-`hashFiles()` (stubbed), and matrix fan-in for `needs:` (a `needs:` entry matches
-a plain job name, not a matrix-expanded `job (x, y)` set).
+Not yet supported: `uses:` actions (Docker/JS/composite/reusable workflows) and
+`hashFiles()` (stubbed).
 
 ## Themes
 

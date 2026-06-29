@@ -905,7 +905,12 @@ ALTER TABLE cave_workflow_jobs ADD COLUMN matrix TEXT NOT NULL DEFAULT '';")
     (67 . "-- Job-level outputs: NAME=expr defs (resolved by the runner) and the
 -- resolved values as a JSON object (consumed via needs.<job>.outputs).
 ALTER TABLE cave_workflow_jobs ADD COLUMN output_defs TEXT NOT NULL DEFAULT '';
-ALTER TABLE cave_workflow_jobs ADD COLUMN outputs TEXT NOT NULL DEFAULT '';"))
+ALTER TABLE cave_workflow_jobs ADD COLUMN outputs TEXT NOT NULL DEFAULT '';")
+
+    (68 . "-- The YAML job key (matrix jobs share a base_name across their
+-- expanded 'job (x, y)' display names) so needs: resolves the whole set.
+ALTER TABLE cave_workflow_jobs ADD COLUMN base_name TEXT NOT NULL DEFAULT '';
+UPDATE cave_workflow_jobs SET base_name = name WHERE base_name = '';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
