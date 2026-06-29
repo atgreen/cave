@@ -28,21 +28,30 @@
       (error (e)
         (llog:warn "Failed to send email" :to to :error (princ-to-string e))))))
 
+(defun repo-recipient-ids (repo-id)
+  "User-ids who should be notified about activity on REPO-ID: the repo owner
+   (tracked via owner_id, NOT a cave_repo_members row), explicit members, and
+   watchers. De-duplicated."
+  (remove-duplicates
+   (append (let ((r (find-repo-by-id repo-id)))
+             (when (and r (integerp (getf r :owner-id)))
+               (list (getf r :owner-id))))
+           (mapcar (lambda (m) (getf m :user-id)) (list-repo-members repo-id))
+           (repo-watcher-ids repo-id))))
+
 (defun notify-repo-participants (repo-id subject body &key exclude-user-id)
-  "Send an email to all repo members (except exclude-user-id)."
-  (let ((members (list-repo-members repo-id)))
-    (dolist (m members)
-      (unless (and exclude-user-id (= (getf m :user-id) exclude-user-id))
-        (let ((user (find-user-by-id (getf m :user-id))))
-          (when (and user (getf user :email))
-            (send-email (getf user :email) subject body)))))))
+  "Email the repo owner, members, and watchers (except exclude-user-id)."
+  (dolist (uid (repo-recipient-ids repo-id))
+    (unless (and exclude-user-id (= uid exclude-user-id))
+      (let ((user (find-user-by-id uid)))
+        (when (and user (getf user :email)
+                   (stringp (getf user :email))
+                   (find #\@ (getf user :email)))
+          (send-email (getf user :email) subject body))))))
 
 (defun notify-inapp (repo-id kind subject link &key exclude-user-id)
-  "Create in-app notifications for a repo's members and watchers (minus the actor)."
-  (let ((recipients (remove-duplicates
-                     (append (mapcar (lambda (m) (getf m :user-id))
-                                     (list-repo-members repo-id))
-                             (repo-watcher-ids repo-id)))))
+  "Create in-app notifications for a repo's owner, members, and watchers (minus the actor)."
+  (let ((recipients (repo-recipient-ids repo-id)))
     (dolist (uid recipients)
       (when (and uid (not (and exclude-user-id (= uid exclude-user-id))))
         (handler-case
@@ -104,6 +113,30 @@
                   (format nil "Review on PR #~A: ~A" (getf pr :number) state)
                   (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
                   :exclude-user-id *current-user-id*)))
+
+(defun notify-pr-opened (repo owner-name repo-name pr)
+  "Notify a repo's owner/members/watchers about a newly opened PR (minus the
+   author). Works for human PRs and bot-opened ones (e.g. dependency auto-fix);
+   the author is taken from the PR record, so *current-user* need not be bound."
+  (let* ((author (when (integerp (getf pr :author-id))
+                   (find-user-by-id (getf pr :author-id))))
+         (who (or (and author (getf author :username))
+                  (and *current-user* (getf *current-user* :username))
+                  "someone"))
+         (subject (format nil "[~A/~A] New PR #~A: ~A → ~A"
+                          owner-name repo-name (getf pr :number)
+                          (getf pr :source-branch) (getf pr :target-branch)))
+         (body (format nil "~A opened pull request #~A (~A → ~A)~%~%~A/~A/~A/pulls/~A"
+                       who (getf pr :number)
+                       (getf pr :source-branch) (getf pr :target-branch)
+                       (config-value :base-url) owner-name repo-name (getf pr :number))))
+    (notify-repo-participants (getf repo :id) subject body
+                              :exclude-user-id (getf pr :author-id))
+    (notify-inapp (getf repo :id) "pr_opened"
+                  (format nil "New PR #~A: ~A → ~A" (getf pr :number)
+                          (getf pr :source-branch) (getf pr :target-branch))
+                  (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+                  :exclude-user-id (getf pr :author-id))))
 
 ;;; --- Webhooks ---
 

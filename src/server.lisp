@@ -2889,7 +2889,8 @@ leaking the viewer's IP or breaking HTTPS."
                               :commit-sha head-commit
                               :ref source
                               :triggered-by-id *current-user-id*)
-        ;; Notify CODEOWNERS of the changed files.
+        ;; Notify the repo owner/members/watchers, plus CODEOWNERS of the files.
+        (ignore-errors (notify-pr-opened repo owner repo-name pr))
         (ignore-errors
          (notify-code-owners owner repo-name repo pr
                              (pr-code-owners owner repo-name pr)))

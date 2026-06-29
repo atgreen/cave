@@ -158,6 +158,10 @@
              :author-id (or actor-id (ensure-dependency-bot-user))
              :source-branch branch :target-branch base :head-commit sha)))
     (set-alert-fix-pr alert-id (getf pr :id))
+    (ignore-errors
+     (let ((repo (find-repo-by-id repo-id)))
+       (when repo
+         (notify-pr-opened repo (repo-owner-name repo) (getf repo :name) pr))))
     pr))
 
 (defun open-dependency-fix-pr (alert-id &key actor-id)
@@ -415,4 +419,8 @@
                                           :triggered-by-id (ensure-dependency-bot-user))
           (error () nil))
         (llog:info "Opened ocicl fix PR" :repo name :pr (getf pr :id) :branch branch)
+        (ignore-errors
+         (let ((repo (find-repo-by-id repo-id)))
+           (when repo
+             (notify-pr-opened repo (repo-owner-name repo) (getf repo :name) pr))))
         pr))))
