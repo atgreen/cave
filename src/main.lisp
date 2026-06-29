@@ -867,6 +867,37 @@ GitHub-Actions variable has a cave-native alias). Non-GITHUB_ keys pass through.
                 when (uiop:string-prefix-p "GITHUB_" p)
                   collect (concatenate 'string "CAVE_" (subseq p 7)))))
 
+(defun %pairs->map (pairs &key strip downcase)
+  "Hash-table (string test) from KEY=VALUE PAIRS, optionally stripping a key
+prefix and downcasing the key."
+  (let ((h (make-hash-table :test 'equal)))
+    (dolist (p pairs h)
+      (let ((eq (position #\= p)))
+        (when eq
+          (let ((k (subseq p 0 eq)) (v (subseq p (1+ eq))))
+            (when (and strip (uiop:string-prefix-p strip k)) (setf k (subseq k (length strip))))
+            (when downcase (setf k (string-downcase k)))
+            (setf (gethash k h) v)))))))
+
+(defun %gha-context (env-pairs secret-pairs steps-map job-status)
+  "Assemble the ${{ }} evaluation context for the runner from the data it has:
+github.* / runner.* (from the GITHUB_*/RUNNER_* env), env.*, secrets.*, the
+accumulated steps.* outputs, and job.status."
+  (flet ((prefixed (pre) (remove-if-not (lambda (p) (uiop:string-prefix-p pre p)) env-pairs)))
+    (let ((ctx (make-hash-table :test 'equal))
+          (job (make-hash-table :test 'equal)))
+      (setf (gethash "github" ctx) (%pairs->map (prefixed "GITHUB_") :strip "GITHUB_" :downcase t))
+      ;; `cave` mirrors `github` — for every GITHUB_* there's a CAVE_* twin, so
+      ;; ${{ cave.sha }} works exactly like ${{ github.sha }}.
+      (setf (gethash "cave" ctx) (%pairs->map (prefixed "CAVE_") :strip "CAVE_" :downcase t))
+      (setf (gethash "runner" ctx) (%pairs->map (prefixed "RUNNER_") :strip "RUNNER_" :downcase t))
+      (setf (gethash "env" ctx) (%pairs->map env-pairs))
+      (setf (gethash "secrets" ctx) (%pairs->map secret-pairs))
+      (setf (gethash "steps" ctx) (or steps-map (make-hash-table :test 'equal)))
+      (setf (gethash "status" job) (or job-status "success"))
+      (setf (gethash "job" ctx) job)
+      ctx)))
+
 (defun %runner-arch ()
   "GitHub-Actions-style RUNNER_ARCH for the host CPU."
   (let ((m (string-trim '(#\Newline #\Space)
@@ -1291,13 +1322,28 @@ GitHub-Actions variable has a cave-native alias). Non-GITHUB_ keys pass through.
                                                       (format nil "GITHUB_ENV=~A" f-env)
                                                       (format nil "GITHUB_PATH=~A" f-path)
                                                       (format nil "GITHUB_STEP_SUMMARY=~A" f-sum))))
+                                             ;; ${{ }} expression context (github/env/secrets/runner).
+                                             (gha-ctx (%gha-context
+                                                       (append job-env-pairs acc-env step-env-pairs)
+                                                       secret-pairs nil
+                                                       (if overall-success "success" "failure")))
+                                             ;; Interpolate ${{ }} in the command and step env values.
+                                             (icmd (interpolate-gha step-cmd gha-ctx))
+                                             (istep-env
+                                               (mapcar (lambda (p)
+                                                         (let ((eq (position #\= p)))
+                                                           (if eq
+                                                               (concatenate 'string (subseq p 0 (1+ eq))
+                                                                            (interpolate-gha (subseq p (1+ eq)) gha-ctx))
+                                                               p)))
+                                                       step-env-pairs))
                                              ;; acc-env (from prior $GITHUB_ENV) < step env < file vars.
-                                             (exec-pairs (append acc-env step-env-pairs proto-pairs))
+                                             (exec-pairs (append acc-env istep-env proto-pairs))
                                              ;; $GITHUB_PATH carry-forward, prepended to PATH.
                                              (script (if acc-path
                                                          (format nil "export PATH=~A:\"$PATH\"~%~A"
-                                                                 (format nil "~{~A~^:~}" acc-path) step-cmd)
-                                                         step-cmd))
+                                                                 (format nil "~{~A~^:~}" acc-path) icmd)
+                                                         icmd))
                                              (exec-cmd
                                                (append (list "podman" "exec")
                                                        (loop for p in exec-pairs append (list "-e" p))

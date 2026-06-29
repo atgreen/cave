@@ -462,9 +462,15 @@ Actions syntax so existing `run:`-based workflows port with little change:
   the job log; `::add-mask::` redacts a value from the logs.
 - **Multi-line `run: |`** literal and `>` folded block scalars are parsed
   (shell `#` comments inside a block are preserved).
+- **`${{ }}` expressions** in `run:` and `env:` are evaluated — the full GitHub
+  Actions expression language (operators, `contains`/`startsWith`/`format`/
+  `join`/`toJSON`/`fromJSON`/…) against the `github`, `env`, `secrets`, and
+  `runner` contexts. **A `cave` context mirrors `github`**, so `${{ cave.sha }}`
+  works like `${{ github.sha }}`.
 
-Not yet supported: `${{ }}` expression evaluation, `uses:` actions (Docker/JS/
-composite/reusable workflows), and matrix builds.
+Not yet supported: `${{ }}` in `if:` conditions and the `steps`/`needs`/`matrix`
+contexts, `uses:` actions (Docker/JS/composite/reusable workflows), and matrix
+builds.
 
 ## Themes
 
