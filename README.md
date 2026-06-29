@@ -44,7 +44,7 @@ are not built yet.
 ### Experimental
 
 - **Stacked changesets** — dependent PRs are tracked and displayed as a stack, but there is no atomic "land stack" yet; members still merge one PR at a time (see *Planned*)
-- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back. Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
+- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back, with a partial **GitHub-Actions-compatible** syntax: `push`/`pull_request`/`tag` triggers, workflow/job/step `env:`, multi-line `run: |` blocks, the standard `GITHUB_*` env (each with a `CAVE_*` twin) plus `RUNNER_*`/`CI`, and the `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_PATH`/`$GITHUB_STEP_SUMMARY` file-command protocol (`${{ }}` expressions and `uses:` actions are not yet supported). Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs (as is anything a step emits via `::add-mask::`). A reaper requeues jobs orphaned by a dead/restarted runner (bounded retries) so the queue self-heals. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
 - **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
 
 ### Planned
@@ -424,11 +424,16 @@ jobs:
     cache:
       - ~/.npm
       - node_modules
+    env:
+      NODE_ENV: test          # workflow/job/step env: layering
     steps:
       - name: install
         run: npm ci
-      - name: test
-        run: npm test
+      - name: test            # multi-line run: | blocks are supported
+        run: |
+          echo "building $GITHUB_REPOSITORY @ $GITHUB_SHA"
+          npm test
+          echo "passed=true" >> "$GITHUB_OUTPUT"
 ```
 
 **Reusable caches** — a job's `cache:` directive lists in-container directories
@@ -437,6 +442,29 @@ Each is backed by a **repo-scoped** persistent volume (different repos never
 share a cache), mounted at the declared path. The runner additionally keeps a
 built-in Common Lisp FASL cache at `~/.cache/common-lisp` for every job, so SBCL
 builds stay incremental without any configuration.
+
+**GitHub-Actions-style workflows** — cave aims to run the common subset of GitHub
+Actions syntax so existing `run:`-based workflows port with little change:
+
+- **Triggers** — `on: [push]`, `on: [pull_request]`, and `on: [tag]` (a push to a
+  `refs/tags/*` ref; lets a release workflow run only on tags). `manual` too.
+- **`env:` layering** — at workflow, job, and step level (step overrides job
+  overrides workflow), injected into each step.
+- **Standard env** — every step gets the usual `GITHUB_*` variables
+  (`GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_REF`/`REF_NAME`/`REF_TYPE`,
+  `GITHUB_RUN_ID`, `GITHUB_WORKFLOW`, `GITHUB_ACTOR`, `GITHUB_EVENT_NAME`,
+  `GITHUB_WORKSPACE`, …), the `RUNNER_OS`/`RUNNER_ARCH`/`RUNNER_TEMP` set, and
+  `CI=true`. **For every `GITHUB_*` variable there is a `CAVE_*` twin** with the
+  same value (`CAVE_REPOSITORY`, `CAVE_SHA`, …) for cave-native scripts.
+- **File commands** — `$GITHUB_OUTPUT`, `$GITHUB_ENV`, `$GITHUB_PATH`, and
+  `$GITHUB_STEP_SUMMARY` (each with a `CAVE_*` twin). Writing to `$GITHUB_ENV` /
+  `$GITHUB_PATH` carries into later steps; `$GITHUB_STEP_SUMMARY` is streamed into
+  the job log; `::add-mask::` redacts a value from the logs.
+- **Multi-line `run: |`** literal and `>` folded block scalars are parsed
+  (shell `#` comments inside a block are preserved).
+
+Not yet supported: `${{ }}` expression evaluation, `uses:` actions (Docker/JS/
+composite/reusable workflows), and matrix builds.
 
 ## Themes
 
