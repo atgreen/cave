@@ -1,66 +1,46 @@
 name: Release
-on: [push]
+# Only runs when a tag is pushed (ref refs/tags/*), never on ordinary commits.
+on: [tag]
 jobs:
   build:
     image: ghcr.io/atgreen/fedora-cave-builder:latest
     timeout: 1800
+    cache:
+      - /root/.cache/common-lisp
     steps:
-      - name: Skip unless HEAD is on a v* tag
-        # Cave's workflow system doesn't (yet) filter triggers by tag name,
-        # so we exit 0 early whenever the just-pushed commit isn't tagged
-        # like a release.
+      - name: Resolve release tag
         run: |
           set -e
-          TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
-          if [ -z "$TAG" ]; then
-            echo "HEAD is not on a tag — nothing to release."
-            exit 0
-          fi
-          case "$TAG" in
-            v*) echo "Building release for $TAG" ;;
-            *)
-              echo "Tag '$TAG' does not match v* — skipping release build."
-              exit 0
-              ;;
-          esac
+          TAG=$(git describe --tags --exact-match HEAD)
+          echo "Building release for $TAG"
           echo "$TAG" > /workspace/.release-tag
 
       - name: Install Lisp dependencies
-        run: |
-          [ -f /workspace/.release-tag ] || { echo "Not a release build; skipping."; exit 0; }
-          ocicl install
+        run: ocicl install
 
       - name: Build cave binary
-        run: |
-          [ -f /workspace/.release-tag ] || { echo "Not a release build; skipping."; exit 0; }
-          make cave-server cave
+        run: make cave-server cave
 
       - name: Verify the binary runs
         run: |
-          [ -f /workspace/.release-tag ] || { echo "Not a release build; skipping."; exit 0; }
           ./cave-server --version || true
           ls -lah cave-server cave
 
       - name: Generate SBOMs
         run: |
-          [ -f /workspace/.release-tag ] || { echo "Not a release build; skipping."; exit 0; }
           ocicl create-sbom cyclonedx cave-sbom.json
           ocicl create-sbom spdx cave-sbom.spdx.json
           ls -lah cave-sbom.json cave-sbom.spdx.json
 
       - name: Summary
         run: |
-          [ -f /workspace/.release-tag ] || exit 0
           TAG=$(cat /workspace/.release-tag)
           echo "===================================================="
           echo "Release build complete for $TAG"
-          echo "Artifacts produced in /workspace:"
-          echo "  cave-server    — server binary"
-          echo "  cave           — CLI client"
-          echo "  cave-sbom.json — CycloneDX SBOM"
+          echo "  cave-server         — server binary"
+          echo "  cave                — CLI client"
+          echo "  cave-sbom.json      — CycloneDX SBOM"
           echo "  cave-sbom.spdx.json — SPDX SBOM"
-          echo
-          echo "Next: container images are published by the parallel"
-          echo "GitHub Actions workflow (.github/workflows/containers.yaml)"
-          echo "to ghcr.io/atgreen/cave:$TAG."
+          echo "Container images are published by ci.yml to"
+          echo "ghcr.io/atgreen/cave:main on every push."
           echo "===================================================="

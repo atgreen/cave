@@ -87,10 +87,18 @@ builds (and layer-caches) an image with the requested packages on demand."
   "Parse a workflow YAML file and create run/jobs/steps if trigger matches."
   (let ((workflow (yaml-parse content)))
     (unless workflow (return-from schedule-workflow-from-yaml nil))
-    ;; Check if trigger matches
+    ;; Check if trigger matches. Triggers are ref-aware: a push to a tag
+    ;; (ref refs/tags/*) satisfies both `push` and `tag`, while a branch push
+    ;; satisfies only `push`. This lets a release workflow say `on: [tag]` and
+    ;; never schedule on ordinary commits.
     (let* ((on-field (cdr (assoc "on" workflow :test #'equal)))
-           (triggers (if (listp on-field) on-field (list on-field))))
-      (unless (member trigger triggers :test #'equal)
+           (triggers (if (listp on-field) on-field (list on-field)))
+           (is-tag (and ref (uiop:string-prefix-p "refs/tags/" ref)))
+           (effective (cond
+                        ((and (equal trigger "push") is-tag) '("push" "tag"))
+                        ((equal trigger "push") '("push"))
+                        (t (list trigger)))))
+      (unless (some (lambda (e) (member e triggers :test #'equal)) effective)
         (return-from schedule-workflow-from-yaml nil))
       ;; Create workflow run
       (let* ((name (or (cdr (assoc "name" workflow :test #'equal))
