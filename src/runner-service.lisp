@@ -243,7 +243,9 @@ RUNNER_*/file-protocol vars)."
                                               :command (getf s :command)
                                               :timeout-seconds (getf s :timeout-seconds 0)
                                               :continue-on-error (eq (getf s :continue-on-error) t)
-                                              :env (or (getf s :env) "")))
+                                              :env (or (getf s :env) "")
+                                              :id-name (or (getf s :id-name) "")
+                                              :if-cond (or (getf s :if-cond) "")))
                              steps)))
     ;; Mark workflow run as running if it's still queued
     (when (and run (equal (getf run :status) "queued"))

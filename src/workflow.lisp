@@ -4,6 +4,16 @@
 
 (in-package #:cave)
 
+(defun %strip-expr-wrapper (v)
+  "An `if:` value may be a bare expression (success()) or wrapped (${{ … }}).
+Return the bare expression string (\"\" for nil/non-string)."
+  (if (stringp v)
+      (let ((s (string-trim '(#\Space #\Tab) v)))
+        (if (and (uiop:string-prefix-p "${{" s) (uiop:string-suffix-p "}}" s))
+            (string-trim '(#\Space #\Tab) (subseq s 3 (- (length s) 2)))
+            s))
+      ""))
+
 (defun %env-map->string (env-raw)
   "Turn a parsed `env:` mapping (alist name -> value) into newline-joined
 KEY=VALUE, coercing non-string values. Returns \"\" for anything non-map."
@@ -212,7 +222,11 @@ builds (and layer-caches) an image with the requested packages on demand."
                                                      (when (integerp v) v)))
                                      (step-continue-on-error (cdr (assoc "continue-on-error" step-spec :test #'equal)))
                                      (step-env (%env-map->string
-                                                (cdr (assoc "env" step-spec :test #'equal)))))
+                                                (cdr (assoc "env" step-spec :test #'equal))))
+                                     (step-id (let ((v (cdr (assoc "id" step-spec :test #'equal))))
+                                                (if (stringp v) v "")))
+                                     (step-if (%strip-expr-wrapper
+                                               (cdr (assoc "if" step-spec :test #'equal)))))
                                  (when command
                                    (create-workflow-step
                                     :job-id (getf job :id)
@@ -221,7 +235,9 @@ builds (and layer-caches) an image with the requested packages on demand."
                                     :command command
                                     :timeout-seconds step-timeout
                                     :continue-on-error (eq step-continue-on-error t)
-                                    :env step-env))))))))))
+                                    :env step-env
+                                    :id-name step-id
+                                    :if-cond step-if))))))))))
         run)))))
 
 (defun rerun-workflow (run-id)

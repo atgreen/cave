@@ -1257,10 +1257,11 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
     :where (:and (:= 'id run-id) (:= 'status "assigned")))))
 
 (defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0)
-                                  continue-on-error (env ""))
+                                  continue-on-error (env "") (id-name "") (if-cond ""))
   "Create a workflow step. TIMEOUT-SECONDS is the max step duration (0 means no limit).
    CONTINUE-ON-ERROR when true allows the job to proceed even if this step fails.
-   ENV is the step-level `env:` map as newline-joined KEY=VALUE."
+   ENV is the step-level `env:` map as newline-joined KEY=VALUE.
+   ID-NAME is the user `id:` (for steps.<id>.outputs); IF-COND the `if:` expression."
   (postmodern:query
    (:insert-into 'cave-workflow-steps
     :set 'job-id job-id
@@ -1270,6 +1271,8 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
          'timeout-seconds (or timeout-seconds 0)
          'continue-on-error (if continue-on-error t nil)
          'env (or env "")
+         'id-name (or id-name "")
+         'if-cond (or if-cond "")
     :returning '*)
    :plist))
 

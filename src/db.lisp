@@ -893,7 +893,11 @@ ALTER TABLE cave_workflow_jobs ADD COLUMN attempts INT NOT NULL DEFAULT 0;")
     (64 . "-- GitHub-Actions-style env layering. Job env is the merged workflow plus
 -- job env map. Step env is the step-level env map (newline KEY=VALUE).
 ALTER TABLE cave_workflow_jobs ADD COLUMN env TEXT NOT NULL DEFAULT '';
-ALTER TABLE cave_workflow_steps ADD COLUMN env TEXT NOT NULL DEFAULT '';"))
+ALTER TABLE cave_workflow_steps ADD COLUMN env TEXT NOT NULL DEFAULT '';")
+
+    (65 . "-- Step id (for steps.<id>.outputs) and if: condition expression.
+ALTER TABLE cave_workflow_steps ADD COLUMN id_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE cave_workflow_steps ADD COLUMN if_cond TEXT NOT NULL DEFAULT '';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

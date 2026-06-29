@@ -898,6 +898,15 @@ accumulated steps.* outputs, and job.status."
       (setf (gethash "job" ctx) job)
       ctx)))
 
+(defun %mk-step-result (outputs outcome conclusion)
+  "A steps.<id> entry: outputs map + outcome (success/failure/skipped) +
+conclusion (outcome after continue-on-error coalesces failures to success)."
+  (let ((h (make-hash-table :test 'equal)))
+    (setf (gethash "outputs" h) outputs
+          (gethash "outcome" h) outcome
+          (gethash "conclusion" h) conclusion)
+    h))
+
 (defun %runner-arch ()
   "GitHub-Actions-style RUNNER_ARCH for the host CPU."
   (let ((m (string-trim '(#\Newline #\Space)
@@ -1277,176 +1286,195 @@ accumulated steps.* outputs, and job.status."
                       (uiop:run-program (list "podman" "start" container-name)
                                         :output :string :error-output :string
                                         :ignore-error-status t))
-                    ;; Run each step in the same container
+                    ;; Run each step. job-failed tracks a non-continue-on-error
+                    ;; failure; later steps still run when their if: says so
+                    ;; (success() default, or always()/failure()).
                     (when overall-success
+                     (let ((steps-table (make-hash-table :test 'equal))
+                           (job-failed nil))
                       (dolist (step steps)
-                        (let ((step-id (slot-value step 'cave::step-id))
-                              (step-name (slot-value step 'cave::name))
-                              (step-cmd (slot-value step 'cave::command))
-                              (step-timeout (let ((ts (slot-value step 'cave::timeout-seconds)))
-                                              (when (and ts (plusp ts)) ts)))
-                              (step-env-pairs (%kv-lines->pairs
-                                               (handler-case (slot-value step 'cave::env)
-                                                 (error () ""))))
-                              (step-continue-on-error (slot-value step 'cave::continue-on-error)))
-                          (format t "  Step ~A: ~A~%"
-                                  (if (uiop:emptyp step-name) "(unnamed)" step-name)
-                                  (subseq step-cmd 0 (min 60 (length step-cmd))))
-                          (ag-grpc:grpc-call channel
-                                             "/cave.runner.RunnerService/UpdateStepStatus"
-                                             (make-instance 'cave::update-step-status-request
-                                                            :step-id step-id :status "running"
-                                                            :exit-code 0)
-                                             :response-type 'cave::update-step-status-response
-                                             :metadata (make-auth-metadata auth-token))
-                          ;; Execute step in container, streaming output
-                          (let ((exit-code
-                                  (block step-run
-                                    (handler-case
-                                      (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))
-                                             ;; Per-step GitHub-Actions file commands. Files live
-                                             ;; in the bind-mounted runtime dir so we read them back
-                                             ;; from the host (gh-dir) after the step.
-                                             (rt-c (format nil "/__cave_rt"))
-                                             (f-out (format nil "~A/out-~A" rt-c step-id))
-                                             (f-env (format nil "~A/env-~A" rt-c step-id))
-                                             (f-path (format nil "~A/path-~A" rt-c step-id))
-                                             (f-sum (format nil "~A/sum-~A" rt-c step-id))
-                                             (h-out (format nil "~A/out-~A" gh-dir step-id))
-                                             (h-env (format nil "~A/env-~A" gh-dir step-id))
-                                             (h-path (format nil "~A/path-~A" gh-dir step-id))
-                                             (h-sum (format nil "~A/sum-~A" gh-dir step-id))
-                                             (proto-pairs
-                                               (%cave-mirror-pairs
-                                                (list (format nil "GITHUB_OUTPUT=~A" f-out)
-                                                      (format nil "GITHUB_ENV=~A" f-env)
-                                                      (format nil "GITHUB_PATH=~A" f-path)
-                                                      (format nil "GITHUB_STEP_SUMMARY=~A" f-sum))))
-                                             ;; ${{ }} expression context (github/env/secrets/runner).
-                                             (gha-ctx (%gha-context
-                                                       (append job-env-pairs acc-env step-env-pairs)
-                                                       secret-pairs nil
-                                                       (if overall-success "success" "failure")))
-                                             ;; Interpolate ${{ }} in the command and step env values.
-                                             (icmd (interpolate-gha step-cmd gha-ctx))
-                                             (istep-env
-                                               (mapcar (lambda (p)
-                                                         (let ((eq (position #\= p)))
-                                                           (if eq
-                                                               (concatenate 'string (subseq p 0 (1+ eq))
-                                                                            (interpolate-gha (subseq p (1+ eq)) gha-ctx))
-                                                               p)))
-                                                       step-env-pairs))
-                                             ;; acc-env (from prior $GITHUB_ENV) < step env < file vars.
-                                             (exec-pairs (append acc-env istep-env proto-pairs))
-                                             ;; $GITHUB_PATH carry-forward, prepended to PATH.
-                                             (script (if acc-path
-                                                         (format nil "export PATH=~A:\"$PATH\"~%~A"
-                                                                 (format nil "~{~A~^:~}" acc-path) icmd)
-                                                         icmd))
-                                             (exec-cmd
-                                               (append (list "podman" "exec")
-                                                       (loop for p in exec-pairs append (list "-e" p))
-                                                       (list container-name "bash" "-c" script)))
-                                             ;; Empty the per-step files so reads are clean.
-                                             (process
-                                               (progn
-                                                 (dolist (hf (list h-out h-env h-path h-sum))
-                                                   (ignore-errors
-                                                    (with-open-file (s hf :direction :output
-                                                                        :if-exists :supersede
-                                                                        :if-does-not-exist :create))))
-                                                 (uiop:launch-program exec-cmd
-                                                                      :output log-file
-                                                                      :error-output log-file)))
-                                             (sent 0))
-                                        ;; Poll log file and send full content to server
-                                        (flet ((send-log ()
-                                                 (handler-case
-                                                     (when (probe-file log-file)
-                                                       (let* ((content (uiop:read-file-string log-file))
-                                                              (len (length content)))
-                                                         (when (> len sent)
-                                                           ;; Send only new content since last send (max 64KB per call)
-                                                           (let* ((new-start sent)
-                                                                  (raw (subseq content new-start
-                                                                               (min len (+ new-start 65536)))))
-                                                             ;; ::add-mask::VALUE — mask it from here on.
-                                                             (dolist (line (uiop:split-string raw :separator '(#\Newline)))
-                                                               (let ((m (search "::add-mask::" line)))
-                                                                 (when m
-                                                                   (let ((v (string-trim '(#\Return #\Space)
-                                                                                         (subseq line (+ m 12)))))
-                                                                     (when (plusp (length v)) (pushnew v masks :test #'equal))))))
-                                                             (let ((chunk (%mask-secrets raw masks)))
-                                                             (setf sent (+ new-start (length raw)))
-                                                             (ag-grpc:grpc-call channel
-                                                              "/cave.runner.RunnerService/AppendStepLog"
-                                                              (make-instance 'cave::append-step-log-request
-                                                                             :step-id step-id :chunk chunk)
-                                                              :response-type 'cave::append-step-log-response
-                                                              :metadata (make-auth-metadata auth-token)))))))
-                                                   (error (e)
-                                                     (format *error-output* "  Log send error: ~A~%" e)))))
-
-                                          (let ((deadline (when step-timeout
-                                                          (+ (get-universal-time) step-timeout))))
-                                            (loop while (uiop:process-alive-p process)
-                                                  do (when (and deadline (>= (get-universal-time) deadline))
-                                                       (format *error-output* "    Step timed out after ~As~%" step-timeout)
-                                                       (uiop:terminate-process process :urgent t)
-                                                       (uiop:wait-process process)
-                                                       (send-log)
-                                                       (ignore-errors (delete-file log-file))
-                                                       (return-from step-run 124))
-                                                     (send-log) (sleep 2))
-                                            (send-log)
-                                            (ignore-errors (delete-file log-file))
-                                            (let ((code (uiop:wait-process process)))
-                                              ;; $GITHUB_ENV -> env for subsequent steps
-                                              (let ((envc (ignore-errors (uiop:read-file-string h-env))))
-                                                (when (and envc (plusp (length envc)))
-                                                  (setf acc-env (append acc-env (%kv-lines->pairs envc)))))
-                                              ;; $GITHUB_PATH -> prepended to PATH for subsequent steps
-                                              (let ((pathc (ignore-errors (uiop:read-file-string h-path))))
-                                                (when pathc
-                                                  (dolist (ln (uiop:split-string pathc :separator '(#\Newline)))
-                                                    (let ((p (string-trim '(#\Return #\Space) ln)))
-                                                      (when (plusp (length p)) (push p acc-path))))))
-                                              ;; $GITHUB_STEP_SUMMARY -> streamed into the step log
-                                              (let ((sumc (ignore-errors (uiop:read-file-string h-sum))))
-                                                (when (and sumc (plusp (length sumc)))
-                                                  (ignore-errors
-                                                   (ag-grpc:grpc-call channel
-                                                    "/cave.runner.RunnerService/AppendStepLog"
-                                                    (make-instance 'cave::append-step-log-request
-                                                                   :step-id step-id
-                                                                   :chunk (format nil "~%::group::Step summary::~%~A~%"
-                                                                                  (%mask-secrets sumc masks)))
-                                                    :response-type 'cave::append-step-log-response
-                                                    :metadata (make-auth-metadata auth-token)))))
-                                              ;; $GITHUB_OUTPUT -> surfaced (steps.<id> context is a later phase)
-                                              (let ((outc (ignore-errors (uiop:read-file-string h-out))))
-                                                (when (and outc (plusp (length outc)))
-                                                  (format t "    step set ~A output(s)~%"
-                                                          (length (%kv-lines->pairs outc)))))
-                                              code))))
-                                      (error () 1)))))
-                            (let ((step-status (if (zerop exit-code) "success" "failure")))
-                              (format t "    ~A (exit ~A)~%" step-status exit-code)
-                              (ag-grpc:grpc-call channel
-                                                 "/cave.runner.RunnerService/UpdateStepStatus"
-                                                 (make-instance 'cave::update-step-status-request
-                                                                :step-id step-id :status step-status
-                                                                :exit-code exit-code)
-                                                 :response-type 'cave::update-step-status-response
-                                                 :metadata (make-auth-metadata auth-token))
-                              (unless (zerop exit-code)
-                                (if step-continue-on-error
-                                    (format t "    continue-on-error: proceeding despite failure~%")
-                                    (progn
-                                      (setf overall-success nil)
-                                      (return)))))))))) ;; close unless,let,mvb,let,dolist,when(steps)
+                        (let* ((step-id (slot-value step 'cave::step-id))
+                               (step-name (slot-value step 'cave::name))
+                               (step-cmd (slot-value step 'cave::command))
+                               (step-timeout (let ((ts (slot-value step 'cave::timeout-seconds)))
+                                               (when (and ts (plusp ts)) ts)))
+                               (step-env-pairs (%kv-lines->pairs
+                                                (handler-case (slot-value step 'cave::env)
+                                                  (error () ""))))
+                               (step-continue-on-error (slot-value step 'cave::continue-on-error))
+                               (id-name (handler-case (slot-value step 'cave::id-name) (error () "")))
+                               (if-cond (handler-case (slot-value step 'cave::if-cond) (error () "")))
+                               (step-outputs (make-hash-table :test 'equal))
+                               ;; ${{ }} context with the accumulated steps.* + job status.
+                               (gha-ctx (%gha-context (append job-env-pairs acc-env step-env-pairs)
+                                                      secret-pairs steps-table
+                                                      (if job-failed "failure" "success")))
+                               (should-run (if (and if-cond (plusp (length if-cond)))
+                                               (gha-expression-true-p if-cond gha-ctx)
+                                               (not job-failed))))
+                          (if (not should-run)
+                              ;; --- skipped (if: false, or a prior step failed) ---
+                              (progn
+                                (format t "  Step ~A: skipped~%"
+                                        (if (uiop:emptyp step-name) "(unnamed)" step-name))
+                                (ag-grpc:grpc-call channel
+                                                   "/cave.runner.RunnerService/UpdateStepStatus"
+                                                   (make-instance 'cave::update-step-status-request
+                                                                  :step-id step-id :status "skipped"
+                                                                  :exit-code 0)
+                                                   :response-type 'cave::update-step-status-response
+                                                   :metadata (make-auth-metadata auth-token))
+                                (when (plusp (length id-name))
+                                  (setf (gethash id-name steps-table)
+                                        (%mk-step-result step-outputs "skipped" "skipped"))))
+                              ;; --- run ---
+                              (progn
+                                (format t "  Step ~A: ~A~%"
+                                        (if (uiop:emptyp step-name) "(unnamed)" step-name)
+                                        (subseq step-cmd 0 (min 60 (length step-cmd))))
+                                (ag-grpc:grpc-call channel
+                                                   "/cave.runner.RunnerService/UpdateStepStatus"
+                                                   (make-instance 'cave::update-step-status-request
+                                                                  :step-id step-id :status "running"
+                                                                  :exit-code 0)
+                                                   :response-type 'cave::update-step-status-response
+                                                   :metadata (make-auth-metadata auth-token))
+                                (let ((exit-code
+                                        (block step-run
+                                          (handler-case
+                                            (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))
+                                                   (rt-c "/__cave_rt")
+                                                   (f-out (format nil "~A/out-~A" rt-c step-id))
+                                                   (f-env (format nil "~A/env-~A" rt-c step-id))
+                                                   (f-path (format nil "~A/path-~A" rt-c step-id))
+                                                   (f-sum (format nil "~A/sum-~A" rt-c step-id))
+                                                   (h-out (format nil "~A/out-~A" gh-dir step-id))
+                                                   (h-env (format nil "~A/env-~A" gh-dir step-id))
+                                                   (h-path (format nil "~A/path-~A" gh-dir step-id))
+                                                   (h-sum (format nil "~A/sum-~A" gh-dir step-id))
+                                                   (proto-pairs
+                                                     (%cave-mirror-pairs
+                                                      (list (format nil "GITHUB_OUTPUT=~A" f-out)
+                                                            (format nil "GITHUB_ENV=~A" f-env)
+                                                            (format nil "GITHUB_PATH=~A" f-path)
+                                                            (format nil "GITHUB_STEP_SUMMARY=~A" f-sum))))
+                                                   ;; Interpolate ${{ }} in command + step env.
+                                                   (icmd (interpolate-gha step-cmd gha-ctx))
+                                                   (istep-env
+                                                     (mapcar (lambda (p)
+                                                               (let ((eq (position #\= p)))
+                                                                 (if eq
+                                                                     (concatenate 'string (subseq p 0 (1+ eq))
+                                                                                  (interpolate-gha (subseq p (1+ eq)) gha-ctx))
+                                                                     p)))
+                                                             step-env-pairs))
+                                                   (exec-pairs (append acc-env istep-env proto-pairs))
+                                                   (script (if acc-path
+                                                               (format nil "export PATH=~A:\"$PATH\"~%~A"
+                                                                       (format nil "~{~A~^:~}" acc-path) icmd)
+                                                               icmd))
+                                                   (exec-cmd
+                                                     (append (list "podman" "exec")
+                                                             (loop for p in exec-pairs append (list "-e" p))
+                                                             (list container-name "bash" "-c" script)))
+                                                   (process
+                                                     (progn
+                                                       (dolist (hf (list h-out h-env h-path h-sum))
+                                                         (ignore-errors
+                                                          (with-open-file (s hf :direction :output
+                                                                              :if-exists :supersede
+                                                                              :if-does-not-exist :create))))
+                                                       (uiop:launch-program exec-cmd
+                                                                            :output log-file
+                                                                            :error-output log-file)))
+                                                   (sent 0))
+                                              (flet ((send-log ()
+                                                       (handler-case
+                                                           (when (probe-file log-file)
+                                                             (let* ((content (uiop:read-file-string log-file))
+                                                                    (len (length content)))
+                                                               (when (> len sent)
+                                                                 (let* ((new-start sent)
+                                                                        (raw (subseq content new-start
+                                                                                     (min len (+ new-start 65536)))))
+                                                                   (dolist (line (uiop:split-string raw :separator '(#\Newline)))
+                                                                     (let ((m (search "::add-mask::" line)))
+                                                                       (when m
+                                                                         (let ((v (string-trim '(#\Return #\Space)
+                                                                                               (subseq line (+ m 12)))))
+                                                                           (when (plusp (length v)) (pushnew v masks :test #'equal))))))
+                                                                   (let ((chunk (%mask-secrets raw masks)))
+                                                                     (setf sent (+ new-start (length raw)))
+                                                                     (ag-grpc:grpc-call channel
+                                                                      "/cave.runner.RunnerService/AppendStepLog"
+                                                                      (make-instance 'cave::append-step-log-request
+                                                                                     :step-id step-id :chunk chunk)
+                                                                      :response-type 'cave::append-step-log-response
+                                                                      :metadata (make-auth-metadata auth-token)))))))
+                                                         (error (e)
+                                                           (format *error-output* "  Log send error: ~A~%" e)))))
+                                                (let ((deadline (when step-timeout
+                                                                  (+ (get-universal-time) step-timeout))))
+                                                  (loop while (uiop:process-alive-p process)
+                                                        do (when (and deadline (>= (get-universal-time) deadline))
+                                                             (format *error-output* "    Step timed out after ~As~%" step-timeout)
+                                                             (uiop:terminate-process process :urgent t)
+                                                             (uiop:wait-process process)
+                                                             (send-log)
+                                                             (ignore-errors (delete-file log-file))
+                                                             (return-from step-run 124))
+                                                           (send-log) (sleep 2))
+                                                  (send-log)
+                                                  (ignore-errors (delete-file log-file))
+                                                  (let ((code (uiop:wait-process process)))
+                                                    (let ((envc (ignore-errors (uiop:read-file-string h-env))))
+                                                      (when (and envc (plusp (length envc)))
+                                                        (setf acc-env (append acc-env (%kv-lines->pairs envc)))))
+                                                    (let ((pathc (ignore-errors (uiop:read-file-string h-path))))
+                                                      (when pathc
+                                                        (dolist (ln (uiop:split-string pathc :separator '(#\Newline)))
+                                                          (let ((p (string-trim '(#\Return #\Space) ln)))
+                                                            (when (plusp (length p)) (push p acc-path))))))
+                                                    (let ((sumc (ignore-errors (uiop:read-file-string h-sum))))
+                                                      (when (and sumc (plusp (length sumc)))
+                                                        (ignore-errors
+                                                         (ag-grpc:grpc-call channel
+                                                          "/cave.runner.RunnerService/AppendStepLog"
+                                                          (make-instance 'cave::append-step-log-request
+                                                                         :step-id step-id
+                                                                         :chunk (format nil "~%::group::Step summary::~%~A~%"
+                                                                                        (%mask-secrets sumc masks)))
+                                                          :response-type 'cave::append-step-log-response
+                                                          :metadata (make-auth-metadata auth-token)))))
+                                                    ;; $GITHUB_OUTPUT -> steps.<id>.outputs
+                                                    (let ((outc (ignore-errors (uiop:read-file-string h-out))))
+                                                      (when (and outc (plusp (length outc)))
+                                                        (dolist (kv (%kv-lines->pairs outc))
+                                                          (let ((eq (position #\= kv)))
+                                                            (when eq
+                                                              (setf (gethash (subseq kv 0 eq) step-outputs)
+                                                                    (subseq kv (1+ eq))))))))
+                                                    code))))
+                                            (error () 1)))))
+                                  (let* ((ok (zerop exit-code))
+                                         (outcome (if ok "success" "failure"))
+                                         (conclusion (if (or ok step-continue-on-error) "success" "failure")))
+                                    (format t "    ~A (exit ~A)~%" outcome exit-code)
+                                    (ag-grpc:grpc-call channel
+                                                       "/cave.runner.RunnerService/UpdateStepStatus"
+                                                       (make-instance 'cave::update-step-status-request
+                                                                      :step-id step-id :status outcome
+                                                                      :exit-code exit-code)
+                                                       :response-type 'cave::update-step-status-response
+                                                       :metadata (make-auth-metadata auth-token))
+                                    (when (plusp (length id-name))
+                                      (setf (gethash id-name steps-table)
+                                            (%mk-step-result step-outputs outcome conclusion)))
+                                    (when (and (not ok) step-continue-on-error)
+                                      (format t "    continue-on-error: proceeding despite failure~%"))
+                                    (when (and (not ok) (not step-continue-on-error))
+                                      (setf job-failed t))))))))
+                      (when job-failed (setf overall-success nil)))))
                     ;; Stop and remove container
                     (uiop:run-program (list "podman" "rm" "-f" container-name)
                                       :output :string :error-output :string
