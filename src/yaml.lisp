@@ -6,9 +6,14 @@
 ;;; - Maps (key: value), nested maps (indentation-based)
 ;;; - Lists (- item), inline lists ([a, b, c])
 ;;; - Strings (quoted and unquoted), integers
-;;; - Comments (#)
+;;; - Block scalars (key: |  and  key: >, with -/+ chomping) — needed for
+;;;   multi-line `run:` steps and `env:`-style blocks, GitHub-Actions style
+;;; - Comments (#), except inside block-scalar bodies (which are taken verbatim,
+;;;   so shell `#` comments in a `run: |` survive)
 ;;;
-;;; Produces nested alists. Lists become Lisp lists.
+;;; Produces nested alists. Lists become Lisp lists. Lines are carried internally
+;;; as (INDENT CONTENT BLOCKVAL) triples; BLOCKVAL is the pre-resolved string for
+;;; a block-scalar key line, else NIL.
 
 (in-package #:cave)
 
@@ -19,18 +24,6 @@
         (yaml-parse-block lines 0)
       (declare (ignore _remaining))
       result)))
-
-(defun yaml-preprocess (input)
-  "Split input into lines, strip comments, drop blank lines.
-   Returns list of (indent . content) cons cells."
-  (let ((result nil))
-    (dolist (raw-line (uiop:split-string input :separator '(#\Newline)))
-      (let* ((line (yaml-strip-comment raw-line))
-             (indent (yaml-indent line))
-             (content (string-trim '(#\Space #\Tab) line)))
-        (unless (uiop:emptyp content)
-          (push (cons indent content) result))))
-    (nreverse result)))
 
 (defun yaml-strip-comment (line)
   "Remove # comments (but not inside quotes)."
@@ -53,12 +46,94 @@
         while (char= ch #\Space)
         count t))
 
+(defun yaml-block-scalar-indicator (content)
+  "If CONTENT is a `key: |`/`key: >` block-scalar header (with optional -/+
+chomping), return (VALUES key indicator), else NIL."
+  (let ((c (yaml-find-colon content)))
+    (when c
+      (let ((rest (string-trim '(#\Space) (subseq content (1+ c)))))
+        (when (member rest '("|" "|-" "|+" ">" ">-" ">+") :test #'string=)
+          (values (string-trim '(#\Space) (subseq content 0 c)) rest))))))
+
+(defun yaml-apply-chomp (joined chomp)
+  "Apply YAML block chomping: :strip removes trailing newlines, :keep keeps them,
+:clip (default) leaves exactly one (or none if empty)."
+  (ecase chomp
+    (:keep joined)
+    (:strip (string-right-trim '(#\Newline) joined))
+    (:clip (let ((s (string-right-trim '(#\Newline) joined)))
+             (if (zerop (length s)) "" (concatenate 'string s (string #\Newline)))))))
+
+(defun yaml-collect-block-scalar (raw n start key-indent indicator)
+  "Assemble a block scalar from RAW lines [START, n). KEY-INDENT is the header's
+indentation; the body is the run of more-indented (and blank) lines. INDICATOR is
+|/>/|-/etc. Returns (VALUES assembled-string next-index)."
+  (let ((block-indent nil) (collected nil) (i start))
+    (loop while (< i n)
+          for rl = (aref raw i)
+          for trimmed = (string-trim '(#\Space #\Tab #\Return) rl)
+          do (cond
+               ((zerop (length trimmed))            ; blank line — part of block
+                (push "" collected) (incf i))
+               ((> (yaml-indent rl) key-indent)     ; deeper than header — body
+                (when (null block-indent) (setf block-indent (yaml-indent rl)))
+                (push rl collected) (incf i))
+               (t (return))))                        ; dedent — block ends
+    (let* ((bi (or block-indent (1+ key-indent)))
+           (body (mapcar (lambda (l)
+                           (string-right-trim
+                            '(#\Return)
+                            (if (>= (length l) bi) (subseq l bi) (string-left-trim '(#\Space) l))))
+                         (nreverse collected)))
+           (literal (char= (char indicator 0) #\|))
+           (chomp (cond ((find #\- indicator) :strip)
+                        ((find #\+ indicator) :keep)
+                        (t :clip)))
+           (joined (if literal
+                       (format nil "~{~A~^~%~}" body)
+                       ;; folded (>) — join consecutive non-empty lines with a
+                       ;; space; a blank line becomes a newline.
+                       (with-output-to-string (s)
+                         (loop with prev-blank = t
+                               for l in body
+                               for blank = (zerop (length l))
+                               do (cond (blank (write-char #\Newline s) (setf prev-blank t))
+                                        (t (unless prev-blank (write-char #\Space s))
+                                           (write-string l s) (setf prev-blank nil))))))))
+      (values (yaml-apply-chomp joined chomp) i))))
+
+(defun yaml-preprocess (input)
+  "Split INPUT into (INDENT CONTENT BLOCKVAL) line triples: strip comments and
+drop blank lines, EXCEPT a `key: |`/`key: >` header swallows its verbatim block
+body into BLOCKVAL (comments preserved). Returns the list of triples."
+  (let* ((raw (coerce (uiop:split-string input :separator '(#\Newline)) 'vector))
+         (n (length raw))
+         (result nil)
+         (i 0))
+    (loop while (< i n)
+          do (let* ((rawline (aref raw i))
+                    (stripped (yaml-strip-comment rawline))
+                    (indent (yaml-indent stripped))
+                    (content (string-trim '(#\Space #\Tab) stripped)))
+               (cond
+                 ((uiop:emptyp content) (incf i))
+                 (t (multiple-value-bind (key indicator)
+                        (yaml-block-scalar-indicator content)
+                      (if key
+                          (multiple-value-bind (body next-i)
+                              (yaml-collect-block-scalar raw n (1+ i) indent indicator)
+                            (push (list indent (concatenate 'string key ": |") body) result)
+                            (setf i next-i))
+                          (progn (push (list indent content nil) result)
+                                 (incf i))))))))
+    (nreverse result)))
+
 (defun yaml-parse-block (lines min-indent)
   "Parse a block of YAML lines at >= MIN-INDENT.
    Returns (VALUES parsed-value remaining-lines)."
   (when (null lines)
     (return-from yaml-parse-block (values nil nil)))
-  (let ((first-content (cdr (first lines))))
+  (let ((first-content (second (first lines))))
     (cond
       ;; List item
       ((and (>= (car (first lines)) min-indent)
@@ -102,7 +177,8 @@
         (return))
       (let* ((line (first remaining))
              (indent (car line))
-             (content (cdr line)))
+             (content (second line))
+             (blockval (third line)))
         (when (< indent min-indent)
           (return))
         (unless (yaml-map-line-p content)
@@ -114,6 +190,9 @@
                                                             (length content))))))
           (setf remaining (rest remaining))
           (cond
+            ;; Pre-resolved block scalar (key: | / key: >)
+            (blockval
+             (push (cons key blockval) result))
             ;; Inline value present
             ((and (not (uiop:emptyp rest-val))
                   (not (string= rest-val "")))
@@ -135,7 +214,7 @@
                 (< (car (first remaining)) min-indent))
         (return))
       (let* ((line (first remaining))
-             (content (cdr line)))
+             (content (second line)))
         (unless (uiop:string-prefix-p "- " content)
           (return))
         (let ((item-content (string-trim '(#\Space) (subseq content 2))))
@@ -145,8 +224,10 @@
             ((yaml-map-line-p item-content)
              ;; Re-parse as a map entry from this point
              (let* ((item-indent (+ (car line) 2))
-                    ;; Build virtual lines: the item-content + any deeper lines
-                    (virtual-lines (cons (cons item-indent item-content) nil))
+                    ;; Build virtual lines: the item-content + any deeper lines.
+                    ;; Preserve the dash line's BLOCKVAL (third line) for the
+                    ;; `- run: |` on-the-dash case.
+                    (virtual-lines (list (list item-indent item-content (third line))))
                     (deeper nil))
                ;; Collect lines deeper than the dash
                (loop while (and remaining (> (car (first remaining)) (car line)))
