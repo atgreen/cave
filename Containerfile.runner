@@ -18,8 +18,10 @@
 FROM quay.io/podman/stable
 
 # podman/stable already provides podman, fuse-overlayfs, git, and the rootless
-# nested-podman setup. Add the build tools some workflow jobs expect.
-RUN dnf install -y make gcc && dnf clean all
+# nested-podman setup. Add the build tools some workflow jobs expect, plus rclone
+# for the S3-backed actions/cache store (the runner operator configures the
+# remote + credentials; rclone reads them from its own env/config).
+RUN dnf install -y make gcc rclone && dnf clean all
 
 # Shared FASL cache, bind-mounted into Lisp build jobs (see main.lisp). Pre-create
 # it owned by the unprivileged `podman` user the runner runs as, so the mount

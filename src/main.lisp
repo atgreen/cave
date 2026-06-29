@@ -1563,10 +1563,10 @@ object string. Empty list -> \"\"."
                            ;; FASL cache without relabeling the whole (growing)
                            ;; tree each run.
                            "-v" (format nil "~A:/root/.cache/common-lisp:z" fasl-cache)
-                           ;; GitHub-Actions file-command runtime dir.
+                           ;; GitHub-Actions file-command runtime dir. Also the
+                           ;; staging area for actions/cache tarballs (the runner
+                           ;; moves them to the keyed store host-side).
                            "-v" (format nil "~A:/__cave_rt:Z" gh-dir)
-                           ;; Keyed cache store for actions/cache (shared :z).
-                           "-v" (format nil "~A:/__cave_cache:z" keyed-cache)
                            "-w" "/workspace"
                            image "sleep" "infinity"))
                          :output '(:string :stripped t)
@@ -1651,6 +1651,8 @@ object string. Empty list -> \"\"."
                                                               :clone-url clone-url
                                                               :commit-sha commit-sha
                                                               :job-token ""
+                                                              :cache-store
+                                                              (%cache-store-descriptor repo-owner repo-name keyed-cache)
                                                               :ref (handler-case (slot-value task 'cave::ref)
                                                                      (error () "")))
                                                         step-outputs channel auth-token step-id masks

@@ -38,7 +38,13 @@ steps:
 
 ## Notes
 
-The store is **repo-scoped** and shared across job containers on the same runner
-host. Keys are immutable: once a key is saved it isn't overwritten. A restore-key
-match restores the newest matching entry but still reports `cache-hit: false`, so
-the job saves a fresh entry under the exact `key`.
+Keys are immutable: once a key is saved it isn't overwritten. A restore-key match
+restores the newest matching entry but still reports `cache-hit: false`, so the
+job saves a fresh entry under the exact `key`.
+
+The store is **owned by the runner operator**. By default it's a local host
+directory (per runner host). Set `CAVE_RUNNER_CACHE_REMOTE` on the runner to an
+[rclone](https://rclone.org) remote (e.g. `mys3:bucket` — S3, R2, B2, MinIO) for
+a cache shared across the fleet and persistent across restarts. The runner
+performs the upload/download host-side with the operator's credentials; workflow
+code never sees them.

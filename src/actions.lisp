@@ -129,16 +129,91 @@
   (map 'string (lambda (c) (if (or (alphanumericp c) (member c '(#\. #\_ #\-))) c #\-))
        key))
 
+;;; --- Cache storage backends (host-side, in the runner process) --------------
+;;;
+;;; The store I/O runs in the RUNNER, never in the job container or a sandboxed
+;;; action — so the runner operator's S3 credentials (read by rclone from its own
+;;; env/config) are never exposed to workflow code. The cache action tars/untars
+;;; in the container and stages the tarball in the bind-mounted runtime dir; the
+;;; store just moves that one file. A descriptor is either:
+;;;   (:backend :dir :root "<host path>")            — local, single-host (default)
+;;;   (:backend :s3  :base "<rclone-remote>/cache/<owner>/<repo>")  — shared
+
+(defun %cache-store-descriptor (owner repo dir-root)
+  "Pick the cache backend from the runner env: CAVE_RUNNER_CACHE_REMOTE (an rclone
+   remote like \"mys3:bucket\") -> :s3; otherwise the local DIR-ROOT."
+  (let ((remote (uiop:getenv "CAVE_RUNNER_CACHE_REMOTE")))
+    (if (and remote (plusp (length remote)))
+        (list :backend :s3
+              :base (format nil "~A/cache/~A/~A" (string-right-trim "/" remote) owner repo))
+        (list :backend :dir :root dir-root))))
+
+(defun %rclone (&rest args)
+  "Run rclone host-side. Returns (values exit-code output)."
+  (multiple-value-bind (out err code)
+      (uiop:run-program (cons "rclone" args) :output '(:string :stripped t)
+                        :error-output '(:string :stripped t) :ignore-error-status t)
+    (values code (concatenate 'string (or out "")
+                              (if (and err (plusp (length err)))
+                                  (concatenate 'string (string #\Newline) err) "")))))
+
+(defun %cache-store-exists (store name)
+  "True if object NAME exists in STORE."
+  (ecase (getf store :backend)
+    (:dir (and (probe-file (merge-pathnames name (uiop:ensure-directory-pathname (getf store :root)))) t))
+    (:s3 (multiple-value-bind (code out) (%rclone "lsf" (format nil "~A/~A" (getf store :base) name))
+           (and (zerop code) (plusp (length (string-trim '(#\Newline #\Space) out))))))))
+
+(defun %cache-store-get (store name dest)
+  "Fetch object NAME from STORE to host file DEST. Returns T on success."
+  (ecase (getf store :backend)
+    (:dir (let ((src (merge-pathnames name (uiop:ensure-directory-pathname (getf store :root)))))
+            (and (probe-file src) (ignore-errors (uiop:copy-file src dest) t))))
+    (:s3 (zerop (%rclone "copyto" (format nil "~A/~A" (getf store :base) name) dest)))))
+
+(defun %cache-store-put (store name src)
+  "Store host file SRC as object NAME in STORE. Returns T on success."
+  (ecase (getf store :backend)
+    (:dir (let ((root (uiop:ensure-directory-pathname (getf store :root))))
+            (ignore-errors (ensure-directories-exist root))
+            (ignore-errors (uiop:copy-file src (merge-pathnames name root)) t)))
+    (:s3 (zerop (%rclone "copyto" src (format nil "~A/~A" (getf store :base) name))))))
+
+(defun %cache-store-find-prefix (store prefix)
+  "Newest object name in STORE whose name starts with PREFIX, or NIL."
+  (ecase (getf store :backend)
+    (:dir (let* ((root (uiop:ensure-directory-pathname (getf store :root)))
+                 (cands (sort (remove-if-not
+                               (lambda (p) (uiop:string-prefix-p prefix (file-namestring p)))
+                               (ignore-errors (uiop:directory-files root)))
+                              #'> :key (lambda (p) (or (ignore-errors (file-write-date p)) 0)))))
+            (and cands (file-namestring (first cands)))))
+    (:s3 (multiple-value-bind (code out)
+             (%rclone "lsf" (format nil "~A/" (getf store :base)) "--format" "tp")
+           (when (zerop code)
+             (let ((best nil) (best-t ""))
+               (dolist (line (uiop:split-string out :separator '(#\Newline)))
+                 (let ((semi (position #\; line)))
+                   (when semi
+                     (let ((ts (subseq line 0 semi)) (name (subseq line (1+ semi))))
+                       (when (and (uiop:string-prefix-p prefix name) (string> ts best-t))
+                         (setf best name best-t ts))))))
+               best))))))
+
 (defun action-cache (ctx inputs)
   "Native `actions/cache` — GitHub cache@v4-compatible. Restores on the main step
-   and returns a post-thunk that saves at job end (unless an exact key hit). The
-   keyed store is a repo-scoped dir bind-mounted at /__cave_cache (shared across
-   the runner host's job containers). Honors path, key, restore-keys, lookup-only,
-   fail-on-cache-miss; sets the `cache-hit` output. Tar/restore run in the job
-   container via (ctx :exec). Returns (values ok outputs log post-thunk)."
+   and returns a post-thunk that saves at job end (unless an exact key hit).
+   Tar/untar run in the job container (ctx :exec), staging the tarball in the
+   bind-mounted runtime dir; the keyed store I/O runs HOST-SIDE in the runner
+   (ctx :cache-store) — a local dir, or an rclone/S3 remote with the operator's
+   credentials, which workflow code never sees. Honors path, key, restore-keys,
+   lookup-only, fail-on-cache-miss; sets the `cache-hit` output. Returns
+   (values ok outputs log post-thunk)."
   (let* ((exec (getf ctx :exec))
          (workspace (or (getf ctx :workspace) "/workspace"))
-         (cache-dir "/__cave_cache")
+         (rt (or (getf ctx :runtime-dir) "/__cave_rt"))
+         (gh-dir (getf ctx :gh-dir))
+         (store (getf ctx :cache-store))
          (key (gethash "key" inputs))
          (paths (%nonblank-lines (gethash "path" inputs)))
          (restore-keys (%nonblank-lines (gethash "restore-keys" inputs)))
@@ -148,19 +223,13 @@
          (outputs (make-hash-table :test 'equal))
          (ok t)
          (exact-hit nil))
-    (flet ((sh (&rest args)
-             (multiple-value-bind (code out) (funcall exec args)
+    (flet ((untar (cont-tar)
+             (multiple-value-bind (code out)
+                 (funcall exec (list "tar" "xzf" cont-tar "-P" "-C" workspace))
                (when (and out (plusp (length out))) (format log "~A~%" out))
-               code))
-           (sh-out (&rest args)
-             (multiple-value-bind (code out) (funcall exec args)
-               (declare (ignore code))
-               (string-trim '(#\Newline #\Space) (or out ""))))
-           (exists (path)
-             (zerop (nth-value 0 (funcall exec (list "sh" "-c"
-                                                     (format nil "test -e ~A" path)))))))
-      (when (null exec)
-        (format log "cache: no container exec available.~%")
+               code)))
+      (when (or (null exec) (null store) (null gh-dir))
+        (format log "cache: no container exec / store available.~%")
         (return-from action-cache (values nil outputs (get-output-stream-string log))))
       (when (or (null key) (zerop (length key)))
         (format log "cache: 'key' is required.~%")
@@ -168,26 +237,29 @@
       (when (null paths)
         (format log "cache: 'path' is required.~%")
         (return-from action-cache (values nil outputs (get-output-stream-string log))))
-      (funcall exec (list "mkdir" "-p" cache-dir))
       (let* ((kf (%cache-key-file key))
-             (entry (format nil "~A/~A.tar.gz" cache-dir kf)))
-        (setf exact-hit (exists entry))
+             (obj (format nil "~A.tar.gz" kf))
+             (cont-tar (format nil "~A/cache-~A.tar.gz" rt kf))
+             (host-tar (format nil "~A/cache-~A.tar.gz" gh-dir kf)))
+        (setf exact-hit (%cache-store-exists store obj))
         (cond
           (exact-hit
            (format log "cache: exact hit for key '~A'~%" key)
-           (unless lookup-only (sh "tar" "xzf" entry "-P" "-C" workspace))
+           (unless lookup-only
+             (if (%cache-store-get store obj host-tar)
+                 (untar cont-tar)
+                 (format log "cache: failed to download entry for '~A'~%" key)))
            (setf (gethash "cache-hit" outputs) "true"))
           (t
            (setf (gethash "cache-hit" outputs) "false")
            (let ((restored nil))
              (dolist (rk restore-keys)
                (unless restored
-                 (let ((match (sh-out "sh" "-c"
-                                      (format nil "ls -1t ~A/~A*.tar.gz 2>/dev/null | head -n1"
-                                              cache-dir (%cache-key-file rk)))))
-                   (when (plusp (length match))
-                     (format log "cache: partial restore from restore-key '~A'~%" rk)
-                     (unless lookup-only (sh "tar" "xzf" match "-P" "-C" workspace))
+                 (let ((match (%cache-store-find-prefix store (%cache-key-file rk))))
+                   (when match
+                     (format log "cache: partial restore from restore-key '~A' (~A)~%" rk match)
+                     (unless lookup-only
+                       (when (%cache-store-get store match host-tar) (untar cont-tar)))
                      (setf restored t)))))
              (unless restored
                (format log "cache: no match for key '~A'~%" key)
@@ -198,20 +270,19 @@
         (let ((post (when (and ok (not exact-hit) (not lookup-only))
                       (lambda ()
                         (let ((plog (make-string-output-stream)))
-                          (flet ((psh (&rest args)
-                                   (multiple-value-bind (code out) (funcall exec args)
-                                     (when (and out (plusp (length out))) (format plog "~A~%" out))
-                                     code)))
-                            (funcall exec (list "mkdir" "-p" cache-dir))
-                            (if (exists entry)
-                                (format plog "cache: key '~A' was saved by another job; skipping.~%" key)
-                                (let ((tmp (format nil "~A/.tmp-~A.tar.gz" cache-dir kf)))
-                                  (format plog "cache: saving ~{~A~^, ~} under key '~A'~%" paths key)
-                                  (if (zerop (apply #'psh "tar" "czf" tmp "-P" "-C" workspace paths))
-                                      (psh "mv" "-f" tmp entry)
-                                      (progn (format plog "cache: save failed~%")
-                                             (psh "rm" "-f" tmp)))))
-                            (values t (get-output-stream-string plog))))))))
+                          (if (%cache-store-exists store obj)
+                              (format plog "cache: key '~A' was saved by another job; skipping.~%" key)
+                              (progn
+                                (format plog "cache: saving ~{~A~^, ~} under key '~A'~%" paths key)
+                                (multiple-value-bind (code out)
+                                    (funcall exec (append (list "tar" "czf" cont-tar "-P" "-C" workspace) paths))
+                                  (when (and out (plusp (length out))) (format plog "~A~%" out))
+                                  (cond
+                                    ((not (zerop code)) (format plog "cache: tar failed.~%"))
+                                    ((%cache-store-put store obj host-tar) (format plog "cache: saved.~%"))
+                                    (t (format plog "cache: upload failed.~%"))))
+                                (funcall exec (list "rm" "-f" cont-tar))))
+                          (values t (get-output-stream-string plog)))))))
           (values ok outputs (get-output-stream-string log) post))))))
 
 (defun %sparse-patterns (sparse)
