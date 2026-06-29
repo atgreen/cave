@@ -114,18 +114,29 @@
       (unless (zerop (apply #'%git-in nil log args))
         (format log "checkout: clone failed~%")
         (setf ok nil)))
-    ;; Check out the requested ref (or the triggering commit).
+    ;; Check out the requested ref (or the triggering commit). The clone only
+    ;; fetched the default-branch tip, so explicitly fetch the triggering ref —
+    ;; a real ref is reliably fetchable, unlike a bare SHA — then check out the
+    ;; commit (now present), falling back to the fetched ref tip.
     (when ok
-      (let ((want (cond ((and ref-in (plusp (length ref-in))) ref-in)
-                        ((and commit (plusp (length commit))) commit)
-                        (t nil))))
-        (when want
-          (when (plusp depth)
-            ;; Make sure the wanted ref exists in a shallow clone.
-            (%git-in target log "fetch" "--depth" (princ-to-string depth) "origin" want))
-          (unless (zerop (%git-in target log "checkout" want))
-            (format log "checkout: could not check out ~A~%" want)
-            (setf ok nil)))))
+      (let ((fetch-ref (cond ((and ref-in (plusp (length ref-in))) ref-in)
+                             ((and job-ref (plusp (length job-ref))) job-ref)
+                             (t nil)))
+            (checkout-target (cond ((and commit (plusp (length commit))) commit)
+                                   ((and ref-in (plusp (length ref-in))) ref-in)
+                                   (t nil))))
+        (when fetch-ref
+          (apply #'%git-in target log "fetch"
+                 (append (when (plusp depth) (list "--depth" (princ-to-string depth)))
+                         (list "origin" fetch-ref))))
+        (when checkout-target
+          (unless (zerop (%git-in target log "checkout" checkout-target))
+            (if (and fetch-ref (zerop (%git-in target log "checkout" "FETCH_HEAD")))
+                (format log "checkout: ~A not found; checked out ~A tip instead~%"
+                        checkout-target fetch-ref)
+                (progn
+                  (format log "checkout: could not check out ~A~%" checkout-target)
+                  (setf ok nil)))))))
     ;; Submodules.
     (when (and ok (member submodules '("true" "recursive") :test #'equal))
       (apply #'%git-in target log "submodule" "update" "--init"
