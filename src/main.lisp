@@ -959,7 +959,8 @@ prefix and downcasing the key."
             (when downcase (setf k (string-downcase k)))
             (setf (gethash k h) v)))))))
 
-(defun %gha-context (env-pairs secret-pairs steps-map job-status &optional matrix-map needs-map)
+(defun %gha-context (env-pairs secret-pairs steps-map job-status
+                     &optional matrix-map needs-map workspace-root)
   "Assemble the ${{ }} evaluation context for the runner from the data it has:
 github.* / runner.* (from the GITHUB_*/RUNNER_* env), env.*, secrets.*, the
 accumulated steps.* outputs, job.status, and the strategy matrix.* combo."
@@ -976,6 +977,8 @@ accumulated steps.* outputs, job.status, and the strategy matrix.* combo."
       (setf (gethash "steps" ctx) (or steps-map (make-hash-table :test 'equal)))
       (setf (gethash "matrix" ctx) (or matrix-map (make-hash-table :test 'equal)))
       (setf (gethash "needs" ctx) (or needs-map (make-hash-table :test 'equal)))
+      ;; Host-side workspace root for hashFiles() (keyword key — never a GHA context).
+      (when workspace-root (setf (gethash :workspace-root ctx) workspace-root))
       (setf (gethash "status" job) (or job-status "success"))
       (setf (gethash "job" ctx) job)
       ctx)))
@@ -1585,7 +1588,7 @@ object string. Empty list -> \"\"."
                                (gha-ctx (%gha-context (append job-env-pairs acc-env step-env-pairs)
                                                       secret-pairs steps-table
                                                       (if job-failed "failure" "success")
-                                                      matrix-map needs-map))
+                                                      matrix-map needs-map workdir))
                                (should-run (if (and if-cond (plusp (length if-cond)))
                                                (gha-expression-true-p if-cond gha-ctx)
                                                (not job-failed))))
@@ -1771,7 +1774,7 @@ object string. Empty list -> \"\"."
                         (let ((final-ctx (%gha-context (append job-env-pairs acc-env)
                                                        secret-pairs steps-table
                                                        (if job-failed "failure" "success")
-                                                       matrix-map needs-map))
+                                                       matrix-map needs-map workdir))
                               (outs nil))
                           (dolist (kv (%kv-lines->pairs output-defs))
                             (let ((eqpos (position #\= kv)))

@@ -145,6 +145,76 @@ nulllit = 'null'
 
 ;;; ---------- functions ----------
 
+(defun %glob-segment-match-p (pat str)
+  "Match one path segment PAT (with * = any run, ? = one char) against STR."
+  (labels ((m (pp sp)
+             (cond ((= pp (length pat)) (= sp (length str)))
+                   ((char= (char pat pp) #\*)
+                    (or (m (1+ pp) sp)
+                        (and (< sp (length str)) (m pp (1+ sp)))))
+                   ((char= (char pat pp) #\?)
+                    (and (< sp (length str)) (m (1+ pp) (1+ sp))))
+                   ((and (< sp (length str)) (char= (char pat pp) (char str sp)))
+                    (m (1+ pp) (1+ sp)))
+                   (t nil))))
+    (m 0 0)))
+
+(defun %glob-segments (s)
+  (remove "" (uiop:split-string s :separator '(#\/)) :test #'string=))
+
+(defun %glob-match-p (pattern path)
+  "Match a glob PATTERN (/-separated, ** matches any number of dirs, leading ./
+   ignored) against the /-separated relative PATH."
+  (let ((psegs (%glob-segments (if (uiop:string-prefix-p "./" pattern)
+                                   (subseq pattern 2) pattern)))
+        (ssegs (%glob-segments path)))
+    (labels ((m (ps ss)
+               (cond ((null ps) (null ss))
+                     ((string= (car ps) "**")
+                      (or (m (cdr ps) ss)
+                          (and ss (m ps (cdr ss)))))
+                     ((null ss) nil)
+                     ((%glob-segment-match-p (car ps) (car ss)) (m (cdr ps) (cdr ss)))
+                     (t nil))))
+      (m psegs ssegs))))
+
+(defun %all-files-rel (root)
+  "All regular files under ROOT as /-separated paths relative to ROOT."
+  (let ((root (uiop:ensure-directory-pathname root)) (acc nil))
+    (labels ((walk (dir)
+               (dolist (f (ignore-errors (uiop:directory-files dir))) (push f acc))
+               (dolist (sub (ignore-errors (uiop:subdirectories dir))) (walk sub))))
+      (walk root))
+    (mapcar (lambda (p)
+              (let ((rel (enough-namestring p (uiop:ensure-directory-pathname root))))
+                (substitute #\/ #\\ (string-left-trim "/" rel))))
+            acc)))
+
+(defun %gha-hash-files (patterns ctx)
+  "hashFiles(p...) — SHA-256 over the matched files (relative to the workspace
+   root in CTX). Deterministic and content-sensitive (not byte-identical to
+   GitHub's value — caches are cave-local). \"\" when nothing matches."
+  (let ((root (gethash :workspace-root ctx)))
+    (if (or (null root) (zerop (length (string root)))
+            (not (ignore-errors (probe-file (uiop:ensure-directory-pathname root)))))
+        ""
+        (let* ((pats (mapcar #'%gha-to-string patterns))
+               (matched (sort (remove-if-not
+                               (lambda (rel) (some (lambda (p) (%glob-match-p p rel)) pats))
+                               (%all-files-rel root))
+                              #'string<)))
+          (if (null matched)
+              ""
+              (let ((digest (ironclad:make-digest :sha256))
+                    (base (uiop:ensure-directory-pathname root)))
+                (dolist (rel matched)
+                  (let ((fh (ignore-errors
+                             (ironclad:byte-array-to-hex-string
+                              (ironclad:digest-file :sha256 (merge-pathnames rel base))))))
+                    (when fh (ironclad:update-digest digest
+                                                     (ironclad:ascii-string-to-byte-array fh)))))
+                (ironclad:byte-array-to-hex-string (ironclad:produce-digest digest))))))))
+
 (defun %gha-call (name args ctx)
   "Dispatch a GHA built-in function (case-insensitive)."
   (let ((fn (string-downcase name)))
@@ -175,7 +245,7 @@ nulllit = 'null'
         ((string= fn "tojson") (%to-json (arg 0)))
         ((string= fn "fromjson") (handler-case (com.inuoe.jzon:parse (%gha-to-string (arg 0)))
                                    (error () nil)))
-        ((string= fn "hashfiles") "")        ; TODO: hash workspace files
+        ((string= fn "hashfiles") (%gha-hash-files args ctx))
         ((string= fn "success") (%gha-status-p ctx :success))
         ((string= fn "failure") (%gha-status-p ctx :failure))
         ((string= fn "cancelled") (%gha-status-p ctx :cancelled))
