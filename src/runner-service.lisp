@@ -195,6 +195,38 @@ Returns a newline-joined string of VOLUME<TAB>CONTAINER-PATH lines, or \"\"."
         (if lines (format nil "~{~A~^~%~}" lines) ""))
       ""))
 
+(defun %github-context-env (run repo owner-name repo-name job)
+  "GitHub-Actions context env for a workflow job, as newline KEY=VALUE. The
+runner injects these (and adds a CAVE_* twin for every GITHUB_* key, plus the
+RUNNER_*/file-protocol vars)."
+  (declare (ignore repo))
+  (let* ((ref (let ((r (getf run :ref))) (if (eq r :null) "" (or r ""))))
+         (sha (let ((s (getf run :commit-sha))) (if (eq s :null) "" (or s ""))))
+         (ref-name (cond ((uiop:string-prefix-p "refs/heads/" ref) (subseq ref 11))
+                         ((uiop:string-prefix-p "refs/tags/" ref) (subseq ref 10))
+                         (t ref)))
+         (ref-type (cond ((uiop:string-prefix-p "refs/tags/" ref) "tag")
+                         ((uiop:string-prefix-p "refs/heads/" ref) "branch")
+                         (t "")))
+         (actor (let* ((id (getf run :triggered-by-id))
+                       (u (when (and id (not (eq id :null))) (find-user-by-id id))))
+                  (or (and u (getf u :username)) "")))
+         (event (or (trigger-to-yaml-event (getf run :trigger-event)) "push"))
+         (base (config-value :base-url "")))
+    (with-output-to-string (s)
+      (format s "GITHUB_ACTIONS=true~%CI=true~%")
+      (format s "GITHUB_REPOSITORY=~A/~A~%" owner-name repo-name)
+      (format s "GITHUB_REPOSITORY_OWNER=~A~%" owner-name)
+      (format s "GITHUB_WORKFLOW=~A~%" (or (getf run :workflow-name) ""))
+      (format s "GITHUB_JOB=~A~%" (let ((n (getf job :name))) (if (eq n :null) "" (or n ""))))
+      (format s "GITHUB_RUN_ID=~A~%GITHUB_RUN_NUMBER=~A~%" (getf run :id) (getf run :id))
+      (format s "GITHUB_RUN_ATTEMPT=~A~%" (1+ (or (getf job :attempts) 0)))
+      (format s "GITHUB_SHA=~A~%GITHUB_REF=~A~%" sha ref)
+      (format s "GITHUB_REF_NAME=~A~%GITHUB_REF_TYPE=~A~%" ref-name ref-type)
+      (format s "GITHUB_ACTOR=~A~%GITHUB_EVENT_NAME=~A~%" actor event)
+      (format s "GITHUB_SERVER_URL=~A~%GITHUB_API_URL=~A/api/v1~%" base base)
+      (format s "GITHUB_WORKSPACE=/workspace~%"))))
+
 (defun make-workflow-task-event (job)
   "Build a TaskEvent for a workflow job."
   (let* ((run (find-workflow-run (getf job :workflow-run-id)))
@@ -210,7 +242,8 @@ Returns a newline-joined string of VOLUME<TAB>CONTAINER-PATH lines, or \"\"."
                                                       (if (eq n :null) "" n))
                                               :command (getf s :command)
                                               :timeout-seconds (getf s :timeout-seconds 0)
-                                              :continue-on-error (eq (getf s :continue-on-error) t)))
+                                              :continue-on-error (eq (getf s :continue-on-error) t)
+                                              :env (or (getf s :env) "")))
                              steps)))
     ;; Mark workflow run as running if it's still queued
     (when (and run (equal (getf run :status) "queued"))
@@ -248,7 +281,13 @@ Returns a newline-joined string of VOLUME<TAB>CONTAINER-PATH lines, or \"\"."
                                     (secrets-env-string (secrets-for-repo repo))
                                     "")
                    :cache-mounts (%job-cache-mounts (and run (getf run :repo-id))
-                                                    (getf job :cache-paths "")))))
+                                                    (getf job :cache-paths ""))
+                   ;; GITHUB_*/CAVE_* context + the merged workflow/job `env:`.
+                   :context-env (if (and run repo)
+                                    (concatenate 'string
+                                                 (%github-context-env run repo owner-name repo-name job)
+                                                 (let ((e (getf job :env))) (if (and e (not (eq e :null))) e "")))
+                                    ""))))
 
 (defun handle-update-step-status (request ctx)
   "Update a workflow step's status."

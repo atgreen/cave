@@ -79,6 +79,7 @@ message TaskEvent {
   bool privileged = 12;
   string secrets_env = 13;  // newline-joined KEY=VALUE secrets for the job
   string cache_mounts = 14; // newline-joined VOLUME\tCONTAINER_PATH cache mounts
+  string context_env = 15;  // newline-joined KEY=VALUE: GITHUB_*/CAVE_* context + workflow/job env
 }
 
 message StepSpec {
@@ -88,6 +89,7 @@ message StepSpec {
   string command = 4;
   int32 timeout_seconds = 5;
   bool continue_on_error = 6;
+  string env = 7;           // newline-joined KEY=VALUE step-level env
 }
 
 message UpdateStepStatusRequest {

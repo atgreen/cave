@@ -1103,7 +1103,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
 
 (defun create-workflow-job (&key workflow-run-id name image needs runs-on
                                 (timeout-seconds 0) continue-on-error privileged
-                                cache-paths)
+                                cache-paths (env ""))
   "Create a workflow job. NEEDS is a list of job name strings.
    RUNS-ON is a list of label strings the runner must have.
    TIMEOUT-SECONDS is the max job duration (0 means use default).
@@ -1124,6 +1124,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
            'continue-on-error (if continue-on-error t nil)
            'privileged (if privileged t nil)
            'cache-paths cache-str
+           'env (or env "")
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
@@ -1255,9 +1256,11 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
     :set 'status "queued" 'runner-id :null
     :where (:and (:= 'id run-id) (:= 'status "assigned")))))
 
-(defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0) continue-on-error)
+(defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0)
+                                  continue-on-error (env ""))
   "Create a workflow step. TIMEOUT-SECONDS is the max step duration (0 means no limit).
-   CONTINUE-ON-ERROR when true allows the job to proceed even if this step fails."
+   CONTINUE-ON-ERROR when true allows the job to proceed even if this step fails.
+   ENV is the step-level `env:` map as newline-joined KEY=VALUE."
   (postmodern:query
    (:insert-into 'cave-workflow-steps
     :set 'job-id job-id
@@ -1266,6 +1269,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
          'command command
          'timeout-seconds (or timeout-seconds 0)
          'continue-on-error (if continue-on-error t nil)
+         'env (or env "")
     :returning '*)
    :plist))
 

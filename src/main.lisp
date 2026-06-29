@@ -852,6 +852,31 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
       (when (and v (>= (length v) 4))   ; avoid masking trivially short values
         (setf result (%string-replace-all result v "***"))))))
 
+(defun %kv-lines->pairs (s)
+  "Newline KEY=VALUE blob -> list of non-empty \"KEY=VALUE\" strings."
+  (when (and s (stringp s) (plusp (length s)))
+    (remove-if (lambda (l) (or (uiop:emptyp l) (null (position #\= l))))
+               (mapcar (lambda (l) (string-trim '(#\Return #\Newline) l))
+                       (uiop:split-string s :separator '(#\Newline))))))
+
+(defun %cave-mirror-pairs (pairs)
+  "For each GITHUB_X=VALUE in PAIRS, also emit a CAVE_X=VALUE twin (so every
+GitHub-Actions variable has a cave-native alias). Non-GITHUB_ keys pass through."
+  (append pairs
+          (loop for p in pairs
+                when (uiop:string-prefix-p "GITHUB_" p)
+                  collect (concatenate 'string "CAVE_" (subseq p 7)))))
+
+(defun %runner-arch ()
+  "GitHub-Actions-style RUNNER_ARCH for the host CPU."
+  (let ((m (string-trim '(#\Newline #\Space)
+                        (handler-case (nth-value 0 (uiop:run-program '("uname" "-m")
+                                                                     :output '(:string :stripped t)))
+                          (error () "x86_64")))))
+    (cond ((member m '("x86_64" "amd64") :test #'equal) "X64")
+          ((member m '("aarch64" "arm64") :test #'equal) "ARM64")
+          (t (string-upcase m)))))
+
 (defun make-runner-command ()
   (clingon:make-command
    :name "runner"
@@ -1093,6 +1118,26 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                                       (string-right-trim "/" e)
                                       "/var/lib/cave-runner/work")))
                   (workdir (format nil "~A/cave-job-~A" workdir-base job-id))
+                  ;; Runtime dir for the GitHub-Actions file-command protocol
+                  ;; ($GITHUB_OUTPUT/$GITHUB_ENV/$GITHUB_PATH/$GITHUB_STEP_SUMMARY).
+                  ;; Bind-mounted at /__cave_rt so the runner reads each step's
+                  ;; files back from the host side after the step runs.
+                  (gh-dir (format nil "~A-rt" workdir))
+                  ;; Static job env: GITHUB_*/CAVE_* context + workflow/job env,
+                  ;; plus RUNNER_*; injected as container env at create time.
+                  (context-env (handler-case (slot-value task 'cave::context-env)
+                                 (error () "")))
+                  (job-env-pairs (%cave-mirror-pairs
+                                  (append (%kv-lines->pairs context-env)
+                                          (list "RUNNER_OS=Linux"
+                                                (format nil "RUNNER_ARCH=~A" (%runner-arch))
+                                                "RUNNER_TEMP=/tmp"
+                                                "RUNNER_TOOL_CACHE=/opt/hostedtoolcache"))))
+                  ;; Carried forward across steps via $GITHUB_ENV / $GITHUB_PATH.
+                  (acc-env nil)
+                  (acc-path nil)
+                  ;; Log masks: CI secrets + anything a step emits via ::add-mask::.
+                  (masks (copy-list secret-values))
                   (container-name (format nil "cave-job-~A" job-id))
                   ;; Persisted across jobs so Lisp builds reuse compiled FASLs
                   ;; instead of recompiling the whole ocicl tree every run (the
@@ -1152,9 +1197,11 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                     (uiop:run-program (list "podman" "rm" "-f" container-name)
                                       :output :string :error-output :string
                                       :ignore-error-status t)
-                    ;; Make sure the shared FASL cache dir exists before mounting.
+                    ;; Make sure the shared FASL cache dir + GH runtime dir exist.
                     (ignore-errors
                      (ensure-directories-exist (concatenate 'string fasl-cache "/")))
+                    (ignore-errors
+                     (ensure-directories-exist (concatenate 'string gh-dir "/")))
                     (multiple-value-bind (_out err exit)
                         (uiop:run-program
                          (append
@@ -1167,6 +1214,9 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                           (when privileged (list "--privileged"))
                           ;; Inject CI secrets as environment variables.
                           (loop for p in secret-pairs append (list "-e" p))
+                          ;; Inject the static job env: GITHUB_*/CAVE_* context,
+                          ;; RUNNER_*, CI, and the merged workflow/job `env:`.
+                          (loop for p in job-env-pairs append (list "-e" p))
                           ;; Mount per-job reusable caches (repo-scoped named
                           ;; volumes). :U chowns to the container user so the
                           ;; build can write; the volume auto-creates if absent.
@@ -1181,6 +1231,8 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                            ;; FASL cache without relabeling the whole (growing)
                            ;; tree each run.
                            "-v" (format nil "~A:/root/.cache/common-lisp:z" fasl-cache)
+                           ;; GitHub-Actions file-command runtime dir.
+                           "-v" (format nil "~A:/__cave_rt:Z" gh-dir)
                            "-w" "/workspace"
                            image "sleep" "infinity"))
                          :output '(:string :stripped t)
@@ -1202,6 +1254,9 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                               (step-cmd (slot-value step 'cave::command))
                               (step-timeout (let ((ts (slot-value step 'cave::timeout-seconds)))
                                               (when (and ts (plusp ts)) ts)))
+                              (step-env-pairs (%kv-lines->pairs
+                                               (handler-case (slot-value step 'cave::env)
+                                                 (error () ""))))
                               (step-continue-on-error (slot-value step 'cave::continue-on-error)))
                           (format t "  Step ~A: ~A~%"
                                   (if (uiop:emptyp step-name) "(unnamed)" step-name)
@@ -1218,12 +1273,46 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                                   (block step-run
                                     (handler-case
                                       (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))
-                                             (shell-cmd
-                                               (format nil "podman exec ~A bash -c ~A >~A 2>&1"
-                                                       container-name
-                                                       (uiop:escape-sh-token step-cmd)
-                                                       log-file))
-                                             (process (uiop:launch-program shell-cmd :force-shell t))
+                                             ;; Per-step GitHub-Actions file commands. Files live
+                                             ;; in the bind-mounted runtime dir so we read them back
+                                             ;; from the host (gh-dir) after the step.
+                                             (rt-c (format nil "/__cave_rt"))
+                                             (f-out (format nil "~A/out-~A" rt-c step-id))
+                                             (f-env (format nil "~A/env-~A" rt-c step-id))
+                                             (f-path (format nil "~A/path-~A" rt-c step-id))
+                                             (f-sum (format nil "~A/sum-~A" rt-c step-id))
+                                             (h-out (format nil "~A/out-~A" gh-dir step-id))
+                                             (h-env (format nil "~A/env-~A" gh-dir step-id))
+                                             (h-path (format nil "~A/path-~A" gh-dir step-id))
+                                             (h-sum (format nil "~A/sum-~A" gh-dir step-id))
+                                             (proto-pairs
+                                               (%cave-mirror-pairs
+                                                (list (format nil "GITHUB_OUTPUT=~A" f-out)
+                                                      (format nil "GITHUB_ENV=~A" f-env)
+                                                      (format nil "GITHUB_PATH=~A" f-path)
+                                                      (format nil "GITHUB_STEP_SUMMARY=~A" f-sum))))
+                                             ;; acc-env (from prior $GITHUB_ENV) < step env < file vars.
+                                             (exec-pairs (append acc-env step-env-pairs proto-pairs))
+                                             ;; $GITHUB_PATH carry-forward, prepended to PATH.
+                                             (script (if acc-path
+                                                         (format nil "export PATH=~A:\"$PATH\"~%~A"
+                                                                 (format nil "~{~A~^:~}" acc-path) step-cmd)
+                                                         step-cmd))
+                                             (exec-cmd
+                                               (append (list "podman" "exec")
+                                                       (loop for p in exec-pairs append (list "-e" p))
+                                                       (list container-name "bash" "-c" script)))
+                                             ;; Empty the per-step files so reads are clean.
+                                             (process
+                                               (progn
+                                                 (dolist (hf (list h-out h-env h-path h-sum))
+                                                   (ignore-errors
+                                                    (with-open-file (s hf :direction :output
+                                                                        :if-exists :supersede
+                                                                        :if-does-not-exist :create))))
+                                                 (uiop:launch-program exec-cmd
+                                                                      :output log-file
+                                                                      :error-output log-file)))
                                              (sent 0))
                                         ;; Poll log file and send full content to server
                                         (flet ((send-log ()
@@ -1235,15 +1324,22 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                                                            ;; Send only new content since last send (max 64KB per call)
                                                            (let* ((new-start sent)
                                                                   (raw (subseq content new-start
-                                                                               (min len (+ new-start 65536))))
-                                                                  (chunk (%mask-secrets raw secret-values)))
+                                                                               (min len (+ new-start 65536)))))
+                                                             ;; ::add-mask::VALUE — mask it from here on.
+                                                             (dolist (line (uiop:split-string raw :separator '(#\Newline)))
+                                                               (let ((m (search "::add-mask::" line)))
+                                                                 (when m
+                                                                   (let ((v (string-trim '(#\Return #\Space)
+                                                                                         (subseq line (+ m 11)))))
+                                                                     (when (plusp (length v)) (pushnew v masks :test #'equal))))))
+                                                             (let ((chunk (%mask-secrets raw masks)))
                                                              (setf sent (+ new-start (length raw)))
                                                              (ag-grpc:grpc-call channel
                                                               "/cave.runner.RunnerService/AppendStepLog"
                                                               (make-instance 'cave::append-step-log-request
                                                                              :step-id step-id :chunk chunk)
                                                               :response-type 'cave::append-step-log-response
-                                                              :metadata (make-auth-metadata auth-token))))))
+                                                              :metadata (make-auth-metadata auth-token)))))))
                                                    (error (e)
                                                      (format *error-output* "  Log send error: ~A~%" e)))))
 
@@ -1260,7 +1356,35 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                                                      (send-log) (sleep 2))
                                             (send-log)
                                             (ignore-errors (delete-file log-file))
-                                            (uiop:wait-process process))))
+                                            (let ((code (uiop:wait-process process)))
+                                              ;; $GITHUB_ENV -> env for subsequent steps
+                                              (let ((envc (ignore-errors (uiop:read-file-string h-env))))
+                                                (when (and envc (plusp (length envc)))
+                                                  (setf acc-env (append acc-env (%kv-lines->pairs envc)))))
+                                              ;; $GITHUB_PATH -> prepended to PATH for subsequent steps
+                                              (let ((pathc (ignore-errors (uiop:read-file-string h-path))))
+                                                (when pathc
+                                                  (dolist (ln (uiop:split-string pathc :separator '(#\Newline)))
+                                                    (let ((p (string-trim '(#\Return #\Space) ln)))
+                                                      (when (plusp (length p)) (push p acc-path))))))
+                                              ;; $GITHUB_STEP_SUMMARY -> streamed into the step log
+                                              (let ((sumc (ignore-errors (uiop:read-file-string h-sum))))
+                                                (when (and sumc (plusp (length sumc)))
+                                                  (ignore-errors
+                                                   (ag-grpc:grpc-call channel
+                                                    "/cave.runner.RunnerService/AppendStepLog"
+                                                    (make-instance 'cave::append-step-log-request
+                                                                   :step-id step-id
+                                                                   :chunk (format nil "~%::group::Step summary::~%~A~%"
+                                                                                  (%mask-secrets sumc masks)))
+                                                    :response-type 'cave::append-step-log-response
+                                                    :metadata (make-auth-metadata auth-token)))))
+                                              ;; $GITHUB_OUTPUT -> surfaced (steps.<id> context is a later phase)
+                                              (let ((outc (ignore-errors (uiop:read-file-string h-out))))
+                                                (when (and outc (plusp (length outc)))
+                                                  (format t "    step set ~A output(s)~%"
+                                                          (length (%kv-lines->pairs outc)))))
+                                              code))))
                                       (error () 1)))))
                             (let ((step-status (if (zerop exit-code) "success" "failure")))
                               (format t "    ~A (exit ~A)~%" step-status exit-code)
@@ -1281,8 +1405,8 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                     (uiop:run-program (list "podman" "rm" "-f" container-name)
                                       :output :string :error-output :string
                                       :ignore-error-status t)) ;; close when(outer)
-              ;; Cleanup workdir
-              (uiop:run-program (list "rm" "-rf" workdir)
+              ;; Cleanup workdir + GH runtime dir
+              (uiop:run-program (list "rm" "-rf" workdir gh-dir)
                                 :ignore-error-status t))
              ;; Report overall job status
              (let ((status (if overall-success "success" "failure")))

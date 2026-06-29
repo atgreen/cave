@@ -4,6 +4,20 @@
 
 (in-package #:cave)
 
+(defun %env-map->string (env-raw)
+  "Turn a parsed `env:` mapping (alist name -> value) into newline-joined
+KEY=VALUE, coercing non-string values. Returns \"\" for anything non-map."
+  (if (and (listp env-raw) (consp (car env-raw)))
+      (with-output-to-string (s)
+        (loop for (k . v) in env-raw
+              when (stringp k)
+                do (format s "~A=~A~%" k
+                           (cond ((stringp v) v)
+                                 ((null v) "")
+                                 ((eq v t) "true")
+                                 (t (princ-to-string v))))))
+      ""))
+
 ;;; --- Admin runner policy (applies to repo-supplied workflow YAML only;
 ;;; Cave's internal dep-scan / dep-fix jobs are created directly and bypass
 ;;; this gate) ---
@@ -103,6 +117,9 @@ builds (and layer-caches) an image with the requested packages on demand."
       ;; Create workflow run
       (let* ((name (or (cdr (assoc "name" workflow :test #'equal))
                        (pathname-name filename)))
+             ;; Workflow-level `env:` — prepended to each job's env (job/step
+             ;; levels override by appearing later in the merged KEY=VALUE list).
+             (wf-env (%env-map->string (cdr (assoc "env" workflow :test #'equal))))
              (run (create-workflow-run
                    :repo-id repo-id
                    :workflow-name name
@@ -166,6 +183,10 @@ builds (and layer-caches) an image with the requested packages on demand."
                                      (remove-if-not #'stringp cache-raw))
                                     ((stringp cache-raw) (list cache-raw))
                                     (t nil)))
+                     ;; Merged workflow+job env (workflow first so job overrides).
+                     (job-env (concatenate 'string wf-env
+                                           (%env-map->string
+                                            (cdr (assoc "env" job-spec :test #'equal)))))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
                   (let ((job (create-workflow-job
@@ -177,7 +198,8 @@ builds (and layer-caches) an image with the requested packages on demand."
                               :timeout-seconds job-timeout
                               :continue-on-error (eq job-continue-on-error t)
                               :privileged (eq job-privileged t)
-                              :cache-paths cache-paths)))
+                              :cache-paths cache-paths
+                              :env job-env)))
                     (llog:info "Created workflow job"
                                :job job-name :job-id (getf job :id))
                     ;; Create steps
@@ -188,7 +210,9 @@ builds (and layer-caches) an image with the requested packages on demand."
                                      (command (cdr (assoc "run" step-spec :test #'equal)))
                                      (step-timeout (let ((v (cdr (assoc "timeout" step-spec :test #'equal))))
                                                      (when (integerp v) v)))
-                                     (step-continue-on-error (cdr (assoc "continue-on-error" step-spec :test #'equal))))
+                                     (step-continue-on-error (cdr (assoc "continue-on-error" step-spec :test #'equal)))
+                                     (step-env (%env-map->string
+                                                (cdr (assoc "env" step-spec :test #'equal)))))
                                  (when command
                                    (create-workflow-step
                                     :job-id (getf job :id)
@@ -196,7 +220,8 @@ builds (and layer-caches) an image with the requested packages on demand."
                                     :name step-name
                                     :command command
                                     :timeout-seconds step-timeout
-                                    :continue-on-error (eq step-continue-on-error t)))))))))))
+                                    :continue-on-error (eq step-continue-on-error t)
+                                    :env step-env))))))))))
         run)))))
 
 (defun rerun-workflow (run-id)

@@ -888,7 +888,12 @@ ALTER TABLE cave_workflow_jobs ADD COLUMN cache_paths TEXT NOT NULL DEFAULT '';"
 
     (63 . "-- Dispatch attempt counter, so a job orphaned by a dead/restarted runner
 -- is requeued (retried) a bounded number of times before being failed.
-ALTER TABLE cave_workflow_jobs ADD COLUMN attempts INT NOT NULL DEFAULT 0;"))
+ALTER TABLE cave_workflow_jobs ADD COLUMN attempts INT NOT NULL DEFAULT 0;")
+
+    (64 . "-- GitHub-Actions-style env: layering. Job env is the merged workflow+job
+-- `env:` map; step env is the step-level `env:` map (newline KEY=VALUE).
+ALTER TABLE cave_workflow_jobs ADD COLUMN env TEXT NOT NULL DEFAULT '';
+ALTER TABLE cave_workflow_steps ADD COLUMN env TEXT NOT NULL DEFAULT '';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()
