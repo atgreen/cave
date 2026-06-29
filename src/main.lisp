@@ -999,10 +999,30 @@ object string. Empty list -> \"\"."
                         (format nil "\"~A\":\"~A\"" (%json-escape (car p)) (%json-escape (cdr p))))
                       pairs))))
 
-(defun %run-action (uses with-pairs gha-ctx ctx step-outputs channel auth-token step-id masks)
-  "Resolve and run a `uses:` action host-side. Interpolates the with: inputs,
-   dispatches the built-in, streams its log to the step, fills STEP-OUTPUTS, and
-   returns an exit code (0 ok, 1 failure / unsupported)."
+(defun %podman-exec-fn (container-name)
+  "A closure (arglist -> (values exit-code combined-output)) that runs a command
+   IN CONTAINER-NAME via podman exec. This is how built-in actions effect changes
+   in the job container, sharing the run: steps' filesystem and environment."
+  (lambda (cmd-args)
+    (multiple-value-bind (out err code)
+        (uiop:run-program (append (list "podman" "exec" container-name) cmd-args)
+                          :output '(:string :stripped t)
+                          :error-output '(:string :stripped t)
+                          :ignore-error-status t)
+      (values code
+              (string-trim '(#\Newline #\Space)
+                           (concatenate 'string (or out "")
+                                        (if (and err (plusp (length err)))
+                                            (concatenate 'string (string #\Newline) err)
+                                            "")))))))
+
+(defun %run-action (uses with-pairs gha-ctx ctx step-outputs channel auth-token
+                    step-id masks container-name action-base)
+  "Resolve and run a `uses:` action. Built-in actions/* run as in-runner
+   orchestrators that effect changes in the job container via (ctx :exec).
+   Non-built-in owner/repo@ref are resolved cave-local from the chamber and run
+   sandboxed in the container (see %run-fetched-action). Streams the log, fills
+   STEP-OUTPUTS, returns an exit code (0 ok, 1 failure / unsupported)."
   (flet ((emit (text)
            (ignore-errors
             (ag-grpc:grpc-call channel
@@ -1012,18 +1032,20 @@ object string. Empty list -> \"\"."
              :response-type 'cave::append-step-log-response
              :metadata (make-auth-metadata auth-token)))))
     (multiple-value-bind (owner repo ref kind) (parse-action-ref uses)
-      (declare (ignore ref))
       (cond
         ((eq kind :external)
          (emit (format nil "Unsupported action ref '~A' — cave resolves owner/repo cave-local only.~%" uses))
          1)
         (t
          (let* ((name (format nil "~A/~A" owner repo))
-                (entry (builtin-action name)))
-           (if (null entry)
-               (progn
-                 (emit (format nil "Action '~A' not found — only built-in actions are supported.~%" name))
-                 1)
+                (entry (builtin-action name))
+                ;; ctx + the in-container exec closure for built-ins.
+                (full-ctx (list* :exec (%podman-exec-fn container-name)
+                                 :workspace "/workspace"
+                                 :runtime-dir "/__cave_rt"
+                                 ctx)))
+           (if entry
+               ;; --- trusted built-in: in-runner orchestrator, effects in-container ---
                (let ((inputs (make-hash-table :test 'equal)))
                  (dolist (kv with-pairs)
                    (let ((p (position #\= kv)))
@@ -1032,14 +1054,128 @@ object string. Empty list -> \"\"."
                              (interpolate-gha (subseq kv (1+ p)) gha-ctx)))))
                  (apply-input-defaults name inputs)
                  (handler-case
-                     (multiple-value-bind (ok outputs log) (funcall (getf entry :fn) ctx inputs)
+                     (multiple-value-bind (ok outputs log) (funcall (getf entry :fn) full-ctx inputs)
                        (when (and log (plusp (length log))) (emit log))
                        (when (hash-table-p outputs)
                          (maphash (lambda (k v) (setf (gethash k step-outputs) v)) outputs))
                        (if ok 0 1))
                    (error (e)
                      (emit (format nil "Action error: ~A~%" e))
-                     1))))))))))
+                     1)))
+               ;; --- non-built-in: resolve from the chamber, run sandboxed ---
+               (%run-fetched-action owner repo ref with-pairs gha-ctx full-ctx
+                                    step-outputs container-name action-base
+                                    #'emit))))))))
+
+(defun %action-base-from-clone-url (clone-url)
+  "Derive the base URL hosting action repos from the workflow clone URL:
+   <base>/<owner>/<repo>.git -> <base>. NIL if it can't be derived."
+  (when (and clone-url (plusp (length clone-url)))
+    (let* ((u (string-right-trim "/" clone-url))
+           (u (if (uiop:string-suffix-p ".git" u) (subseq u 0 (- (length u) 4)) u))
+           (s1 (position #\/ u :from-end t))
+           (u2 (and s1 (subseq u 0 s1)))
+           (s2 (and u2 (position #\/ u2 :from-end t))))
+      (and s2 (subseq u2 0 s2)))))
+
+(defun %run-lisp-action-sandboxed (action-dir main-file inputs ctx step-outputs emit)
+  "Run a fetched `using: lisp` action in a DEDICATED cave-actions container —
+   never in the runner process and never in the job container. The action shares
+   only the workspace volume + the file-command runtime dir, gets its inputs as
+   INPUT_* env and a job-scoped CAVE_TOKEN, and reads back $GITHUB_OUTPUT. This is
+   the trust boundary for untrusted user Lisp: a crash/corruption/runaway dies
+   with the throwaway container. Returns an exit code."
+  (let* ((workdir (getf ctx :workdir))
+         (gh-dir (getf ctx :gh-dir))
+         (token (or (getf ctx :job-token) ""))
+         (image (config-value :actions-runtime-image "ghcr.io/atgreen/cave-actions:main"))
+         (tag (ironclad:byte-array-to-hex-string (ironclad:random-data 4)))
+         (out-name (format nil "action-out-~A" tag))
+         (out-host (format nil "~A/~A" gh-dir out-name)))
+    (ignore-errors
+     (with-open-file (s out-host :direction :output :if-exists :supersede :if-does-not-exist :create)))
+    (let* ((env-args (loop for k being the hash-keys of inputs using (hash-value v)
+                           append (list "-e" (format nil "INPUT_~A=~A"
+                                                     (substitute #\_ #\Space (string-upcase k)) v))))
+           (run-args (append
+                      (list "podman" "run" "--rm"
+                            "-v" (format nil "~A:/workspace:Z" workdir)
+                            "-v" (format nil "~A:/action:ro" action-dir)
+                            "-v" (format nil "~A:/__cave_rt:Z" gh-dir)
+                            "-w" "/workspace"
+                            "-e" "GITHUB_WORKSPACE=/workspace"
+                            "-e" (format nil "GITHUB_OUTPUT=/__cave_rt/~A" out-name)
+                            "-e" (format nil "CAVE_TOKEN=~A" token)
+                            "-e" (format nil "CAVE_API_URL=~A" (config-value :base-url "")))
+                      env-args
+                      (list image "/action" main-file))))
+      (multiple-value-bind (out err code)
+          (uiop:run-program run-args :output '(:string :stripped t)
+                            :error-output '(:string :stripped t) :ignore-error-status t)
+        (let ((log (concatenate 'string (or out "")
+                                (if (and err (plusp (length err)))
+                                    (concatenate 'string (string #\Newline) err) ""))))
+          (when (plusp (length log)) (funcall emit (concatenate 'string log (string #\Newline)))))
+        ;; $GITHUB_OUTPUT (shared via /__cave_rt) -> steps.<id>.outputs
+        (let ((outc (ignore-errors (uiop:read-file-string out-host))))
+          (when (and outc (plusp (length outc)))
+            (dolist (kv (%kv-lines->pairs outc))
+              (let ((p (position #\= kv)))
+                (when p (setf (gethash (subseq kv 0 p) step-outputs) (subseq kv (1+ p))))))))
+        (if (zerop code) 0 1)))))
+
+(defun %run-fetched-action (owner repo ref with-pairs gha-ctx ctx step-outputs
+                            container-name action-base emit)
+  "Resolve a non-built-in `owner/repo@ref` cave-local: fetch its repo from the
+   chamber, read action.yml, and run it. `using: lisp` runs sandboxed (see
+   %run-lisp-action-sandboxed); Docker/composite are not supported yet. Reading
+   the repo here is host-side (it's data); only execution crosses into a
+   container. Returns an exit code."
+  (declare (ignore container-name))
+  (if (or (null action-base) (zerop (length action-base)))
+      (progn
+        (funcall emit (format nil "Action '~A/~A' not found and no actions base URL to resolve it.~%"
+                              owner repo))
+        1)
+      (let* ((url (format nil "~A/~A/~A.git" action-base owner repo))
+             (tag (ironclad:byte-array-to-hex-string (ironclad:random-data 4)))
+             (tmpdir (format nil "/tmp/cave-action-~A" tag)))
+        (unwind-protect
+            (let ((clone-args (append (list "git" "clone" "--depth" "1")
+                                      (when (plusp (length ref)) (list "--branch" ref))
+                                      (list url tmpdir))))
+              (multiple-value-bind (o e code)
+                  (uiop:run-program clone-args :output '(:string :stripped t)
+                                    :error-output '(:string :stripped t) :ignore-error-status t)
+                (declare (ignore o))
+                (cond
+                  ((not (zerop code))
+                   (funcall emit (format nil "Could not fetch action ~A/~A@~A cave-local: ~A~%"
+                                         owner repo (if (plusp (length ref)) ref "default") e))
+                   1)
+                  (t
+                   (let ((spec (parse-action-yml tmpdir)))
+                     (cond
+                       ((null spec)
+                        (funcall emit (format nil "Action ~A/~A has no readable action.yml.~%" owner repo))
+                        1)
+                       ((equal (getf spec :using) "lisp")
+                        (let ((inputs (make-hash-table :test 'equal)))
+                          (dolist (kv with-pairs)
+                            (let ((p (position #\= kv)))
+                              (when p (setf (gethash (subseq kv 0 p) inputs)
+                                            (interpolate-gha (subseq kv (1+ p)) gha-ctx)))))
+                          (dolist (d (getf spec :inputs))
+                            (unless (nth-value 1 (gethash (car d) inputs))
+                              (setf (gethash (car d) inputs) (cdr d))))
+                          (%run-lisp-action-sandboxed tmpdir (or (getf spec :main) "main.lisp")
+                                                      inputs ctx step-outputs emit)))
+                       (t
+                        (funcall emit (format nil "Action ~A/~A uses '~A' — only `using: lisp` is ~
+                                                   supported (Docker/composite not yet).~%"
+                                              owner repo (getf spec :using)))
+                        1)))))))
+          (uiop:run-program (list "rm" "-rf" tmpdir) :ignore-error-status t)))))
 
 (defun %runner-arch ()
   "GitHub-Actions-style RUNNER_ARCH for the host CPU."
@@ -1492,13 +1628,17 @@ object string. Empty list -> \"\"."
                                                    :metadata (make-auth-metadata auth-token))
                                 (let ((exit-code
                                        (if uses-step
-                                           ;; --- uses: built-in action (host-side) ---
+                                           ;; --- uses: action — orchestrated here, effected in-container ---
                                            (%run-action step-uses with-pairs gha-ctx
-                                                        (list :workdir workdir :clone-url clone-url
+                                                        (list :workdir workdir :gh-dir gh-dir
+                                                              :clone-url clone-url
                                                               :commit-sha commit-sha
+                                                              :job-token ""
                                                               :ref (handler-case (slot-value task 'cave::ref)
                                                                      (error () "")))
-                                                        step-outputs channel auth-token step-id masks)
+                                                        step-outputs channel auth-token step-id masks
+                                                        container-name
+                                                        (%action-base-from-clone-url clone-url))
                                         (block step-run
                                           (handler-case
                                             (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))

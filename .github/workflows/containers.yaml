@@ -27,6 +27,8 @@ jobs:
             dockerfile: Containerfile.scan
           - name: cave-fix
             dockerfile: Containerfile.fix
+          - name: cave-actions
+            dockerfile: Containerfile.actions
     steps:
       - uses: actions/checkout@v4
 

@@ -1,0 +1,17 @@
+# cave-actions runtime image — runs user-provided `using: lisp` actions.
+#
+# The cave runner launches this image (NOT the job container, NOT the runner) to
+# execute an untrusted Lisp action, sharing only the workspace volume and the
+# file-command runtime dir. Fedora/glibc base so the dynamically-linked SBCL runs
+# cleanly. Dependency-free SDK: just sbcl (+ git/curl for action use).
+FROM fedora:42
+
+RUN dnf install -y sbcl git curl ca-certificates && dnf clean all
+
+# The cave-actions SDK (cave-actions / ca package), loaded by the entrypoint.
+COPY src/actions-sdk.lisp /opt/cave-actions/sdk.lisp
+COPY actions-entrypoint.sh /usr/local/bin/cave-action-run
+RUN chmod +x /usr/local/bin/cave-action-run
+
+# Invoked as: cave-action-run <action-dir> <main-file>
+ENTRYPOINT ["/usr/local/bin/cave-action-run"]

@@ -481,15 +481,24 @@ Actions syntax so existing `run:`-based workflows port with little change:
   instance, its `outputs` merge, and `result` is `success` only if all succeeded.
 - **`uses:` actions** — like GitHub, **the workspace starts empty**; a step must
   `uses: actions/checkout@v4` to populate it (cave does not auto-clone). Actions
-  are referenced `owner/repo@ref` and resolved **cave-local** (no github.com).
-  The built-in `actions/*` set is implemented natively in Lisp and runs
-  in-process on the runner — the trusted core. `actions/checkout` honors `ref`,
-  `path`, `fetch-depth` (`0` = full history), and `submodules`, and sets the
-  `commit`/`ref` outputs. `with:` inputs are `${{ }}`-interpolated.
+  are referenced `owner/repo@ref` and resolved **cave-local** (no github.com), in
+  two tiers:
+  - **Built-in `actions/*`** — cave-authored, compiled into the runner. They run
+    as in-runner *orchestrators* that effect their changes **in the job
+    container** via `podman exec` (so they share the `run:` steps' filesystem and
+    environment, like GitHub driving a container job). `actions/checkout` clones
+    the repo into the container honoring `ref`, `path`, `fetch-depth` (`0` = full
+    history), and `submodules`, and sets `commit`/`ref` outputs.
+  - **Third-party `owner/repo@ref`** — fetched from the chamber and run in a
+    dedicated **`cave-actions` container** (a `using: lisp` action), sharing only
+    the workspace + the file-command runtime dir. Untrusted code never enters the
+    runner process; a crash/runaway dies with the throwaway container. The action
+    uses the dependency-free `cave-actions` (`ca`) SDK (`input`/`set-output`/
+    `export-var`/`add-path`/`sh`/`api`); `with:` inputs arrive as `INPUT_*`.
 
-Not yet supported: Docker/JS/composite actions and third-party (non-built-in)
-`uses:` actions; `docker://`, URL, and `./local` action refs; `hashFiles()`
-(stubbed).
+Not yet supported: Docker/JS/composite actions; `docker://`, URL, and `./local`
+action refs; per-action network policy + a minted job-scoped token (the slot is
+wired, currently empty); `hashFiles()` (stubbed).
 
 ## Themes
 
