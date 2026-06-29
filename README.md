@@ -412,6 +412,32 @@ jobs are denied unless `:workflows-allow-privileged` is set, and job images can
 be restricted with `:workflows-image-allowlist`. A job that violates policy
 fails its run with the reason instead of being dispatched.
 
+```yaml
+# .cave/workflows/ci.yml
+on: [push]
+jobs:
+  test:
+    # No image? One is built on the fly from these nixpkgs names via Nixery.
+    dependencies: [nodejs, git]
+    # Directories persisted across runs in a repo-scoped volume — a big
+    # speed-up for dependency installs and incremental builds.
+    cache:
+      - ~/.npm
+      - node_modules
+    steps:
+      - name: install
+        run: npm ci
+      - name: test
+        run: npm test
+```
+
+**Reusable caches** — a job's `cache:` directive lists in-container directories
+to persist across runs (npm, cargo, `~/.go/pkg`, `~/.cache/common-lisp`, …).
+Each is backed by a **repo-scoped** persistent volume (different repos never
+share a cache), mounted at the declared path. The runner additionally keeps a
+built-in Common Lisp FASL cache at `~/.cache/common-lisp` for every job, so SBCL
+builds stay incremental without any configuration.
+
 ## Themes
 
 Switch themes in Settings → Theme. Built-in: Terminal Warmth, Solarized Dark,

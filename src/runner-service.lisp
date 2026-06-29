@@ -174,6 +174,27 @@
                           (if (eq r :null) "" r))
                    :timeout-seconds (if def (getf def :timeout-seconds) 60))))
 
+(defun %cache-volume-name (repo-id path)
+  "Deterministic, repo-scoped, podman-safe volume name for a cache PATH.
+Scoped by REPO-ID so different repos sharing a runner never share a cache."
+  (let ((digest (ironclad:byte-array-to-hex-string
+                 (ironclad:digest-sequence
+                  :sha256 (sb-ext:string-to-octets path :external-format :utf-8)))))
+    (format nil "cave-cache-~A-~A" repo-id (subseq digest 0 16))))
+
+(defun %job-cache-mounts (repo-id cache-paths-str)
+  "Map a job's declared cache paths to repo-scoped persistent podman volumes.
+Returns a newline-joined string of VOLUME<TAB>CONTAINER-PATH lines, or \"\"."
+  (if (and repo-id (stringp cache-paths-str) (plusp (length cache-paths-str)))
+      (let ((lines
+              (loop for raw in (uiop:split-string cache-paths-str :separator '(#\Newline))
+                    for clean = (string-trim '(#\Space #\Tab #\Return) raw)
+                    when (plusp (length clean))
+                      collect (format nil "~A~C~A"
+                                      (%cache-volume-name repo-id clean) #\Tab clean))))
+        (if lines (format nil "~{~A~^~%~}" lines) ""))
+      ""))
+
 (defun make-workflow-task-event (job)
   "Build a TaskEvent for a workflow job."
   (let* ((run (find-workflow-run (getf job :workflow-run-id)))
@@ -225,7 +246,9 @@
                                       (if (and t-s (plusp t-s)) t-s 300))
                    :secrets-env (if repo
                                     (secrets-env-string (secrets-for-repo repo))
-                                    ""))))
+                                    "")
+                   :cache-mounts (%job-cache-mounts (and run (getf run :repo-id))
+                                                    (getf job :cache-paths "")))))
 
 (defun handle-update-step-status (request ctx)
   "Update a workflow step's status."

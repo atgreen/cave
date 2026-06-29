@@ -151,6 +151,13 @@ builds (and layer-caches) an image with the requested packages on demand."
                                     (when (integerp v) v)))
                      (job-continue-on-error (cdr (assoc "continue-on-error" job-spec :test #'equal)))
                      (job-privileged (cdr (assoc "privileged" job-spec :test #'equal)))
+                     (cache-raw (cdr (assoc "cache" job-spec :test #'equal)))
+                     (cache-paths (cond
+                                    ((null cache-raw) nil)
+                                    ((listp cache-raw)
+                                     (remove-if-not #'stringp cache-raw))
+                                    ((stringp cache-raw) (list cache-raw))
+                                    (t nil)))
                      (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
                 (when (and job-name image)
                   (let ((job (create-workflow-job
@@ -161,7 +168,8 @@ builds (and layer-caches) an image with the requested packages on demand."
                               :runs-on runs-on
                               :timeout-seconds job-timeout
                               :continue-on-error (eq job-continue-on-error t)
-                              :privileged (eq job-privileged t))))
+                              :privileged (eq job-privileged t)
+                              :cache-paths cache-paths)))
                     (llog:info "Created workflow job"
                                :job job-name :job-id (getf job :id))
                     ;; Create steps

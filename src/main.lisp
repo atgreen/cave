@@ -1067,6 +1067,20 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                                        for eq = (position #\= p)
                                        when (and eq (< (1+ eq) (length p)))
                                        collect (subseq p (1+ eq))))
+                  ;; Reusable per-job caches: newline-joined VOLUME<TAB>PATH.
+                  ;; Each is a repo-scoped persistent podman named volume mounted
+                  ;; at the declared in-container path, so deps/build artifacts
+                  ;; (npm, cargo, go-build, ~/.cache/common-lisp, …) survive
+                  ;; across runs. Volume auto-creates on first `podman create -v`.
+                  (cache-mounts (handler-case (slot-value task 'cave::cache-mounts)
+                                  (error () "")))
+                  (cache-pairs (when (and cache-mounts (plusp (length cache-mounts)))
+                                 (loop for line in (uiop:split-string
+                                                    cache-mounts :separator '(#\Newline))
+                                       for tab = (position #\Tab line)
+                                       when (and tab (plusp tab) (< (1+ tab) (length line)))
+                                         collect (cons (subseq line 0 tab)
+                                                       (subseq line (1+ tab))))))
                   ;; Base dir for per-job working trees. In production this is a
                   ;; NATIVE (ext4/xfs) host volume mounted into the rootless
                   ;; cave-runner, NOT the container's fuse-overlayfs /tmp: an
@@ -1087,6 +1101,8 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                   (overall-success t))
              (format t "~&Workflow job #~A: ~A/~A [~A] (~A steps)~%"
                      job-id repo-owner repo-name image (length steps))
+             (when cache-pairs
+               (format t "  Caches: ~{~A~^, ~}~%" (mapcar #'cdr cache-pairs)))
              ;; Report job running
              (ag-grpc:grpc-call channel
                                 "/cave.runner.RunnerService/UpdateTaskStatus"
@@ -1150,6 +1166,11 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                           (when privileged (list "--privileged"))
                           ;; Inject CI secrets as environment variables.
                           (loop for p in secret-pairs append (list "-e" p))
+                          ;; Mount per-job reusable caches (repo-scoped named
+                          ;; volumes). :U chowns to the container user so the
+                          ;; build can write; the volume auto-creates if absent.
+                          (loop for (vol . path) in cache-pairs
+                                append (list "-v" (format nil "~A:~A:U" vol path)))
                           (list
                            ;; :Z relabels the bind mount with a private SELinux
                            ;; label so the container can write to it on

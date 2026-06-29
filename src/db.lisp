@@ -881,7 +881,10 @@ CREATE TABLE cave_deploy_keys (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_deploy_keys_repo ON cave_deploy_keys (repo_id);
-CREATE INDEX idx_deploy_keys_fp ON cave_deploy_keys (fingerprint);"))
+CREATE INDEX idx_deploy_keys_fp ON cave_deploy_keys (fingerprint);")
+
+    (62 . "-- Per-job reusable cache directories (newline-separated container paths).
+ALTER TABLE cave_workflow_jobs ADD COLUMN cache_paths TEXT NOT NULL DEFAULT '';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

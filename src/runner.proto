@@ -39,6 +39,7 @@ message FetchTaskResponse {
   repeated StepSpec steps = 11;
   string clone_url = 12;
   string secrets_env = 13;  // newline-joined KEY=VALUE secrets for the job
+  string cache_mounts = 14; // newline-joined VOLUME\tCONTAINER_PATH cache mounts
 }
 
 message AppendTaskLogRequest {
@@ -77,6 +78,7 @@ message TaskEvent {
   string clone_url = 11;
   bool privileged = 12;
   string secrets_env = 13;  // newline-joined KEY=VALUE secrets for the job
+  string cache_mounts = 14; // newline-joined VOLUME\tCONTAINER_PATH cache mounts
 }
 
 message StepSpec {

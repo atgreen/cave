@@ -1075,14 +1075,17 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
        :where (:= 'id run-id))))))
 
 (defun create-workflow-job (&key workflow-run-id name image needs runs-on
-                                (timeout-seconds 0) continue-on-error privileged)
+                                (timeout-seconds 0) continue-on-error privileged
+                                cache-paths)
   "Create a workflow job. NEEDS is a list of job name strings.
    RUNS-ON is a list of label strings the runner must have.
    TIMEOUT-SECONDS is the max job duration (0 means use default).
    CONTINUE-ON-ERROR when true prevents dependent jobs from being skipped on failure.
-   PRIVILEGED when true runs the job container with --privileged (nested containers)."
+   PRIVILEGED when true runs the job container with --privileged (nested containers).
+   CACHE-PATHS is a list of in-container directories to persist across runs."
   (let ((needs-str (if needs (format nil "~{~A~^,~}" needs) ""))
-        (runs-on-str (if runs-on (format nil "~{~A~^,~}" runs-on) "")))
+        (runs-on-str (if runs-on (format nil "~{~A~^,~}" runs-on) ""))
+        (cache-str (if cache-paths (format nil "~{~A~^~%~}" cache-paths) "")))
     (postmodern:query
      (:insert-into 'cave-workflow-jobs
       :set 'workflow-run-id workflow-run-id
@@ -1093,6 +1096,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
            'timeout-seconds (or timeout-seconds 0)
            'continue-on-error (if continue-on-error t nil)
            'privileged (if privileged t nil)
+           'cache-paths cache-str
            'status (if needs "blocked" "queued")
       :returning '*)
      :plist)))
