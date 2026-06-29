@@ -1330,7 +1330,7 @@ GitHub-Actions variable has a cave-native alias). Non-GITHUB_ keys pass through.
                                                                (let ((m (search "::add-mask::" line)))
                                                                  (when m
                                                                    (let ((v (string-trim '(#\Return #\Space)
-                                                                                         (subseq line (+ m 11)))))
+                                                                                         (subseq line (+ m 12)))))
                                                                      (when (plusp (length v)) (pushnew v masks :test #'equal))))))
                                                              (let ((chunk (%mask-secrets raw masks)))
                                                              (setf sent (+ new-start (length raw)))
