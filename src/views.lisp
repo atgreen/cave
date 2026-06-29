@@ -2652,8 +2652,16 @@ function caveShowCommentForm(td) {
                 (princ-to-string (getf r :created-at))))))
            (:p.empty "No automation runs yet."))))))
 
-(defun view-workflow-run (&key owner-name repo run jobs)
-  "Render a workflow run detail page with jobs and steps."
+(defun %human-bytes (n)
+  "Human-readable byte size."
+  (let ((n (if (integerp n) n 0)))
+    (cond ((< n 1024) (format nil "~D B" n))
+          ((< n 1048576) (format nil "~,1F KB" (/ n 1024.0)))
+          ((< n 1073741824) (format nil "~,1F MB" (/ n 1048576.0)))
+          (t (format nil "~,1F GB" (/ n 1073741824.0))))))
+
+(defun view-workflow-run (&key owner-name repo run jobs artifacts)
+  "Render a workflow run detail page with jobs, steps, and artifacts."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" (getf run :workflow-name) owner-name repo-name))
       (render-repo-tabs owner-name repo-name :runs :repo repo)
@@ -2718,6 +2726,20 @@ function caveShowCommentForm(td) {
                       (when (and step-log (not (eq step-log :null)) (plusp (length step-log)))
                         step-log))))))
                (:p.empty "No steps.")))))
+
+      ;; Artifacts
+      (when artifacts
+        (:section :style "border:1px solid var(--border);border-radius:var(--radius);padding:var(--sp-3);margin-bottom:var(--sp-3)"
+         (:h3 :style "margin:0 0 var(--sp-2) 0" "Artifacts")
+         (:div :style "display:flex;flex-direction:column;gap:2px"
+          (dolist (a artifacts)
+            (:a :href (format nil "/~A/~A/runs/w/~A/artifacts/~A"
+                              owner-name repo-name (getf run :id) (getf a :id))
+             :style "display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-1) var(--sp-2);font-size:.85rem"
+             (:span "📦")
+             (:span (getf a :name))
+             (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
+              (%human-bytes (getf a :size-bytes))))))))
 
       ;; SSE URL (hidden, read by JS below)
       (:div :id "sse-url" :style "display:none"

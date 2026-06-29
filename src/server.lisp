@@ -2301,6 +2301,39 @@ leaking the viewer's IP or breaking HTTPS."
           (finish-output out))
         nil))))
 
+(defun %server-object-store ()
+  "Object-store descriptor for the SERVER to read artifacts for download. Mirrors
+   the runner's store: an rclone remote (:artifact-store-remote, with read creds)
+   or a local dir (:artifact-store-dir — a volume shared with a co-located runner)."
+  (let ((remote (config-value :artifact-store-remote "")))
+    (if (plusp (length remote))
+        (list :backend :s3 :base (string-right-trim "/" remote))
+        (list :backend :dir :root (config-value :artifact-store-dir "/var/cache/cave-runner/store")))))
+
+(easy-routes:defroute artifact-download-route
+    ("/:owner/:repo-name/runs/w/:run-id/artifacts/:artifact-id" :method :get) ()
+  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
+    (unless repo (return-from artifact-download-route repo))
+    (let* ((rid (parse-integer run-id :junk-allowed t))
+           (aid (parse-integer artifact-id :junk-allowed t))
+           (run (when rid (find-workflow-run rid)))
+           (art (when aid (find-artifact aid))))
+      (unless (and run art
+                   (= (getf run :repo-id) (getf repo :id))
+                   (eql (getf art :workflow-run-id) rid))
+        (return-from artifact-download-route (not-found)))
+      (let* ((tmp (format nil "/tmp/cave-art-~A-~A.tar.gz" rid aid))
+             (got (ignore-errors (%store-get (%server-object-store) (getf art :object-path) tmp))))
+        (if (not got)
+            (progn (setf (hunchentoot:return-code*) 404)
+                   "artifact data is not available to this server (check :artifact-store-* config)")
+            (progn
+              (setf (hunchentoot:header-out "Content-Disposition")
+                    (format nil "attachment; filename=\"~A.tar.gz\""
+                            (substitute #\_ #\" (getf art :name))))
+              (prog1 (hunchentoot:handle-static-file tmp "application/gzip")
+                (ignore-errors (delete-file tmp)))))))))
+
 (easy-routes:defroute workflow-run-detail-page
     ("/:owner/:repo-name/runs/w/:run-id" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
@@ -2315,7 +2348,8 @@ leaking the viewer's IP or breaking HTTPS."
                             :jobs (mapcar (lambda (j)
                                             (list :job j
                                                   :steps (list-workflow-steps (getf j :id))))
-                                          jobs)))))))
+                                          jobs)
+                            :artifacts (list-run-artifacts rid)))))))
 
 (easy-routes:defroute rerun-workflow-route
     ("/:owner/:repo-name/runs/w/:run-id/rerun" :method :post) ()

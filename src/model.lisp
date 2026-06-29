@@ -1142,6 +1142,33 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
       :set 'outputs outputs-json
       :where (:= 'id job-id)))))
 
+(defun create-artifact (&key workflow-run-id job-id name object-path (size-bytes 0))
+  "Record an artifact for a run (replacing any existing one of the same name).
+   Returns the row plist."
+  (postmodern:execute
+   (:delete-from 'cave-artifacts
+    :where (:and (:= 'workflow-run-id workflow-run-id) (:= 'name name))))
+  (postmodern:query
+   (:insert-into 'cave-artifacts
+    :set 'workflow-run-id workflow-run-id
+         'job-id (or job-id :null)
+         'name name
+         'object-path object-path
+         'size-bytes (or size-bytes 0)
+    :returning '*)
+   :plist))
+
+(defun list-run-artifacts (workflow-run-id)
+  "All artifacts for a run, ordered by name."
+  (postmodern:query
+   (:order-by (:select '* :from 'cave-artifacts :where (:= 'workflow-run-id workflow-run-id))
+              'name)
+   :plists))
+
+(defun find-artifact (id)
+  "An artifact row by id, or NIL."
+  (postmodern:query (:select '* :from 'cave-artifacts :where (:= 'id id)) :plist))
+
 (defun list-workflow-jobs (workflow-run-id)
   "List all jobs for a workflow run."
   (postmodern:query

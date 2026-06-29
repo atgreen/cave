@@ -914,7 +914,22 @@ UPDATE cave_workflow_jobs SET base_name = name WHERE base_name = '';")
 
     (69 . "-- uses: action ref + with: inputs for a step (run: steps leave these empty).
 ALTER TABLE cave_workflow_steps ADD COLUMN uses TEXT NOT NULL DEFAULT '';
-ALTER TABLE cave_workflow_steps ADD COLUMN with_inputs TEXT NOT NULL DEFAULT '';"))
+ALTER TABLE cave_workflow_steps ADD COLUMN with_inputs TEXT NOT NULL DEFAULT '';")
+
+    (70 . "-- Build artifacts uploaded by actions/upload-artifact. object_path is
+-- the key in the runner-operator's object store (the cave server reads it for
+-- the download endpoint). One row per artifact name per run.
+CREATE TABLE cave_artifacts (
+  id BIGSERIAL PRIMARY KEY,
+  workflow_run_id BIGINT NOT NULL REFERENCES cave_workflow_runs(id) ON DELETE CASCADE,
+  job_id BIGINT,
+  name VARCHAR(256) NOT NULL,
+  object_path TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_cave_artifacts_run ON cave_artifacts(workflow_run_id);
+CREATE UNIQUE INDEX idx_cave_artifacts_run_name ON cave_artifacts(workflow_run_id, name);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

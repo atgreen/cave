@@ -157,6 +157,26 @@
                     (check-workflow-job-completion job)))))))))
   (make-instance 'cave::update-task-status-response :ok t))
 
+(defun handle-register-artifact (request ctx)
+  "Record an artifact uploaded by actions/upload-artifact, so the run view can
+   list it and the download endpoint can fetch it from the object store."
+  (let ((runner (require-runner-from-ctx ctx)))
+    (declare (ignore runner))
+    (postmodern:with-connection *db-spec*
+      (let* ((run-id (slot-value request 'cave::run-id))
+             (job-id (slot-value request 'cave::job-id))
+             (name (slot-value request 'cave::name))
+             (object-path (slot-value request 'cave::object-path))
+             (size (slot-value request 'cave::size-bytes))
+             (row (when (and (plusp run-id) (plusp (length name)) (plusp (length object-path)))
+                    (create-artifact :workflow-run-id run-id
+                                     :job-id (and (plusp job-id) job-id)
+                                     :name name :object-path object-path
+                                     :size-bytes size))))
+        (make-instance 'cave::register-artifact-response
+                       :ok (if row t nil)
+                       :artifact-id (if row (getf row :id) 0))))))
+
 (defun make-automation-task-event (run)
   "Build a TaskEvent for a simple automation run."
   (let* ((repo (find-repo-by-id (getf run :repo-id)))
@@ -443,6 +463,12 @@ RUNNER_*/file-protocol vars)."
     #'handle-append-step-log
     :request-type 'cave::append-step-log-request
     :response-type 'cave::append-step-log-response)
+
+  (ag-grpc:server-register-handler *grpc-server*
+    "/cave.runner.RunnerService/RegisterArtifact"
+    #'handle-register-artifact
+    :request-type 'cave::register-artifact-request
+    :response-type 'cave::register-artifact-response)
 
   (ag-grpc:server-register-handler *grpc-server*
     "/cave.runner.RunnerService/WatchTasks"

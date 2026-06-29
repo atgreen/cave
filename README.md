@@ -502,7 +502,10 @@ Actions syntax so existing `run:`-based workflows port with little change:
     sandboxed actions never see them. `actions/upload-artifact` /
     `actions/download-artifact` (artifact@v4-compatible) use the same store with a
     run-scoped key (`artifacts/<run-id>/<name>`), so a later job downloads what an
-    earlier job uploaded.
+    earlier job uploaded. Uploaded artifacts are registered with the server and
+    **listed + downloadable in the run view**; for the download endpoint the
+    server reads the same store via `:artifact-store-remote` (an rclone remote with
+    read creds) or `:artifact-store-dir` (a dir shared with a co-located runner).
   - **Third-party `owner/repo@ref`** — fetched from the chamber and run in a
     dedicated **`cave-actions` container** (a `using: lisp` action), sharing only
     the workspace + the file-command runtime dir. Untrusted code never enters the

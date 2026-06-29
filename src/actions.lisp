@@ -363,6 +363,12 @@
             ((not (zerop code)) (format log "upload-artifact: tar failed~%") (setf ok nil))
             ((%store-put store obj host-tar)
              (setf (gethash "artifact-id" outputs) (format nil "~A/~A" run-id safe))
+             (let ((size (or (ignore-errors
+                              (with-open-file (s host-tar :element-type '(unsigned-byte 8))
+                                (file-length s)))
+                             0))
+                   (reg (getf ctx :register-artifact)))
+               (when reg (ignore-errors (funcall reg name obj size))))
              (format log "upload-artifact: stored '~A'~%" name))
             (t (format log "upload-artifact: store upload failed~%") (setf ok nil))))
         (funcall exec (list "rm" "-f" cont-tar))

@@ -1662,6 +1662,22 @@ object string. Empty list -> \"\"."
                                                                                   (uiop:string-prefix-p "GITHUB_RUN_ID=" s))
                                                                                 job-env-pairs)))
                                                                 (if p (subseq p 14) "0"))
+                                                              ;; Register an uploaded artifact with the server.
+                                                              :register-artifact
+                                                              (lambda (aname object-path size)
+                                                                (let ((rid (let ((p (find-if (lambda (s)
+                                                                                               (uiop:string-prefix-p "GITHUB_RUN_ID=" s))
+                                                                                             job-env-pairs)))
+                                                                             (if p (or (parse-integer (subseq p 14) :junk-allowed t) 0) 0))))
+                                                                  (ignore-errors
+                                                                   (ag-grpc:grpc-call channel
+                                                                    "/cave.runner.RunnerService/RegisterArtifact"
+                                                                    (make-instance 'cave::register-artifact-request
+                                                                                   :run-id rid :job-id job-id
+                                                                                   :name aname :object-path object-path
+                                                                                   :size-bytes size)
+                                                                    :response-type 'cave::register-artifact-response
+                                                                    :metadata (make-auth-metadata auth-token)))))
                                                               :ref (handler-case (slot-value task 'cave::ref)
                                                                      (error () "")))
                                                         step-outputs channel auth-token step-id masks
