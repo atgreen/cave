@@ -3381,12 +3381,13 @@ any trigger (review submitted, status reported); a no-op otherwise."
            (title (gethash "title" json))
            (body (gethash "body" json)))
       (unless title (return-from api-create-issue (json-error "title required")))
-      (json-response
-       (create-issue :repo-id (getf repo :id)
-                     :author-id *current-user-id*
-                     :title title
-                     :body (if (eq body 'null) nil body))
-       :status 201))))
+      (let ((issue (create-issue :repo-id (getf repo :id)
+                                 :author-id *current-user-id*
+                                 :title title
+                                 :body (if (eq body 'null) nil body))))
+        ;; Parity with the web route: notify owner/members/watchers.
+        (ignore-errors (notify-issue-created repo owner repo-name issue))
+        (json-response issue :status 201)))))
 
 (easy-routes:defroute api-get-issue
     ("/api/v1/repos/:owner/:repo-name/issues/:id" :method :get) ()
@@ -3550,6 +3551,8 @@ any trigger (review submitted, status reported); a no-op otherwise."
                                       :source-branch source
                                       :target-branch target
                                       :head-commit head-commit)))
+        ;; Parity with the web route: notify owner/members/watchers.
+        (ignore-errors (notify-pr-opened repo owner repo-name pr))
         (json-response pr :status 201)))))
 
 (easy-routes:defroute api-list-reviews
