@@ -44,13 +44,16 @@
                 ;; UUIDs
                 :frugal-uuid
                 ;; Date/time
-                :local-time)
+                :local-time
+                ;; GitHub-Actions ${{ }} expression grammar (instaparse port)
+                :iparse)
   :serial      t
   :components  ((:file "src/package")
                 (:file "src/config")
                 (:file "src/db")
                 (:file "src/auth")
                 (:file "src/yaml")
+                (:file "src/expr")
                 (:file "src/model")
                 (:file "src/git")
                 (:file "src/chamber")
