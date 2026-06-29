@@ -493,6 +493,9 @@ Actions syntax so existing `run:`-based workflows port with little change:
     `submodules`, and `set-safe-directory`, and sets `commit`/`ref` outputs.
     (`ssh-key`/SSH auth is unsupported — use `token`; for `pull_request` cave
     checks out the triggering commit rather than a synthetic merge ref.)
+    `actions/cache` (cache@v4-compatible) restores by `key`/`restore-keys` and
+    saves at job end (a post step) into a repo-scoped store shared across the
+    runner host; `hashFiles('**/glob')` works in keys.
   - **Third-party `owner/repo@ref`** — fetched from the chamber and run in a
     dedicated **`cave-actions` container** (a `using: lisp` action), sharing only
     the workspace + the file-command runtime dir. Untrusted code never enters the

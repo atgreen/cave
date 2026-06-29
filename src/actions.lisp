@@ -117,6 +117,103 @@
             url))
       url))
 
+(defun %nonblank-lines (s)
+  "Split S on newlines into trimmed, non-empty lines."
+  (when s
+    (remove-if (lambda (x) (zerop (length x)))
+               (mapcar (lambda (x) (string-trim '(#\Space #\Return #\Tab) x))
+                       (uiop:split-string s :separator '(#\Newline))))))
+
+(defun %cache-key-file (key)
+  "Prefix-preserving sanitization of a cache KEY into a filename component."
+  (map 'string (lambda (c) (if (or (alphanumericp c) (member c '(#\. #\_ #\-))) c #\-))
+       key))
+
+(defun action-cache (ctx inputs)
+  "Native `actions/cache` — GitHub cache@v4-compatible. Restores on the main step
+   and returns a post-thunk that saves at job end (unless an exact key hit). The
+   keyed store is a repo-scoped dir bind-mounted at /__cave_cache (shared across
+   the runner host's job containers). Honors path, key, restore-keys, lookup-only,
+   fail-on-cache-miss; sets the `cache-hit` output. Tar/restore run in the job
+   container via (ctx :exec). Returns (values ok outputs log post-thunk)."
+  (let* ((exec (getf ctx :exec))
+         (workspace (or (getf ctx :workspace) "/workspace"))
+         (cache-dir "/__cave_cache")
+         (key (gethash "key" inputs))
+         (paths (%nonblank-lines (gethash "path" inputs)))
+         (restore-keys (%nonblank-lines (gethash "restore-keys" inputs)))
+         (lookup-only (equal (gethash "lookup-only" inputs) "true"))
+         (fail-on-miss (equal (gethash "fail-on-cache-miss" inputs) "true"))
+         (log (make-string-output-stream))
+         (outputs (make-hash-table :test 'equal))
+         (ok t)
+         (exact-hit nil))
+    (flet ((sh (&rest args)
+             (multiple-value-bind (code out) (funcall exec args)
+               (when (and out (plusp (length out))) (format log "~A~%" out))
+               code))
+           (sh-out (&rest args)
+             (multiple-value-bind (code out) (funcall exec args)
+               (declare (ignore code))
+               (string-trim '(#\Newline #\Space) (or out ""))))
+           (exists (path)
+             (zerop (nth-value 0 (funcall exec (list "sh" "-c"
+                                                     (format nil "test -e ~A" path)))))))
+      (when (null exec)
+        (format log "cache: no container exec available.~%")
+        (return-from action-cache (values nil outputs (get-output-stream-string log))))
+      (when (or (null key) (zerop (length key)))
+        (format log "cache: 'key' is required.~%")
+        (return-from action-cache (values nil outputs (get-output-stream-string log))))
+      (when (null paths)
+        (format log "cache: 'path' is required.~%")
+        (return-from action-cache (values nil outputs (get-output-stream-string log))))
+      (funcall exec (list "mkdir" "-p" cache-dir))
+      (let* ((kf (%cache-key-file key))
+             (entry (format nil "~A/~A.tar.gz" cache-dir kf)))
+        (setf exact-hit (exists entry))
+        (cond
+          (exact-hit
+           (format log "cache: exact hit for key '~A'~%" key)
+           (unless lookup-only (sh "tar" "xzf" entry "-P" "-C" workspace))
+           (setf (gethash "cache-hit" outputs) "true"))
+          (t
+           (setf (gethash "cache-hit" outputs) "false")
+           (let ((restored nil))
+             (dolist (rk restore-keys)
+               (unless restored
+                 (let ((match (sh-out "sh" "-c"
+                                      (format nil "ls -1t ~A/~A*.tar.gz 2>/dev/null | head -n1"
+                                              cache-dir (%cache-key-file rk)))))
+                   (when (plusp (length match))
+                     (format log "cache: partial restore from restore-key '~A'~%" rk)
+                     (unless lookup-only (sh "tar" "xzf" match "-P" "-C" workspace))
+                     (setf restored t)))))
+             (unless restored
+               (format log "cache: no match for key '~A'~%" key)
+               (when fail-on-miss
+                 (format log "cache: fail-on-cache-miss is set.~%")
+                 (setf ok nil))))))
+        ;; Post: save the paths under KEY at job end, unless we had an exact hit.
+        (let ((post (when (and ok (not exact-hit) (not lookup-only))
+                      (lambda ()
+                        (let ((plog (make-string-output-stream)))
+                          (flet ((psh (&rest args)
+                                   (multiple-value-bind (code out) (funcall exec args)
+                                     (when (and out (plusp (length out))) (format plog "~A~%" out))
+                                     code)))
+                            (funcall exec (list "mkdir" "-p" cache-dir))
+                            (if (exists entry)
+                                (format plog "cache: key '~A' was saved by another job; skipping.~%" key)
+                                (let ((tmp (format nil "~A/.tmp-~A.tar.gz" cache-dir kf)))
+                                  (format plog "cache: saving ~{~A~^, ~} under key '~A'~%" paths key)
+                                  (if (zerop (apply #'psh "tar" "czf" tmp "-P" "-C" workspace paths))
+                                      (psh "mv" "-f" tmp entry)
+                                      (progn (format plog "cache: save failed~%")
+                                             (psh "rm" "-f" tmp)))))
+                            (values t (get-output-stream-string plog))))))))
+          (values ok outputs (get-output-stream-string log) post))))))
+
 (defun %sparse-patterns (sparse)
   "Split a multi-line `sparse-checkout` value into non-empty patterns."
   (remove-if (lambda (s) (zerop (length s)))
@@ -259,3 +356,10 @@
             ("fetch-tags" . "false") ("show-progress" . "true") ("lfs" . "false")
             ("submodules" . "false") ("set-safe-directory" . "true")
             ("github-server-url" . "")))
+
+(register-builtin-action "actions/cache"
+  :fn #'action-cache
+  :inputs '(("path" . "") ("key" . "") ("restore-keys" . "")
+            ("upload-chunk-size" . "") ("enableCrossOsArchive" . "false")
+            ("fail-on-cache-miss" . "false") ("lookup-only" . "false")
+            ("save-always" . "false")))

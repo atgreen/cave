@@ -354,6 +354,8 @@ real, browsable repos."
         (error () nil)))
     (ensure-action-repo "checkout" "Check out the workflow repository (cave-native)"
                         "static/seed/actions/checkout/" "Seed actions/checkout" '("v4"))
+    (ensure-action-repo "cache" "Cache files between workflow runs (cave-native)"
+                        "static/seed/actions/cache/" "Seed actions/cache" '("v4"))
 
     (let ((port (or port-override (config-value :http-port 8080))))
       (bt2:with-lock-held (*server-lock*)
@@ -1020,7 +1022,7 @@ object string. Empty list -> \"\"."
                                             "")))))))
 
 (defun %run-action (uses with-pairs gha-ctx ctx step-outputs channel auth-token
-                    step-id masks container-name action-base)
+                    step-id masks container-name action-base register-post)
   "Resolve and run a `uses:` action. Built-in actions/* run as in-runner
    orchestrators that effect changes in the job container via (ctx :exec).
    Non-built-in owner/repo@ref are resolved cave-local from the chamber and run
@@ -1060,10 +1062,18 @@ object string. Empty list -> \"\"."
                              (interpolate-gha (subseq kv (1+ p)) gha-ctx)))))
                  (apply-input-defaults name inputs)
                  (handler-case
-                     (multiple-value-bind (ok outputs log) (funcall (getf entry :fn) full-ctx inputs)
+                     (multiple-value-bind (ok outputs log post)
+                         (funcall (getf entry :fn) full-ctx inputs)
                        (when (and log (plusp (length log))) (emit log))
                        (when (hash-table-p outputs)
                          (maphash (lambda (k v) (setf (gethash k step-outputs) v)) outputs))
+                       ;; A built-in may register a post-thunk (e.g. cache save at job end).
+                       (when (and post register-post)
+                         (funcall register-post
+                                  (lambda ()
+                                    (multiple-value-bind (pok plog) (funcall post)
+                                      (when (and plog (plusp (length plog))) (emit plog))
+                                      pok))))
                        (if ok 0 1))
                    (error (e)
                      (emit (format nil "Action error: ~A~%" e))
@@ -1466,6 +1476,12 @@ object string. Empty list -> \"\"."
                   ;; recompile is what drives the memory spike that wedges the
                   ;; build — see issue #9). Harmless for non-Lisp jobs.
                   (fasl-cache "/var/cache/cave-runner/common-lisp")
+                  ;; Keyed cache store for actions/cache, repo-scoped + shared
+                  ;; across this host's job containers (mounted at /__cave_cache).
+                  (keyed-cache (format nil "~A/keyed-cache/~A/~A"
+                                       (or (uiop:getenv "CAVE_RUNNER_CACHE")
+                                           "/var/cache/cave-runner")
+                                       (or repo-owner "_") (or repo-name "_")))
                   (overall-success t))
              (format t "~&Workflow job #~A: ~A/~A [~A] (~A steps)~%"
                      job-id repo-owner repo-name image (length steps))
@@ -1515,6 +1531,8 @@ object string. Empty list -> \"\"."
                     (ignore-errors
                      (ensure-directories-exist (concatenate 'string fasl-cache "/")))
                     (ignore-errors
+                     (ensure-directories-exist (concatenate 'string keyed-cache "/")))
+                    (ignore-errors
                      (ensure-directories-exist (concatenate 'string gh-dir "/")))
                     (multiple-value-bind (_out err exit)
                         (uiop:run-program
@@ -1547,6 +1565,8 @@ object string. Empty list -> \"\"."
                            "-v" (format nil "~A:/root/.cache/common-lisp:z" fasl-cache)
                            ;; GitHub-Actions file-command runtime dir.
                            "-v" (format nil "~A:/__cave_rt:Z" gh-dir)
+                           ;; Keyed cache store for actions/cache (shared :z).
+                           "-v" (format nil "~A:/__cave_cache:z" keyed-cache)
                            "-w" "/workspace"
                            image "sleep" "infinity"))
                          :output '(:string :stripped t)
@@ -1565,7 +1585,9 @@ object string. Empty list -> \"\"."
                     ;; (success() default, or always()/failure()).
                     (when overall-success
                      (let ((steps-table (make-hash-table :test 'equal))
-                           (job-failed nil))
+                           (job-failed nil)
+                           ;; Action post-thunks (e.g. cache save), run at job end.
+                           (post-actions nil))
                       (dolist (step steps)
                         (let* ((step-id (slot-value step 'cave::step-id))
                                (step-name (slot-value step 'cave::name))
@@ -1633,7 +1655,8 @@ object string. Empty list -> \"\"."
                                                                      (error () "")))
                                                         step-outputs channel auth-token step-id masks
                                                         container-name
-                                                        (%action-base-from-clone-url clone-url))
+                                                        (%action-base-from-clone-url clone-url)
+                                                        (lambda (thunk) (push thunk post-actions)))
                                         (block step-run
                                           (handler-case
                                             (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))
@@ -1769,6 +1792,12 @@ object string. Empty list -> \"\"."
                                     (when (and (not ok) (not step-continue-on-error))
                                       (setf job-failed t))))))))
                       (when job-failed (setf overall-success nil))
+                      ;; Run action post-thunks (e.g. cache save) in reverse step
+                      ;; order — like GitHub post steps; failures are warnings.
+                      (dolist (thunk post-actions)
+                        (handler-case (funcall thunk)
+                          (error (e)
+                            (format *error-output* "  post-action error: ~A~%" e))))
                       ;; Resolve job-level outputs: against the final steps context.
                       (when (plusp (length output-defs))
                         (let ((final-ctx (%gha-context (append job-env-pairs acc-env)

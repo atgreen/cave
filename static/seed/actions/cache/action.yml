@@ -1,0 +1,49 @@
+name: 'Cache'
+description: >
+  Cache files between workflow runs. cave-native, GitHub cache@v4-compatible:
+  restores on the step and saves at job end (a post step) unless the exact key
+  already hit. The keyed store is repo-scoped and shared across the runner host's
+  job containers.
+author: 'Cave'
+
+inputs:
+  path:
+    description: 'Files/directories to cache, one per line.'
+    required: true
+  key:
+    description: 'The exact cache key.'
+    required: true
+  restore-keys:
+    description: 'Ordered key prefixes to fall back to on a miss, one per line.'
+    required: false
+    default: ''
+  upload-chunk-size:
+    description: 'Accepted for compatibility; ignored.'
+    required: false
+    default: ''
+  enableCrossOsArchive:
+    description: 'Accepted for compatibility; ignored.'
+    required: false
+    default: 'false'
+  fail-on-cache-miss:
+    description: 'Fail the step if the exact key is not found.'
+    required: false
+    default: 'false'
+  lookup-only:
+    description: 'Check for a hit without restoring (and without saving).'
+    required: false
+    default: 'false'
+  save-always:
+    description: 'Deprecated/accepted for compatibility; ignored.'
+    required: false
+    default: 'false'
+
+outputs:
+  cache-hit:
+    description: 'true when an exact match for key was found.'
+
+# cave runs this via the built-in Lisp action registry; tar/restore happen in the
+# job container, and the save runs as a post step at job end.
+runs:
+  using: 'lisp'
+  main: 'cave:action-cache'
