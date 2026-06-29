@@ -44,7 +44,7 @@ are not built yet.
 ### Experimental
 
 - **Stacked changesets** — dependent PRs are tracked and displayed as a stack, but there is no atomic "land stack" yet; members still merge one PR at a time (see *Planned*)
-- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back, with a partial **GitHub-Actions-compatible** syntax: `push`/`pull_request`/`tag` triggers, workflow/job/step `env:`, multi-line `run: |` blocks, the standard `GITHUB_*` env (each with a `CAVE_*` twin) plus `RUNNER_*`/`CI`, and the `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_PATH`/`$GITHUB_STEP_SUMMARY` file-command protocol (`${{ }}` expressions and `uses:` actions are not yet supported). Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs (as is anything a step emits via `::add-mask::`). A reaper requeues jobs orphaned by a dead/restarted runner (bounded retries) so the queue self-heals. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
+- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back, with a partial **GitHub-Actions-compatible** syntax: `push`/`pull_request`/`tag` triggers, workflow/job/step `env:`, multi-line `run: |` blocks, the standard `GITHUB_*` env (each with a `CAVE_*` twin) plus `RUNNER_*`/`CI`, and the `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_PATH`/`$GITHUB_STEP_SUMMARY` file-command protocol, `${{ }}` expressions (in `run:`/`env:`/`if:`, across the `github`/`steps`/`matrix`/`needs`/… contexts), `strategy.matrix`, and job `outputs:`/`needs.*` (`uses:` actions are not yet supported). Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs (as is anything a step emits via `::add-mask::`). A reaper requeues jobs orphaned by a dead/restarted runner (bounded retries) so the queue self-heals. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
 - **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
 
 ### Planned
@@ -462,15 +462,25 @@ Actions syntax so existing `run:`-based workflows port with little change:
   the job log; `::add-mask::` redacts a value from the logs.
 - **Multi-line `run: |`** literal and `>` folded block scalars are parsed
   (shell `#` comments inside a block are preserved).
-- **`${{ }}` expressions** in `run:` and `env:` are evaluated — the full GitHub
-  Actions expression language (operators, `contains`/`startsWith`/`format`/
-  `join`/`toJSON`/`fromJSON`/…) against the `github`, `env`, `secrets`, and
-  `runner` contexts. **A `cave` context mirrors `github`**, so `${{ cave.sha }}`
-  works like `${{ github.sha }}`.
+- **`${{ }}` expressions** in `run:`, `env:`, and `if:` are evaluated — the full
+  GitHub Actions expression language (operators, `contains`/`startsWith`/`format`/
+  `join`/`toJSON`/`fromJSON`/status functions/…) against the `github`, `env`,
+  `secrets`, `runner`, `steps`, `matrix`, `needs`, and `job` contexts. **A `cave`
+  context mirrors `github`**, so `${{ cave.sha }}` works like `${{ github.sha }}`.
+- **Step `if:` conditions** gate execution: the default is `success()` (a step is
+  skipped once a prior step failed); `always()`/`failure()`/`cancelled()` and any
+  expression (e.g. `if: steps.build.outcome == 'success'`) are honored.
+- **`steps.<id>.outputs`** — a step's `$GITHUB_OUTPUT` is captured (keyed by its
+  `id:`) with `outcome`/`conclusion`, and is available to later steps' `${{ }}`
+  and `if:`.
+- **`strategy.matrix`** expands a job into one job per combination (with
+  `include`/`exclude`), each exposing its combo as `${{ matrix.* }}`.
+- **Job `outputs:` + `needs.<job>.outputs`/`needs.<job>.result`** — a job resolves
+  its declared `outputs:` from its steps and publishes them to dependent jobs.
 
-Not yet supported: `${{ }}` in `if:` conditions and the `steps`/`needs`/`matrix`
-contexts, `uses:` actions (Docker/JS/composite/reusable workflows), and matrix
-builds.
+Not yet supported: `uses:` actions (Docker/JS/composite/reusable workflows),
+`hashFiles()` (stubbed), and matrix fan-in for `needs:` (a `needs:` entry matches
+a plain job name, not a matrix-expanded `job (x, y)` set).
 
 ## Themes
 
