@@ -467,15 +467,22 @@ number of commits re-verified."
            (skip-ci (and (intersection push-options '("skip-ci" "ci-skip")
                                        :test #'equal) t))
            (verbose-ci (and (intersection push-options '("verbose-ci" "ci-verbose")
-                                          :test #'equal) t)))
-      ;; Parse refs from POST body (one per line: oldsha newsha refname)
-      (let ((body (hunchentoot:raw-post-data :force-text t))
-            (refs nil))
-        (dolist (line (uiop:split-string body :separator '(#\Newline)))
-          (let ((parts (uiop:split-string line :separator '(#\Space))))
-            (when (>= (length parts) 3)
-              (push (list :old (first parts) :new (second parts) :ref (third parts))
-                    refs))))
+                                          :test #'equal) t))
+           ;; Parse refs from POST body (one per line: oldsha newsha refname).
+           ;; Bound here in the outer let* so BOTH the processing block and the
+           ;; push-time-hint block below can see it (previously refs was scoped
+           ;; to only the first block, leaving the hint block referencing an
+           ;; unbound variable — a 500 on every push).
+           (refs (let ((body (hunchentoot:raw-post-data :force-text t))
+                       (rs nil))
+                   (dolist (line (uiop:split-string body :separator '(#\Newline))
+                                 (nreverse rs))
+                     (let ((parts (uiop:split-string line :separator '(#\Space))))
+                       (when (>= (length parts) 3)
+                         (push (list :old (first parts) :new (second parts)
+                                     :ref (third parts))
+                               rs)))))))
+      (progn
         (when refs
           (touch-repo-pushed-at (getf repo :id)))
         ;; Log a rich git.push event per ref + schedule automations
@@ -557,7 +564,7 @@ number of commits re-verified."
                            ("after" . ,(getf r :new))
                            ("before" . ,(getf r :old))
                            ("repository" . (("owner" . ,owner)
-                                            ("name" . ,repo-name))))))))
+                                            ("name" . ,repo-name)))))))
     ;; Push-time hint (the post-receive hook echoes this back to the pusher):
     ;; suggest opening a PR for newly pushed feature branches that have none,
     ;; plus `git push -o verbose-ci` CI feedback.
@@ -588,7 +595,7 @@ number of commits re-verified."
                                  (length wf)
                                  (mapcar #'file-namestring wf))
                          lines)))))))
-      (if lines (format nil "~{~A~^~%~}" (nreverse lines)) ""))))
+      (if lines (format nil "~{~A~^~%~}" (nreverse lines)) "")))))
 
 (defun valid-runner-request-p ()
   "True when the request carries a valid runner bearer token."
