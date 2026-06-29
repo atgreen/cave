@@ -1366,9 +1366,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
 ;;; ========================== ISSUE PAGES ==========================
 
+(defun %label-hue (s)
+  "Deterministic hue 0-359 for a label string, so each label gets a stable,
+distinct color without a stored color column."
+  (let ((h 0))
+    (loop for ch across (string s)
+          do (setf h (mod (+ (* h 31) (char-code ch)) 360)))
+    h))
+
+(defun %label-style (l)
+  "Inline pill style (pastel bg + dark text) for label L, in both light/dark themes."
+  (let ((hue (%label-hue l)))
+    (format nil "background:hsl(~D 70% 90%);color:hsl(~D 60% 26%);border-color:hsl(~D 45% 78%)"
+            hue hue hue)))
+
 (defun view-issues (&key owner-name repo issues current-status
-                         labels-by-issue current-label all-labels)
-  "Render the issues list."
+                         labels-by-issue current-label all-labels
+                         comment-counts authors)
+  "Render the issues list — a triage surface: status glyph, title, colored
+labels, and a metadata line (number, author, age, comment count)."
   (let ((org-name owner-name)
         (repo-name (getf repo :name)))
     (page (:title (format nil "Issues — ~A/~A" org-name repo-name))
@@ -1379,12 +1395,13 @@ document.addEventListener('DOMContentLoaded', function() {
          :href "?status=open" "Open")
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "closed"))
          :href "?status=closed" "Closed"))
-       (when *current-user*
-         (:a.btn.btn-sm :href (format nil "/~A/~A/milestones" org-name repo-name)
-          "Milestones"))
-       (when *current-user*
-         (:a.btn.btn-primary :href (format nil "/~A/~A/issues/new" org-name repo-name)
-          "New issue")))
+       (:div :style "display:flex;gap:var(--sp-2)"
+        (when *current-user*
+          (:a.btn.btn-sm :href (format nil "/~A/~A/milestones" org-name repo-name)
+           "Milestones"))
+        (when *current-user*
+          (:a.btn.btn-primary :href (format nil "/~A/~A/issues/new" org-name repo-name)
+           "New issue"))))
       ;; Label filter bar
       (when all-labels
         (:div.label-filters :style "margin:.5rem 0;display:flex;gap:.35rem;flex-wrap:wrap;align-items:center"
@@ -1392,24 +1409,43 @@ document.addEventListener('DOMContentLoaded', function() {
          (when current-label
            (:a.btn.btn-sm :href (format nil "?status=~A" (or current-status "open")) "✕ clear"))
          (dolist (l all-labels)
-           (:a :class (format nil "badge~@[ btn-active~]" (equal l current-label))
-            :style "text-decoration:none"
+           (:a :class (if (equal l current-label) "issue-label issue-label-active" "issue-label")
+            :style (%label-style l)
             :href (format nil "?status=~A&label=~A" (or current-status "open")
                           (hunchentoot:url-encode l))
             l))))
       (if issues
-          (:ul.issue-list
+          (:ul.issues
            (dolist (iss issues)
-             (:li
-              (:a :href (format nil "/~A/~A/issues/~A" org-name repo-name
-                                 (getf iss :number))
-               (let ((p (getf iss :pin-order)))
-                 (when (and p (not (eq p :null))) "📌 "))
-               (:span.issue-number (format nil "#~A" (getf iss :number)))
-               (format nil " ~A" (getf iss :title)))
-              (dolist (l (and labels-by-issue (gethash (getf iss :id) labels-by-issue)))
-                (:span.badge :style "margin-left:.25rem" l))
-              (:span.badge (getf iss :status)))))
+             (let* ((open (equal (getf iss :status) "open"))
+                    (num (getf iss :number))
+                    (iid (getf iss :id))
+                    (pinned (let ((p (getf iss :pin-order))) (and p (not (eq p :null)))))
+                    (author (and authors (gethash (getf iss :author-id) authors)))
+                    (ago (format-relative-time (getf iss :created-at)))
+                    (ncomments (or (and comment-counts (gethash iid comment-counts)) 0))
+                    (labels (and labels-by-issue (gethash iid labels-by-issue))))
+               (:li.issue-row
+                (:span.issue-icon
+                 :title (getf iss :status)
+                 :style (format nil "background:~A" (if open "#3fb950" "#a371f7")))
+                (:div.issue-main
+                 (:div.issue-titleline
+                  (when pinned (:span.issue-pin "📌"))
+                  (:a.issue-title
+                   :href (format nil "/~A/~A/issues/~A" org-name repo-name num)
+                   (getf iss :title))
+                  (dolist (l labels)
+                    (:a.issue-label
+                     :style (%label-style l)
+                     :href (format nil "?status=~A&label=~A" (or current-status "open")
+                                   (hunchentoot:url-encode l))
+                     l)))
+                 (:div.issue-meta
+                  (format nil "#~A" num)
+                  (when author (format nil " · opened by ~A" author))
+                  (when ago (format nil " · ~A" ago))
+                  (when (plusp ncomments) (format nil " · 💬 ~A" ncomments))))))))
           (:p.empty "No issues found.")))))
 
 (defun view-milestones (&key owner-name repo milestones counts can-edit)

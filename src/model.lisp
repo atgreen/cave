@@ -1976,6 +1976,18 @@ setting priority/high replaces priority/low. Plain labels are unaffected."
 
 ;;; ========================== ISSUE COMMENTS ==========================
 
+(defun issue-comment-counts (issue-ids)
+  "Hash table issue-id -> comment count for ISSUE-IDS (one query). Missing keys
+mean zero. Used to show the per-row comment count on the issues list."
+  (let ((h (make-hash-table)))
+    (when issue-ids
+      (dolist (row (postmodern:query
+                    "SELECT issue_id, count(*) AS n FROM cave_issue_comments
+                     WHERE issue_id = ANY($1) GROUP BY issue_id"
+                    (coerce issue-ids 'vector) :rows))
+        (setf (gethash (first row) h) (second row))))
+    h))
+
 (defun create-issue-comment (&key issue-id author-id body)
   "Create a comment on an issue. Returns the comment plist."
   (postmodern:query

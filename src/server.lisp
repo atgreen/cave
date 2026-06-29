@@ -2607,11 +2607,22 @@ leaking the viewer's IP or breaking HTTPS."
                                             :test #'equal))
                         issues)
                        issues)))
-      (html-response
-       (view-issues :owner-name owner :repo repo :issues issues :current-status status
-                    :labels-by-issue labels-by-issue
-                    :current-label label-filter
-                    :all-labels (labels-in-repo (getf repo :id)))))))
+      (let ((comment-counts (issue-comment-counts
+                             (mapcar (lambda (i) (getf i :id)) issues)))
+            (authors (let ((h (make-hash-table)))
+                       (dolist (uid (remove-duplicates
+                                     (mapcar (lambda (i) (getf i :author-id)) issues)))
+                         (when (and uid (not (eq uid :null)))
+                           (let ((u (find-user-by-id uid)))
+                             (when u (setf (gethash uid h) (getf u :username))))))
+                       h)))
+        (html-response
+         (view-issues :owner-name owner :repo repo :issues issues :current-status status
+                      :labels-by-issue labels-by-issue
+                      :current-label label-filter
+                      :comment-counts comment-counts
+                      :authors authors
+                      :all-labels (labels-in-repo (getf repo :id))))))))
 
 (easy-routes:defroute deps-page ("/:owner/:repo-name/deps" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))

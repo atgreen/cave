@@ -246,6 +246,43 @@ section { margin-bottom: var(--sp-8); }
 .issues-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-4); }
 .issue-filters { display: flex; gap: 2px; }
 
+/* --- Issues list (triage rows) --- */
+.issues { list-style: none; }
+.issues li.issue-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--border-subtle);
+  background: var(--surface);
+  margin-bottom: 1px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.issues li.issue-row:hover { border-left-color: var(--accent-dim); background: var(--surface-hover); }
+.issue-icon { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; margin-top: 0.3rem; }
+.issue-main { flex: 1 1 auto; min-width: 0; }
+.issue-titleline { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
+.issue-title { font-weight: 600; color: var(--text); text-decoration: none; }
+.issue-title:hover { color: var(--accent); }
+.issue-pin { font-size: 0.85rem; }
+.issue-label {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  text-decoration: none;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+.issue-label:hover { filter: brightness(0.96); }
+.issue-label-active { outline: 2px solid var(--accent-dim); outline-offset: 1px; }
+.issue-meta {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
 /* --- Issue detail --- */
 .issue-header {
   display: flex;
