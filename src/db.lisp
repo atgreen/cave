@@ -884,7 +884,11 @@ CREATE INDEX idx_deploy_keys_repo ON cave_deploy_keys (repo_id);
 CREATE INDEX idx_deploy_keys_fp ON cave_deploy_keys (fingerprint);")
 
     (62 . "-- Per-job reusable cache directories (newline-separated container paths).
-ALTER TABLE cave_workflow_jobs ADD COLUMN cache_paths TEXT NOT NULL DEFAULT '';"))
+ALTER TABLE cave_workflow_jobs ADD COLUMN cache_paths TEXT NOT NULL DEFAULT '';")
+
+    (63 . "-- Dispatch attempt counter, so a job orphaned by a dead/restarted runner
+-- is requeued (retried) a bounded number of times before being failed.
+ALTER TABLE cave_workflow_jobs ADD COLUMN attempts INT NOT NULL DEFAULT 0;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

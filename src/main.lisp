@@ -374,12 +374,13 @@ empty system repo gets populated at startup."
                             :error (princ-to-string e)))))
   ;; Reap zombie workflow runs: a runner that dies mid-job leaves the run
   ;; 'running' forever, which blocks merges on required checks.
-  (when (claim-scheduled-task "reap-workflows" 300)
+  (when (claim-scheduled-task "reap-workflows" 120)
     (handler-case
-        (let ((n (reap-stale-workflow-jobs
-                  :max-minutes (config-value :workflow-run-max-minutes 120))))
-          (when (plusp n)
-            (llog:info "Reaped stale workflow runs" :count n)))
+        (multiple-value-bind (requeued failed)
+            (reap-stale-workflow-jobs
+             :max-minutes (config-value :workflow-run-max-minutes 120))
+          (when (or (plusp requeued) (plusp failed))
+            (llog:info "Reaped workflow jobs" :requeued requeued :failed failed)))
       (error (e) (llog:warn "Workflow reap failed"
                             :error (princ-to-string e))))))
 

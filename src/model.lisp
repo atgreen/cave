@@ -1000,30 +1000,57 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
 
 ;;; ========================== WORKFLOWS ==========================
 
-(defun reap-stale-workflow-jobs (&key (max-minutes 120))
-  "Fail workflow jobs (and finalize their runs as failed) that have been
-   running/assigned past MAX-MINUTES, or whose assigned runner is gone/offline
-   (runners get a new id on restart, so a dead runner's jobs never report).
-   Without this a runner that dies mid-job leaves the run 'running' forever,
-   which blocks merges on required checks. Returns the number of runs reaped."
-  (let ((rows (postmodern:query
-               "SELECT j.id AS jid, j.workflow_run_id AS rid
-                FROM cave_workflow_jobs j
-                JOIN cave_workflow_runs w ON w.id = j.workflow_run_id
-                LEFT JOIN cave_runners r ON r.id = j.runner_id
-                WHERE j.status IN ('running','assigned')
-                  AND (w.started_at < now() - make_interval(mins => $1::int)
-                       OR r.id IS NULL
-                       OR r.status <> 'online'
-                       OR r.last_seen_at < now() - interval '3 minutes')"
-               max-minutes :plists))
-        (runs '()))
-    (dolist (row rows)
-      (update-job-status (getf row :jid) "failure")
-      (pushnew (getf row :rid) runs))
-    (dolist (rid runs)
+(defun reap-stale-workflow-jobs (&key (max-minutes 120) (max-attempts 3)
+                                      (assigned-grace-minutes 10))
+  "Recover wedged workflow jobs. A job is ABANDONED when its runner is gone /
+   offline / hasn't heartbeat in 3 min, or it has sat 'assigned' (never started)
+   past ASSIGNED-GRACE-MINUTES — typically a runner that died or restarted (e.g.
+   a cave deploy drops the gRPC streams). Such a job otherwise blocks its runner
+   forever via the one-task-per-runner check.
+
+   Outcomes:
+   - REQUEUE (retry) an abandoned job that still has attempts left and hasn't hit
+     the hard MAX-MINUTES timeout — a runner restart shouldn't kill a build.
+   - FAIL (and finalize the run) a job past MAX-MINUTES, or an abandoned job that
+     has exhausted MAX-ATTEMPTS. Failing finalizes required-check merge gating.
+   Returns (values requeued-count failed-run-count)."
+  (let* ((requeued
+           ;; Recoverable: abandoned, retries left, not yet hard-timed-out.
+           (postmodern:query
+            "UPDATE cave_workflow_jobs j
+                SET status='queued', runner_id=NULL, started_at=NULL,
+                    finished_at=NULL, attempts=attempts+1
+               FROM cave_workflow_runs w
+               LEFT JOIN cave_runners r ON r.id = j.runner_id
+              WHERE w.id = j.workflow_run_id
+                AND j.status IN ('running','assigned')
+                AND j.attempts < $2
+                AND COALESCE(w.started_at, j.created_at) >= now() - make_interval(mins => $1::int)
+                AND ( r.id IS NULL
+                      OR r.status <> 'online'
+                      OR r.last_seen_at < now() - interval '3 minutes'
+                      OR (j.status = 'assigned' AND j.started_at IS NULL
+                          AND j.created_at < now() - make_interval(mins => $3::int)) )
+            RETURNING j.id"
+            max-minutes max-attempts assigned-grace-minutes :column))
+         (failed-runs
+           ;; Unrecoverable: hard timeout, or abandoned with no attempts left.
+           (postmodern:query
+            "UPDATE cave_workflow_jobs j
+                SET status='failure', finished_at=now()
+               FROM cave_workflow_runs w
+               LEFT JOIN cave_runners r ON r.id = j.runner_id
+              WHERE w.id = j.workflow_run_id
+                AND j.status IN ('running','assigned')
+                AND ( COALESCE(w.started_at, j.created_at) < now() - make_interval(mins => $1::int)
+                      OR ( j.attempts >= $2
+                           AND ( r.id IS NULL OR r.status <> 'online'
+                                 OR r.last_seen_at < now() - interval '3 minutes' ) ) )
+            RETURNING j.workflow_run_id"
+            max-minutes max-attempts :column)))
+    (dolist (rid (remove-duplicates failed-runs))
       (update-workflow-run-status rid "failure"))
-    (length runs)))
+    (values (length requeued) (length failed-runs))))
 
 (defun create-workflow-run (&key repo-id workflow-name workflow-file trigger-event
                                  commit-sha ref triggered-by-id)

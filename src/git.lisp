@@ -1201,8 +1201,15 @@ the remote host and fixes mixed-content (the proxy serves over the site's TLS)."
            (sb-ext:string-to-octets image-url :external-format :utf-8))))
 
 (defun camoify-img-src (html)
-  "Rewrite external <img src=\"http(s)://…\"> in HTML through the camo proxy."
-  (let ((result html) (pos 0))
+  "Rewrite external <img src=\"http(s)://…\"> in HTML through the camo proxy.
+Own-origin images (cave's own :base-url) are left untouched: camo exists to hide
+the viewer's IP from THIRD-PARTY hosts and to fix mixed content, neither of which
+applies to images cave itself serves. Proxying them would also make cave fetch
+its own public URL from inside its container — which can't hairpin back, so the
+camo fetch 502s and the image breaks."
+  (let ((result html) (pos 0)
+        (own (let ((b (config-value :base-url "")))
+               (and (stringp b) (plusp (length b)) b))))
     (loop
       (let ((img-pos (search "<img " result :start2 pos)))
         (unless img-pos (return result))
@@ -1212,8 +1219,9 @@ the remote host and fixes mixed-content (the proxy serves over the site's TLS)."
                  (url-end (position #\" result :start url-start)))
             (unless url-end (return result))
             (let ((url (subseq result url-start url-end)))
-              (if (or (uiop:string-prefix-p "http://" url)
-                      (uiop:string-prefix-p "https://" url))
+              (if (and (or (uiop:string-prefix-p "http://" url)
+                           (uiop:string-prefix-p "https://" url))
+                       (not (and own (uiop:string-prefix-p own url))))
                   (let ((new-url (camo-url url)))
                     (setf result (concatenate 'string
                                               (subseq result 0 url-start)
