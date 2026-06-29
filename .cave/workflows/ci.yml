@@ -4,6 +4,8 @@ jobs:
   build:
     image: ghcr.io/atgreen/fedora-cave-builder:latest
     steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
       - name: Install dependencies
         run: ocicl install && find ocicl -exec touch -d @1 {} +
       - name: List files (pre)

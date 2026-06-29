@@ -299,10 +299,14 @@
                    :name (format nil "ocicl-fix:~A" project)
                    :image (config-value :deps-fix-image "ghcr.io/atgreen/cave-fix:main")
                    :runs-on runs-on)))
+        ;; GitHub model: empty workspace, so check out the repo first.
+        (create-workflow-step
+         :job-id (getf job :id) :step-order 1 :name "checkout"
+         :uses "actions/checkout@v4")
         ;; `;` not `&&`: emit ocicl.csv even if `ocicl latest` partly fails — the
         ;; completion hook decides per-system whether the bump cleared anything.
         (create-workflow-step
-         :job-id (getf job :id) :step-order 1 :name "ocicl-latest"
+         :job-id (getf job :id) :step-order 2 :name "ocicl-latest"
          :command (format nil "cd /workspace && ocicl latest ~{~A~^ ~} >/dev/null 2>&1; ocicl clean >/dev/null 2>&1; echo ~A; cat ocicl.csv"
                           systems *ocicl-csv-marker*))
         run))))

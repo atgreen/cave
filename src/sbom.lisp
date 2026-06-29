@@ -212,10 +212,14 @@
                      :image (config-value :deps-scan-image
                                           "ghcr.io/atgreen/cave-scan:main")
                      :runs-on runs-on)))
+          ;; GitHub model: the workspace starts empty, so check out the repo first.
+          (create-workflow-step
+           :job-id (getf job :id) :step-order 1 :name "checkout"
+           :uses "actions/checkout@v4")
           ;; syft -> file, then cat: the runner captures stdout+stderr combined,
           ;; so suppress syft's progress and emit only clean CycloneDX JSON.
           (create-workflow-step
-           :job-id (getf job :id) :step-order 1 :name "syft"
+           :job-id (getf job :id) :step-order 2 :name "syft"
            :command (concatenate 'string
                                  "syft -q dir:/workspace -o cyclonedx-json=/tmp/sbom.json "
                                  ">/dev/null 2>&1 && cat /tmp/sbom.json"))

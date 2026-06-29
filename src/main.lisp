@@ -919,6 +919,48 @@ object string. Empty list -> \"\"."
                         (format nil "\"~A\":\"~A\"" (%json-escape (car p)) (%json-escape (cdr p))))
                       pairs))))
 
+(defun %run-action (uses with-pairs gha-ctx ctx step-outputs channel auth-token step-id masks)
+  "Resolve and run a `uses:` action host-side. Interpolates the with: inputs,
+   dispatches the built-in, streams its log to the step, fills STEP-OUTPUTS, and
+   returns an exit code (0 ok, 1 failure / unsupported)."
+  (flet ((emit (text)
+           (ignore-errors
+            (ag-grpc:grpc-call channel
+             "/cave.runner.RunnerService/AppendStepLog"
+             (make-instance 'cave::append-step-log-request
+                            :step-id step-id :chunk (%mask-secrets text masks))
+             :response-type 'cave::append-step-log-response
+             :metadata (make-auth-metadata auth-token)))))
+    (multiple-value-bind (owner repo ref kind) (parse-action-ref uses)
+      (declare (ignore ref))
+      (cond
+        ((eq kind :external)
+         (emit (format nil "Unsupported action ref '~A' — cave resolves owner/repo cave-local only.~%" uses))
+         1)
+        (t
+         (let* ((name (format nil "~A/~A" owner repo))
+                (entry (builtin-action name)))
+           (if (null entry)
+               (progn
+                 (emit (format nil "Action '~A' not found — only built-in actions are supported.~%" name))
+                 1)
+               (let ((inputs (make-hash-table :test 'equal)))
+                 (dolist (kv with-pairs)
+                   (let ((p (position #\= kv)))
+                     (when p
+                       (setf (gethash (subseq kv 0 p) inputs)
+                             (interpolate-gha (subseq kv (1+ p)) gha-ctx)))))
+                 (apply-input-defaults name inputs)
+                 (handler-case
+                     (multiple-value-bind (ok outputs log) (funcall (getf entry :fn) ctx inputs)
+                       (when (and log (plusp (length log))) (emit log))
+                       (when (hash-table-p outputs)
+                         (maphash (lambda (k v) (setf (gethash k step-outputs) v)) outputs))
+                       (if ok 0 1))
+                   (error (e)
+                     (emit (format nil "Action error: ~A~%" e))
+                     1))))))))))
+
 (defun %runner-arch ()
   "GitHub-Actions-style RUNNER_ARCH for the host CPU."
   (let ((m (string-trim '(#\Newline #\Space)
@@ -1242,23 +1284,15 @@ object string. Empty list -> \"\"."
                   (unless (zerop exit)
                     (format *error-output* "  Failed to pull image ~A~%" image)
                     (setf overall-success nil)))
-                ;; Clone repo
+                ;; GitHub model: the workspace starts EMPTY. A step must run
+                ;; `uses: actions/checkout` to populate it — cave no longer
+                ;; auto-clones the repo.
                 (when overall-success
-                  (format t "  Cloning ~A/~A...~%" repo-owner repo-name)
-                  (multiple-value-bind (_out _err exit)
-                      (uiop:run-program (list "git" "clone" "--depth" "1" clone-url workdir)
-                                        :output '(:string :stripped t)
-                                        :error-output '(:string :stripped t)
-                                        :ignore-error-status t)
-                    (declare (ignore _out _err))
-                    (unless (zerop exit)
-                      (format *error-output* "  Failed to clone repo~%")
-                      (setf overall-success nil)))
-                  ;; Checkout specific commit if provided
-                  (when (and overall-success (not (uiop:emptyp commit-sha)))
-                    (uiop:run-program (list "git" "-C" workdir "checkout" commit-sha)
-                                      :output :string :error-output :string
-                                      :ignore-error-status t)))
+                  (handler-case
+                      (ensure-directories-exist (concatenate 'string workdir "/"))
+                    (error (e)
+                      (format *error-output* "  Failed to create workspace: ~A~%" e)
+                      (setf overall-success nil))))
                 ;; Create a long-lived container for all steps
                 (when overall-success
                   (format t "  Creating container ~A...~%" container-name)
@@ -1324,7 +1358,12 @@ object string. Empty list -> \"\"."
                       (dolist (step steps)
                         (let* ((step-id (slot-value step 'cave::step-id))
                                (step-name (slot-value step 'cave::name))
-                               (step-cmd (slot-value step 'cave::command))
+                               (step-cmd (or (slot-value step 'cave::command) ""))
+                               (step-uses (handler-case (slot-value step 'cave::uses) (error () "")))
+                               (with-pairs (%kv-lines->pairs
+                                            (handler-case (slot-value step 'cave::with-inputs)
+                                              (error () ""))))
+                               (uses-step (and step-uses (plusp (length step-uses))))
                                (step-timeout (let ((ts (slot-value step 'cave::timeout-seconds)))
                                                (when (and ts (plusp ts)) ts)))
                                (step-env-pairs (%kv-lines->pairs
@@ -1361,7 +1400,9 @@ object string. Empty list -> \"\"."
                               (progn
                                 (format t "  Step ~A: ~A~%"
                                         (if (uiop:emptyp step-name) "(unnamed)" step-name)
-                                        (subseq step-cmd 0 (min 60 (length step-cmd))))
+                                        (if uses-step
+                                            (format nil "uses ~A" step-uses)
+                                            (subseq step-cmd 0 (min 60 (length step-cmd)))))
                                 (ag-grpc:grpc-call channel
                                                    "/cave.runner.RunnerService/UpdateStepStatus"
                                                    (make-instance 'cave::update-step-status-request
@@ -1370,6 +1411,14 @@ object string. Empty list -> \"\"."
                                                    :response-type 'cave::update-step-status-response
                                                    :metadata (make-auth-metadata auth-token))
                                 (let ((exit-code
+                                       (if uses-step
+                                           ;; --- uses: built-in action (host-side) ---
+                                           (%run-action step-uses with-pairs gha-ctx
+                                                        (list :workdir workdir :clone-url clone-url
+                                                              :commit-sha commit-sha
+                                                              :ref (handler-case (slot-value task 'cave::ref)
+                                                                     (error () "")))
+                                                        step-outputs channel auth-token step-id masks)
                                         (block step-run
                                           (handler-case
                                             (let* ((log-file (format nil "/tmp/cave-step-~A.log" step-id))
@@ -1485,7 +1534,7 @@ object string. Empty list -> \"\"."
                                                               (setf (gethash (subseq kv 0 eq) step-outputs)
                                                                     (subseq kv (1+ eq))))))))
                                                     code))))
-                                            (error () 1)))))
+                                            (error () 1))))))
                                   (let* ((ok (zerop exit-code))
                                          (outcome (if ok "success" "failure"))
                                          (conclusion (if (or ok step-continue-on-error) "success" "failure")))

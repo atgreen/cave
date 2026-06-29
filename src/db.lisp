@@ -910,7 +910,11 @@ ALTER TABLE cave_workflow_jobs ADD COLUMN outputs TEXT NOT NULL DEFAULT '';")
     (68 . "-- The YAML job key (matrix jobs share a base_name across their
 -- expanded 'job (x, y)' display names) so needs: resolves the whole set.
 ALTER TABLE cave_workflow_jobs ADD COLUMN base_name TEXT NOT NULL DEFAULT '';
-UPDATE cave_workflow_jobs SET base_name = name WHERE base_name = '';"))
+UPDATE cave_workflow_jobs SET base_name = name WHERE base_name = '';")
+
+    (69 . "-- uses: action ref + with: inputs for a step (run: steps leave these empty).
+ALTER TABLE cave_workflow_steps ADD COLUMN uses TEXT NOT NULL DEFAULT '';
+ALTER TABLE cave_workflow_steps ADD COLUMN with_inputs TEXT NOT NULL DEFAULT '';"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

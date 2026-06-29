@@ -96,6 +96,8 @@ message StepSpec {
   string env = 7;           // newline-joined KEY=VALUE step-level env
   string id_name = 8;       // user-defined step `id:` (for steps.<id>.outputs)
   string if_cond = 9;       // `if:` condition expression (without ${{ }})
+  string uses = 10;         // `uses:` action ref (owner/repo@ref); empty for run: steps
+  string with_inputs = 11;  // newline-joined KEY=VALUE: the action's `with:` inputs
 }
 
 message UpdateStepStatusRequest {

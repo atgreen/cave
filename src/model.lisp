@@ -1269,23 +1269,28 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
     :set 'status "queued" 'runner-id :null
     :where (:and (:= 'id run-id) (:= 'status "assigned")))))
 
-(defun create-workflow-step (&key job-id step-order name command (timeout-seconds 0)
-                                  continue-on-error (env "") (id-name "") (if-cond ""))
+(defun create-workflow-step (&key job-id step-order name (command "") (timeout-seconds 0)
+                                  continue-on-error (env "") (id-name "") (if-cond "")
+                                  (uses "") (with-inputs ""))
   "Create a workflow step. TIMEOUT-SECONDS is the max step duration (0 means no limit).
    CONTINUE-ON-ERROR when true allows the job to proceed even if this step fails.
    ENV is the step-level `env:` map as newline-joined KEY=VALUE.
-   ID-NAME is the user `id:` (for steps.<id>.outputs); IF-COND the `if:` expression."
+   ID-NAME is the user `id:` (for steps.<id>.outputs); IF-COND the `if:` expression.
+   USES is the `uses:` action ref (owner/repo@ref) for action steps; WITH-INPUTS
+   the action's `with:` map as newline-joined KEY=VALUE."
   (postmodern:query
    (:insert-into 'cave-workflow-steps
     :set 'job-id job-id
          'step-order step-order
          'name (or name :null)
-         'command command
+         'command (or command "")
          'timeout-seconds (or timeout-seconds 0)
          'continue-on-error (if continue-on-error t nil)
          'env (or env "")
          'id-name (or id-name "")
          'if-cond (or if-cond "")
+         'uses (or uses "")
+         'with-inputs (or with-inputs "")
     :returning '*)
    :plist))
 

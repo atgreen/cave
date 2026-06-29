@@ -44,7 +44,7 @@ are not built yet.
 ### Experimental
 
 - **Stacked changesets** — dependent PRs are tracked and displayed as a stack, but there is no atomic "land stack" yet; members still merge one PR at a time (see *Planned*)
-- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back, with a partial **GitHub-Actions-compatible** syntax: `push`/`pull_request`/`tag` triggers, workflow/job/step `env:`, multi-line `run: |` blocks, the standard `GITHUB_*` env (each with a `CAVE_*` twin) plus `RUNNER_*`/`CI`, and the `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_PATH`/`$GITHUB_STEP_SUMMARY` file-command protocol, `${{ }}` expressions (in `run:`/`env:`/`if:`, across the `github`/`steps`/`matrix`/`needs`/… contexts), `strategy.matrix`, and job `outputs:`/`needs.*` (`uses:` actions are not yet supported). Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs (as is anything a step emits via `::add-mask::`). A reaper requeues jobs orphaned by a dead/restarted runner (bounded retries) so the queue self-heals. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
+- **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back, with a partial **GitHub-Actions-compatible** syntax: `push`/`pull_request`/`tag` triggers, workflow/job/step `env:`, multi-line `run: |` blocks, the standard `GITHUB_*` env (each with a `CAVE_*` twin) plus `RUNNER_*`/`CI`, and the `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_PATH`/`$GITHUB_STEP_SUMMARY` file-command protocol, `${{ }}` expressions (in `run:`/`env:`/`if:`, across the `github`/`steps`/`matrix`/`needs`/… contexts), `strategy.matrix`, job `outputs:`/`needs.*`, and `uses:` actions (GitHub model: empty workspace + cave-local, Lisp-native built-ins like `actions/checkout`). Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs (as is anything a step emits via `::add-mask::`). A reaper requeues jobs orphaned by a dead/restarted runner (bounded retries) so the queue self-heals. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
 - **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
 
 ### Planned
@@ -479,9 +479,17 @@ Actions syntax so existing `run:`-based workflows port with little change:
   its declared `outputs:` from its steps and publishes them to dependent jobs.
   A `needs:` on a matrix job **fans in**: the dependent waits on every expanded
   instance, its `outputs` merge, and `result` is `success` only if all succeeded.
+- **`uses:` actions** — like GitHub, **the workspace starts empty**; a step must
+  `uses: actions/checkout@v4` to populate it (cave does not auto-clone). Actions
+  are referenced `owner/repo@ref` and resolved **cave-local** (no github.com).
+  The built-in `actions/*` set is implemented natively in Lisp and runs
+  in-process on the runner — the trusted core. `actions/checkout` honors `ref`,
+  `path`, `fetch-depth` (`0` = full history), and `submodules`, and sets the
+  `commit`/`ref` outputs. `with:` inputs are `${{ }}`-interpolated.
 
-Not yet supported: `uses:` actions (Docker/JS/composite/reusable workflows) and
-`hashFiles()` (stubbed).
+Not yet supported: Docker/JS/composite actions and third-party (non-built-in)
+`uses:` actions; `docker://`, URL, and `./local` action refs; `hashFiles()`
+(stubbed).
 
 ## Themes
 

@@ -304,18 +304,25 @@ builds (and layer-caches) an image with the requested packages on demand."
                                      (step-id (let ((v (cdr (assoc "id" step-spec :test #'equal))))
                                                 (if (stringp v) v "")))
                                      (step-if (%strip-expr-wrapper
-                                               (cdr (assoc "if" step-spec :test #'equal)))))
-                                 (when command
+                                               (cdr (assoc "if" step-spec :test #'equal))))
+                                     (step-uses (let ((v (cdr (assoc "uses" step-spec :test #'equal))))
+                                                  (if (stringp v) v "")))
+                                     (step-with (%env-map->string
+                                                 (cdr (assoc "with" step-spec :test #'equal)))))
+                                 ;; A step is either `run:` (command) or `uses:` (action).
+                                 (when (or command (plusp (length step-uses)))
                                    (create-workflow-step
                                     :job-id (getf job :id)
                                     :step-order order
                                     :name step-name
-                                    :command command
+                                    :command (or command "")
                                     :timeout-seconds step-timeout
                                     :continue-on-error (eq step-continue-on-error t)
                                     :env step-env
                                     :id-name step-id
-                                    :if-cond step-if))))))))))))
+                                    :if-cond step-if
+                                    :uses step-uses
+                                    :with-inputs step-with))))))))))))
         run)))))
 
 (defun rerun-workflow (run-id)

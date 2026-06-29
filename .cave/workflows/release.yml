@@ -8,6 +8,11 @@ jobs:
     cache:
       - /root/.cache/common-lisp
     steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          # Full history + tags so `git describe --tags` works.
+          fetch-depth: 0
       - name: Resolve release tag
         run: |
           set -e

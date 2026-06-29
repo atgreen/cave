@@ -54,6 +54,7 @@
                 (:file "src/auth")
                 (:file "src/yaml")
                 (:file "src/expr")
+                (:file "src/actions")
                 (:file "src/model")
                 (:file "src/git")
                 (:file "src/chamber")
