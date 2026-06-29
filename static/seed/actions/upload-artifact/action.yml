@@ -1,0 +1,43 @@
+name: 'Upload a Build Artifact'
+description: >
+  Upload files as a named artifact, shared with other jobs in the same workflow
+  run and (when configured) browsable in the cave UI. cave-native, GitHub
+  upload-artifact@v4-compatible. Stored in the run-scoped object store.
+author: 'Cave'
+
+inputs:
+  name:
+    description: 'Artifact name.'
+    required: false
+    default: 'artifact'
+  path:
+    description: 'Files/directories to upload, one per line.'
+    required: true
+  if-no-files-found:
+    description: 'Behavior when no files match: warn, error, or ignore.'
+    required: false
+    default: 'warn'
+  retention-days:
+    description: 'Accepted for compatibility (retention handled by store policy).'
+    required: false
+    default: ''
+  compression-level:
+    description: 'Accepted for compatibility.'
+    required: false
+    default: '6'
+  overwrite:
+    description: 'Replace an existing artifact with the same name in this run.'
+    required: false
+    default: 'false'
+  include-hidden-files:
+    description: 'Accepted for compatibility.'
+    required: false
+    default: 'false'
+
+outputs:
+  artifact-id:
+    description: 'Identifier of the uploaded artifact (<run-id>/<name>).'
+
+runs:
+  using: 'lisp'
+  main: 'cave:action-upload-artifact'

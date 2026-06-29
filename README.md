@@ -499,7 +499,10 @@ Actions syntax so existing `run:`-based workflows port with little change:
     `CAVE_RUNNER_CACHE_REMOTE` (an [rclone](https://rclone.org) remote like
     `mys3:bucket`, S3/R2/B2/MinIO) for a shared, persistent store. The runner does
     the store I/O host-side with the operator's credentials — workflow code and
-    sandboxed actions never see them.
+    sandboxed actions never see them. `actions/upload-artifact` /
+    `actions/download-artifact` (artifact@v4-compatible) use the same store with a
+    run-scoped key (`artifacts/<run-id>/<name>`), so a later job downloads what an
+    earlier job uploaded.
   - **Third-party `owner/repo@ref`** — fetched from the chamber and run in a
     dedicated **`cave-actions` container** (a `using: lisp` action), sharing only
     the workspace + the file-command runtime dir. Untrusted code never enters the

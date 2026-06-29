@@ -139,14 +139,15 @@
 ;;;   (:backend :dir :root "<host path>")            — local, single-host (default)
 ;;;   (:backend :s3  :base "<rclone-remote>/cache/<owner>/<repo>")  — shared
 
-(defun %cache-store-descriptor (owner repo dir-root)
-  "Pick the cache backend from the runner env: CAVE_RUNNER_CACHE_REMOTE (an rclone
-   remote like \"mys3:bucket\") -> :s3; otherwise the local DIR-ROOT."
+(defun %object-store-descriptor (root-dir)
+  "Pick the object-store backend from the runner env: CAVE_RUNNER_CACHE_REMOTE (an
+   rclone remote like \"mys3:bucket\") -> :s3; otherwise the local ROOT-DIR. Used
+   by both the cache (cache/<owner>/<repo>/...) and artifacts (artifacts/<run>/...)
+   — callers pass a full object path relative to the store root."
   (let ((remote (uiop:getenv "CAVE_RUNNER_CACHE_REMOTE")))
     (if (and remote (plusp (length remote)))
-        (list :backend :s3
-              :base (format nil "~A/cache/~A/~A" (string-right-trim "/" remote) owner repo))
-        (list :backend :dir :root dir-root))))
+        (list :backend :s3 :base (string-right-trim "/" remote))
+        (list :backend :dir :root root-dir))))
 
 (defun %rclone (&rest args)
   "Run rclone host-side. Returns (values exit-code output)."
@@ -157,48 +158,67 @@
                               (if (and err (plusp (length err)))
                                   (concatenate 'string (string #\Newline) err) "")))))
 
-(defun %cache-store-exists (store name)
-  "True if object NAME exists in STORE."
+(defun %store-path (store path)
   (ecase (getf store :backend)
-    (:dir (and (probe-file (merge-pathnames name (uiop:ensure-directory-pathname (getf store :root)))) t))
-    (:s3 (multiple-value-bind (code out) (%rclone "lsf" (format nil "~A/~A" (getf store :base) name))
+    (:dir (merge-pathnames path (uiop:ensure-directory-pathname (getf store :root))))
+    (:s3 (format nil "~A/~A" (getf store :base) path))))
+
+(defun %store-exists (store path)
+  "True if object PATH exists in STORE."
+  (ecase (getf store :backend)
+    (:dir (and (probe-file (%store-path store path)) t))
+    (:s3 (multiple-value-bind (code out) (%rclone "lsf" (%store-path store path))
            (and (zerop code) (plusp (length (string-trim '(#\Newline #\Space) out))))))))
 
-(defun %cache-store-get (store name dest)
-  "Fetch object NAME from STORE to host file DEST. Returns T on success."
+(defun %store-get (store path dest)
+  "Fetch object PATH from STORE to host file DEST. Returns T on success."
   (ecase (getf store :backend)
-    (:dir (let ((src (merge-pathnames name (uiop:ensure-directory-pathname (getf store :root)))))
+    (:dir (let ((src (%store-path store path)))
             (and (probe-file src) (ignore-errors (uiop:copy-file src dest) t))))
-    (:s3 (zerop (%rclone "copyto" (format nil "~A/~A" (getf store :base) name) dest)))))
+    (:s3 (zerop (%rclone "copyto" (%store-path store path) dest)))))
 
-(defun %cache-store-put (store name src)
-  "Store host file SRC as object NAME in STORE. Returns T on success."
+(defun %store-put (store path src)
+  "Store host file SRC as object PATH in STORE. Returns T on success."
   (ecase (getf store :backend)
-    (:dir (let ((root (uiop:ensure-directory-pathname (getf store :root))))
-            (ignore-errors (ensure-directories-exist root))
-            (ignore-errors (uiop:copy-file src (merge-pathnames name root)) t)))
-    (:s3 (zerop (%rclone "copyto" src (format nil "~A/~A" (getf store :base) name))))))
+    (:dir (let ((dst (%store-path store path)))
+            (ignore-errors (ensure-directories-exist dst))
+            (ignore-errors (uiop:copy-file src dst) t)))
+    (:s3 (zerop (%rclone "copyto" src (%store-path store path))))))
 
-(defun %cache-store-find-prefix (store prefix)
-  "Newest object name in STORE whose name starts with PREFIX, or NIL."
+(defun %store-list (store dir)
+  "Object basenames directly under DIR in STORE."
   (ecase (getf store :backend)
-    (:dir (let* ((root (uiop:ensure-directory-pathname (getf store :root)))
+    (:dir (mapcar #'file-namestring
+                  (ignore-errors (uiop:directory-files
+                                  (uiop:ensure-directory-pathname (%store-path store dir))))))
+    (:s3 (multiple-value-bind (code out) (%rclone "lsf" (format nil "~A/" (%store-path store dir))
+                                                  "--files-only")
+           (when (zerop code)
+             (remove "" (mapcar (lambda (s) (string-right-trim "/" (string-trim '(#\Space #\Return) s)))
+                                (uiop:split-string out :separator '(#\Newline)))
+                     :test #'string=))))))
+
+(defun %store-find-newest (store dir name-prefix)
+  "Full object path (DIR/<name>) of the newest object directly under DIR whose
+   basename starts with NAME-PREFIX, or NIL."
+  (ecase (getf store :backend)
+    (:dir (let* ((d (uiop:ensure-directory-pathname (%store-path store dir)))
                  (cands (sort (remove-if-not
-                               (lambda (p) (uiop:string-prefix-p prefix (file-namestring p)))
-                               (ignore-errors (uiop:directory-files root)))
+                               (lambda (p) (uiop:string-prefix-p name-prefix (file-namestring p)))
+                               (ignore-errors (uiop:directory-files d)))
                               #'> :key (lambda (p) (or (ignore-errors (file-write-date p)) 0)))))
-            (and cands (file-namestring (first cands)))))
+            (and cands (format nil "~A/~A" dir (file-namestring (first cands))))))
     (:s3 (multiple-value-bind (code out)
-             (%rclone "lsf" (format nil "~A/" (getf store :base)) "--format" "tp")
+             (%rclone "lsf" (format nil "~A/" (%store-path store dir)) "--format" "tp")
            (when (zerop code)
              (let ((best nil) (best-t ""))
                (dolist (line (uiop:split-string out :separator '(#\Newline)))
                  (let ((semi (position #\; line)))
                    (when semi
                      (let ((ts (subseq line 0 semi)) (name (subseq line (1+ semi))))
-                       (when (and (uiop:string-prefix-p prefix name) (string> ts best-t))
+                       (when (and (uiop:string-prefix-p name-prefix name) (string> ts best-t))
                          (setf best name best-t ts))))))
-               best))))))
+               (and best (format nil "~A/~A" dir best))))))))
 
 (defun action-cache (ctx inputs)
   "Native `actions/cache` — GitHub cache@v4-compatible. Restores on the main step
@@ -213,7 +233,9 @@
          (workspace (or (getf ctx :workspace) "/workspace"))
          (rt (or (getf ctx :runtime-dir) "/__cave_rt"))
          (gh-dir (getf ctx :gh-dir))
-         (store (getf ctx :cache-store))
+         (store (getf ctx :store))
+         (cache-dir (format nil "cache/~A/~A"
+                            (or (getf ctx :repo-owner) "_") (or (getf ctx :repo-name) "_")))
          (key (gethash "key" inputs))
          (paths (%nonblank-lines (gethash "path" inputs)))
          (restore-keys (%nonblank-lines (gethash "restore-keys" inputs)))
@@ -238,15 +260,15 @@
         (format log "cache: 'path' is required.~%")
         (return-from action-cache (values nil outputs (get-output-stream-string log))))
       (let* ((kf (%cache-key-file key))
-             (obj (format nil "~A.tar.gz" kf))
+             (obj (format nil "~A/~A.tar.gz" cache-dir kf))
              (cont-tar (format nil "~A/cache-~A.tar.gz" rt kf))
              (host-tar (format nil "~A/cache-~A.tar.gz" gh-dir kf)))
-        (setf exact-hit (%cache-store-exists store obj))
+        (setf exact-hit (%store-exists store obj))
         (cond
           (exact-hit
            (format log "cache: exact hit for key '~A'~%" key)
            (unless lookup-only
-             (if (%cache-store-get store obj host-tar)
+             (if (%store-get store obj host-tar)
                  (untar cont-tar)
                  (format log "cache: failed to download entry for '~A'~%" key)))
            (setf (gethash "cache-hit" outputs) "true"))
@@ -255,11 +277,11 @@
            (let ((restored nil))
              (dolist (rk restore-keys)
                (unless restored
-                 (let ((match (%cache-store-find-prefix store (%cache-key-file rk))))
+                 (let ((match (%store-find-newest store cache-dir (%cache-key-file rk))))
                    (when match
                      (format log "cache: partial restore from restore-key '~A' (~A)~%" rk match)
                      (unless lookup-only
-                       (when (%cache-store-get store match host-tar) (untar cont-tar)))
+                       (when (%store-get store match host-tar) (untar cont-tar)))
                      (setf restored t)))))
              (unless restored
                (format log "cache: no match for key '~A'~%" key)
@@ -270,7 +292,7 @@
         (let ((post (when (and ok (not exact-hit) (not lookup-only))
                       (lambda ()
                         (let ((plog (make-string-output-stream)))
-                          (if (%cache-store-exists store obj)
+                          (if (%store-exists store obj)
                               (format plog "cache: key '~A' was saved by another job; skipping.~%" key)
                               (progn
                                 (format plog "cache: saving ~{~A~^, ~} under key '~A'~%" paths key)
@@ -279,11 +301,124 @@
                                   (when (and out (plusp (length out))) (format plog "~A~%" out))
                                   (cond
                                     ((not (zerop code)) (format plog "cache: tar failed.~%"))
-                                    ((%cache-store-put store obj host-tar) (format plog "cache: saved.~%"))
+                                    ((%store-put store obj host-tar) (format plog "cache: saved.~%"))
                                     (t (format plog "cache: upload failed.~%"))))
                                 (funcall exec (list "rm" "-f" cont-tar))))
                           (values t (get-output-stream-string plog)))))))
           (values ok outputs (get-output-stream-string log) post))))))
+
+(defun action-upload-artifact (ctx inputs)
+  "Native `actions/upload-artifact` — upload-artifact@v4-compatible. Packs `path`
+   into the run-scoped object store as artifacts/<run-id>/<name>.tar.gz (shared
+   across the run's jobs). Honors name, if-no-files-found, overwrite. Tar runs in
+   the container; store I/O host-side. Returns (values ok outputs log)."
+  (let* ((exec (getf ctx :exec))
+         (workspace (or (getf ctx :workspace) "/workspace"))
+         (rt (or (getf ctx :runtime-dir) "/__cave_rt"))
+         (gh-dir (getf ctx :gh-dir))
+         (store (getf ctx :store))
+         (run-id (or (getf ctx :run-id) "0"))
+         (name (let ((n (gethash "name" inputs))) (if (and n (plusp (length n))) n "artifact")))
+         (paths (%nonblank-lines (gethash "path" inputs)))
+         (overwrite (equal (gethash "overwrite" inputs) "true"))
+         (if-none (let ((v (gethash "if-no-files-found" inputs)))
+                    (if (and v (plusp (length v))) v "warn")))
+         (log (make-string-output-stream))
+         (outputs (make-hash-table :test 'equal)))
+    (when (or (null exec) (null store) (null gh-dir))
+      (format log "upload-artifact: no container exec / store available.~%")
+      (return-from action-upload-artifact (values nil outputs (get-output-stream-string log))))
+    (when (null paths)
+      (format log "::error::upload-artifact: 'path' is required.~%")
+      (return-from action-upload-artifact (values nil outputs (get-output-stream-string log))))
+    (let* ((safe (%cache-key-file name))
+           (obj (format nil "artifacts/~A/~A.tar.gz" run-id safe))
+           (cont-tar (format nil "~A/artifact-~A.tar.gz" rt safe))
+           (host-tar (format nil "~A/artifact-~A.tar.gz" gh-dir safe)))
+      (when (and (%store-exists store obj) (not overwrite))
+        (format log "::error::upload-artifact: an artifact named '~A' already exists for this run ~
+                     (set overwrite: true).~%" name)
+        (return-from action-upload-artifact (values nil outputs (get-output-stream-string log))))
+      ;; if-no-files-found: warn (default) / error / ignore.
+      (let ((have (some (lambda (p)
+                          (zerop (nth-value 0 (funcall exec
+                                               (list "sh" "-c" (format nil "ls -d ~A >/dev/null 2>&1" p))))))
+                        paths)))
+        (unless have
+          (cond
+            ((equal if-none "error")
+             (format log "::error::upload-artifact: no files found for: ~{~A~^, ~}~%" paths)
+             (return-from action-upload-artifact (values nil outputs (get-output-stream-string log))))
+            ((equal if-none "ignore")
+             (return-from action-upload-artifact (values t outputs (get-output-stream-string log))))
+            (t
+             (format log "::warning::upload-artifact: no files found for: ~{~A~^, ~}~%" paths)
+             (return-from action-upload-artifact (values t outputs (get-output-stream-string log)))))))
+      (format log "upload-artifact: packing ~{~A~^, ~} as '~A'~%" paths name)
+      (let ((ok t))
+        (multiple-value-bind (code out)
+            (funcall exec (append (list "tar" "czf" cont-tar "-P" "-C" workspace) paths))
+          (when (and out (plusp (length out))) (format log "~A~%" out))
+          (cond
+            ((not (zerop code)) (format log "upload-artifact: tar failed~%") (setf ok nil))
+            ((%store-put store obj host-tar)
+             (setf (gethash "artifact-id" outputs) (format nil "~A/~A" run-id safe))
+             (format log "upload-artifact: stored '~A'~%" name))
+            (t (format log "upload-artifact: store upload failed~%") (setf ok nil))))
+        (funcall exec (list "rm" "-f" cont-tar))
+        (values ok outputs (get-output-stream-string log))))))
+
+(defun action-download-artifact (ctx inputs)
+  "Native `actions/download-artifact` — download-artifact@v4-compatible. Fetches
+   artifacts/<run-id>/<name>.tar.gz from the run-scoped store and extracts into
+   `path` (default the workspace). With no `name`, downloads every artifact of the
+   run (each into its own subdir unless merge-multiple). Returns (values ok
+   outputs log)."
+  (let* ((exec (getf ctx :exec))
+         (workspace (or (getf ctx :workspace) "/workspace"))
+         (rt (or (getf ctx :runtime-dir) "/__cave_rt"))
+         (gh-dir (getf ctx :gh-dir))
+         (store (getf ctx :store))
+         (run-id (or (getf ctx :run-id) "0"))
+         (name (gethash "name" inputs))
+         (path-in (gethash "path" inputs))
+         (dest (cond ((or (null path-in) (zerop (length path-in))) workspace)
+                     ((uiop:string-prefix-p "/" path-in) path-in)
+                     (t (format nil "~A/~A" workspace path-in))))
+         (merge-multiple (equal (gethash "merge-multiple" inputs) "true"))
+         (log (make-string-output-stream))
+         (outputs (make-hash-table :test 'equal))
+         (ok t))
+    (flet ((fetch-extract (obj aname d)
+             (let ((cont-tar (format nil "~A/dl-~A.tar.gz" rt (%cache-key-file aname)))
+                   (host-tar (format nil "~A/dl-~A.tar.gz" gh-dir (%cache-key-file aname))))
+               (if (%store-get store obj host-tar)
+                   (progn
+                     (funcall exec (list "mkdir" "-p" d))
+                     (funcall exec (list "tar" "xzf" cont-tar "-P" "-C" d))
+                     (funcall exec (list "rm" "-f" cont-tar))
+                     (format log "download-artifact: '~A' -> ~A~%" aname d)
+                     t)
+                   nil))))
+      (when (or (null exec) (null store) (null gh-dir))
+        (format log "download-artifact: no container exec / store available.~%")
+        (return-from action-download-artifact (values nil outputs (get-output-stream-string log))))
+      (funcall exec (list "mkdir" "-p" dest))
+      (if (and name (plusp (length name)))
+          (let ((obj (format nil "artifacts/~A/~A.tar.gz" run-id (%cache-key-file name))))
+            (unless (fetch-extract obj name dest)
+              (format log "::error::download-artifact: artifact '~A' not found for this run~%" name)
+              (setf ok nil)))
+          (let ((objs (%store-list store (format nil "artifacts/~A" run-id))))
+            (if (null objs)
+                (format log "download-artifact: no artifacts for this run~%")
+                (dolist (o objs)
+                  (when (uiop:string-suffix-p ".tar.gz" o)
+                    (let* ((aname (subseq o 0 (- (length o) 7)))
+                           (d (if merge-multiple dest (format nil "~A/~A" dest aname))))
+                      (fetch-extract (format nil "artifacts/~A/~A" run-id o) aname d)))))))
+      (setf (gethash "download-path" outputs) dest)
+      (values ok outputs (get-output-stream-string log)))))
 
 (defun %sparse-patterns (sparse)
   "Split a multi-line `sparse-checkout` value into non-empty patterns."
@@ -434,3 +569,14 @@
             ("upload-chunk-size" . "") ("enableCrossOsArchive" . "false")
             ("fail-on-cache-miss" . "false") ("lookup-only" . "false")
             ("save-always" . "false")))
+
+(register-builtin-action "actions/upload-artifact"
+  :fn #'action-upload-artifact
+  :inputs '(("name" . "artifact") ("path" . "") ("if-no-files-found" . "warn")
+            ("retention-days" . "") ("compression-level" . "6")
+            ("overwrite" . "false") ("include-hidden-files" . "false")))
+
+(register-builtin-action "actions/download-artifact"
+  :fn #'action-download-artifact
+  :inputs '(("name" . "") ("path" . "") ("pattern" . "")
+            ("merge-multiple" . "false") ("run-id" . "") ("github-token" . "")))

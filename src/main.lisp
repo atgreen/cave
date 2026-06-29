@@ -356,6 +356,10 @@ real, browsable repos."
                         "static/seed/actions/checkout/" "Seed actions/checkout" '("v4"))
     (ensure-action-repo "cache" "Cache files between workflow runs (cave-native)"
                         "static/seed/actions/cache/" "Seed actions/cache" '("v4"))
+    (ensure-action-repo "upload-artifact" "Upload a build artifact (cave-native)"
+                        "static/seed/actions/upload-artifact/" "Seed actions/upload-artifact" '("v4"))
+    (ensure-action-repo "download-artifact" "Download a build artifact (cave-native)"
+                        "static/seed/actions/download-artifact/" "Seed actions/download-artifact" '("v4"))
 
     (let ((port (or port-override (config-value :http-port 8080))))
       (bt2:with-lock-held (*server-lock*)
@@ -1476,12 +1480,12 @@ object string. Empty list -> \"\"."
                   ;; recompile is what drives the memory spike that wedges the
                   ;; build — see issue #9). Harmless for non-Lisp jobs.
                   (fasl-cache "/var/cache/cave-runner/common-lisp")
-                  ;; Keyed cache store for actions/cache, repo-scoped + shared
-                  ;; across this host's job containers (mounted at /__cave_cache).
-                  (keyed-cache (format nil "~A/keyed-cache/~A/~A"
-                                       (or (uiop:getenv "CAVE_RUNNER_CACHE")
-                                           "/var/cache/cave-runner")
-                                       (or repo-owner "_") (or repo-name "_")))
+                  ;; Object store root for actions/cache + artifacts (local dir
+                  ;; backend; overridden by CAVE_RUNNER_CACHE_REMOTE -> rclone/S3).
+                  ;; Objects: cache/<owner>/<repo>/... and artifacts/<run-id>/...
+                  (store-root (format nil "~A/store"
+                                      (or (uiop:getenv "CAVE_RUNNER_CACHE")
+                                          "/var/cache/cave-runner")))
                   (overall-success t))
              (format t "~&Workflow job #~A: ~A/~A [~A] (~A steps)~%"
                      job-id repo-owner repo-name image (length steps))
@@ -1531,7 +1535,7 @@ object string. Empty list -> \"\"."
                     (ignore-errors
                      (ensure-directories-exist (concatenate 'string fasl-cache "/")))
                     (ignore-errors
-                     (ensure-directories-exist (concatenate 'string keyed-cache "/")))
+                     (ensure-directories-exist (concatenate 'string store-root "/")))
                     (ignore-errors
                      (ensure-directories-exist (concatenate 'string gh-dir "/")))
                     (multiple-value-bind (_out err exit)
@@ -1651,8 +1655,13 @@ object string. Empty list -> \"\"."
                                                               :clone-url clone-url
                                                               :commit-sha commit-sha
                                                               :job-token ""
-                                                              :cache-store
-                                                              (%cache-store-descriptor repo-owner repo-name keyed-cache)
+                                                              :store (%object-store-descriptor store-root)
+                                                              :repo-owner repo-owner :repo-name repo-name
+                                                              :run-id
+                                                              (let ((p (find-if (lambda (s)
+                                                                                  (uiop:string-prefix-p "GITHUB_RUN_ID=" s))
+                                                                                job-env-pairs)))
+                                                                (if p (subseq p 14) "0"))
                                                               :ref (handler-case (slot-value task 'cave::ref)
                                                                      (error () "")))
                                                         step-outputs channel auth-token step-id masks

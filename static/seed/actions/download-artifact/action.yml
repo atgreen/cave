@@ -1,0 +1,40 @@
+name: 'Download a Build Artifact'
+description: >
+  Download artifacts uploaded earlier in the same workflow run. cave-native,
+  GitHub download-artifact@v4-compatible. Fetches from the run-scoped object
+  store and extracts into the workspace (or `path`).
+author: 'Cave'
+
+inputs:
+  name:
+    description: 'Artifact name to download. If omitted, downloads all artifacts of the run.'
+    required: false
+    default: ''
+  path:
+    description: 'Destination directory (default: the workspace).'
+    required: false
+    default: ''
+  pattern:
+    description: 'Accepted for compatibility (glob of artifact names).'
+    required: false
+    default: ''
+  merge-multiple:
+    description: 'When downloading multiple, extract all into one directory.'
+    required: false
+    default: 'false'
+  run-id:
+    description: 'Accepted for compatibility (download from another run).'
+    required: false
+    default: ''
+  github-token:
+    description: 'Accepted for compatibility.'
+    required: false
+    default: ''
+
+outputs:
+  download-path:
+    description: 'Absolute path the artifact(s) were extracted to.'
+
+runs:
+  using: 'lisp'
+  main: 'cave:action-download-artifact'
