@@ -1710,17 +1710,32 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
          (:a.btn.btn-primary :href (format nil "/~A/~A/pulls/new" org-name repo-name)
           "New pull request")))
       (if pulls
-          (:ul.issue-list
+          (:ul.issues
            (dolist (cs pulls)
-             (:li
-              (:a :href (format nil "/~A/~A/pulls/~A" org-name repo-name
-                                 (getf cs :number))
-               (:span.issue-number (format nil "#~A" (getf cs :number)))
-               (format nil " ~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
-              (:span.badge
-               (cond ((getf cs :is-merged) "merged")
-                     ((getf cs :is-closed) "closed")
-                     (t "open"))))))
+             (let* ((num (getf cs :number))
+                    (merged (getf cs :is-merged))
+                    (closed (getf cs :is-closed))
+                    (state (cond (merged "merged") (closed "closed") (t "open")))
+                    (author (let ((u (ignore-errors (find-user-by-id (getf cs :author-id)))))
+                              (and u (getf u :username))))
+                    (ago (format-relative-time (getf cs :created-at)))
+                    (ver (getf cs :version)))
+               (:li.issue-row
+                (:span.issue-icon
+                 :title state
+                 :style (format nil "background:~A"
+                                (cond (merged "#a371f7") (closed "#c25450") (t "#3fb950"))))
+                (:div.issue-main
+                 (:div.issue-titleline
+                  (:a.issue-title
+                   :href (format nil "/~A/~A/pulls/~A" org-name repo-name num)
+                   (format nil "~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
+                  (:span.badge state))
+                 (:div.issue-meta
+                  (format nil "#~A" num)
+                  (when author (format nil " · opened by ~A" author))
+                  (when ago (format nil " · ~A" ago))
+                  (when (and (numberp ver) (> ver 1)) (format nil " · v~A" ver))))))))
           (:p.empty "No pull requests found.")))))
 
 (defun view-new-pull-request (&key owner-name repo branches default-branch)
