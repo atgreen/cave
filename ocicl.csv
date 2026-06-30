@@ -216,7 +216,7 @@ type-i, ghcr.io/ocicl/type-i@sha256:de5c3e7f7b72409c5ec49885eea8c6fe2e02def2846c
 type-i.test, ghcr.io/ocicl/type-i@sha256:de5c3e7f7b72409c5ec49885eea8c6fe2e02def2846cf97f70c1c21f21a1567c, type-i-20240503-4407a68/type-i.test.asd
 uax-15, ghcr.io/ocicl/uax-15@sha256:98286ee7b08a849dd2bb8992ab7c4cda7f429f25e8815939297979a49e4b3dad, uax-15-0.1.3/uax-15.asd
 uffi, ghcr.io/ocicl/cffi@sha256:f30662b8a763bd0aff4c0410a5d287aa2c075040a8e5b27007eaa5ea2b70cf02, cffi-20260624-c6cf225/uffi-compat/uffi.asd
-usher, ghcr.io/ocicl/usher@sha256:fab5f84d82bd3d53b74318626b1d5dc4093f40aa1e0272c7c667f55976aefb64, usher-20260628-366d450/usher.asd
+usher, ghcr.io/ocicl/usher@sha256:c2f9c322221c8a99a28fbf26e30234a10745959ad58c26155836d3b83e3d4c90, usher-20260630-843b934/usher.asd
 usocket, ghcr.io/ocicl/usocket@sha256:282856b819b22a4319ba30a15605ee934aa23292a471fd29ea4d3f2074b3f16d, usocket-0.8.8/usocket.asd
 usocket-server, ghcr.io/ocicl/usocket@sha256:282856b819b22a4319ba30a15605ee934aa23292a471fd29ea4d3f2074b3f16d, usocket-0.8.8/usocket-server.asd
 usocket-test, ghcr.io/ocicl/usocket@sha256:282856b819b22a4319ba30a15605ee934aa23292a471fd29ea4d3f2074b3f16d, usocket-0.8.8/usocket-test.asd
