@@ -20,7 +20,9 @@
 
   --text:           #d4d0c8;
   --text-secondary: #9e9a8f;
-  --text-muted:     #6e6b63;
+  /* Lifted from #6e6b63 (~3.5:1) to meet WCAG AA 4.5:1 on --bg for the
+     secondary text it carries: timestamps, "opened by", helper copy. */
+  --text-muted:     #8a857b;
 
   --accent:         #e8a84c;
   --accent-dim:     #c4893a;
