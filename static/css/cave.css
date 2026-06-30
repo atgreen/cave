@@ -77,6 +77,14 @@ a:hover { color: var(--link-hover); }
 code, pre, kbd { font-family: var(--font-mono); }
 ::selection { background: rgba(232, 168, 76, 0.25); }
 
+/* Keyboard focus — the browser default outline (auto, near-black) is invisible
+   on dark themes. Use an explicit accent ring; mouse clicks stay ring-free. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
 /* --- Typography --- */
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-mono);
