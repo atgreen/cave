@@ -6,6 +6,10 @@
  */
 
 :root {
+  /* Dark by default — keeps native controls (selects, scrollbars,
+     date pickers) in the matching color scheme instead of light-on-dark. */
+  color-scheme: dark;
+
   /* Palette — warm charcoal base, amber accent */
   --bg:             #131216;
   --bg-warm:        #18171c;
@@ -919,6 +923,7 @@ code.diff-code {
 
 /* Solarized Dark */
 html[data-theme="solarized-dark"] {
+  color-scheme: dark;
   --bg: #002b36;
   --bg-warm: #073642;
   --surface: #073642;
@@ -946,6 +951,7 @@ html[data-theme="solarized-dark"] {
 
 /* Nord */
 html[data-theme="nord"] {
+  color-scheme: dark;
   --bg: #2e3440;
   --bg-warm: #3b4252;
   --surface: #3b4252;
@@ -973,6 +979,7 @@ html[data-theme="nord"] {
 
 /* Light */
 html[data-theme="light"] {
+  color-scheme: light;
   --bg: #ffffff;
   --bg-warm: #f6f8fa;
   --surface: #f6f8fa;
@@ -1000,6 +1007,7 @@ html[data-theme="light"] {
 
 /* Dracula */
 html[data-theme="dracula"] {
+  color-scheme: dark;
   --bg: #282a36;
   --bg-warm: #2d2f3d;
   --surface: #343746;
