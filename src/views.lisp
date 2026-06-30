@@ -904,7 +904,13 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                                           (if (equal r default-branch)
                                               (format nil "/~A/~A" org-name repo-name)
                                               (format nil "/~A/~A?ref=~A" org-name repo-name
-                                                      (hunchentoot:url-encode r))))))))
+                                                      (hunchentoot:url-encode r)))))
+          ;; Match the Code tab's bar: don't leave this container empty.
+          (:span.repo-info-stat
+           (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
+          (when tags
+            (:span.repo-info-stat
+             (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))))
       ;; Clone widget — SSH/HTTPS toggle with copy button
       (render-clone-widget org-name repo-name)
       ;; Watch / unwatch toggle — subscribe to in-app notifications
