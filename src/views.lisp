@@ -91,10 +91,13 @@ explicitly chosen another theme."
                      :placeholder "Search code..." :autocomplete "off")))
                  (let ((unread (ignore-errors (count-unread-notifications *current-user-id*))))
                    (:a.btn.btn-sm :href "/-/notifications" :title "Notifications"
-                    (if (and unread (plusp unread))
-                        (:span :style "color:var(--primary,#7c9a5e);font-weight:600"
-                         (format nil "● ~A" unread))
-                        "○")))
+                    :aria-label (if (and unread (plusp unread))
+                                    (format nil "Notifications, ~A unread" unread)
+                                    "Notifications")
+                    (:raw "<svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" style=\"vertical-align:middle\"><path d=\"M8 2a4 4 0 0 0-4 4c0 3-1.2 4.2-1.7 4.7a.5.5 0 0 0 .35.85h10.7a.5.5 0 0 0 .35-.85C13.2 10.2 12 9 12 6a4 4 0 0 0-4-4z\"/><path d=\"M6.5 13a1.5 1.5 0 0 0 3 0\"/></svg>")
+                    (when (and unread (plusp unread))
+                      (:span :style "color:var(--green,#7c9a5e);font-weight:600;margin-left:.35em"
+                       (format nil "~A" unread)))))
                  (:a.btn.btn-sm :href "/-/explore" "Explore")
                  (:a.btn.btn-sm :href "/-/new-org" "New org")
                  (:a.btn.btn-sm :href "/-/settings" "Settings")
