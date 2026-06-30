@@ -186,6 +186,21 @@
          :issuer (config-value :oidc-issuer)
          :tls '(:mode :none)
          :totp-issuer "Cave"
+         ;; Brand the server-rendered auth pages (sign-in, TOTP, password
+         ;; reset, email verification) so they match the forge instead of
+         ;; rendering as bare browser-default forms. Usher emits stable usher-*
+         ;; class hooks; static/css/usher-auth.css themes them in Terminal
+         ;; Warmth using cave.css's palette.
+         :brand "Cave"
+         :head-html (concatenate
+                     'string
+                     "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">"
+                     "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>"
+                     "<link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?"
+                     "family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&"
+                     "family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap\">"
+                     "<link rel=\"stylesheet\" href=\"/static/css/cave.css\">"
+                     "<link rel=\"stylesheet\" href=\"/static/css/usher-auth.css\">")
          ;; Tuned for this host's CPU (default 64 MiB/t=3 is ~3 s/hash on 2 vCPUs).
          ;; OWASP-minimum-ish; existing hashes migrate via rehash-on-login.
          :argon2 '(:variant :argon2i :m 19456 :t 2 :p 1)

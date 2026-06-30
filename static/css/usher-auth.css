@@ -1,0 +1,136 @@
+/* Cave — styling for the embedded Usher OIDC auth pages
+ * (sign-in, two-factor, password reset, email verification).
+ *
+ * Usher renders these pages with stable usher-* class hooks; this sheet
+ * themes them in "Terminal Warmth" using the variables defined in cave.css,
+ * which is loaded ahead of this file. Keep this file dependent only on those
+ * variables so the palette never drifts from the main app.
+ */
+
+.usher-auth {
+  min-height: 100vh;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6, 24px);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.usher-card {
+  width: 100%;
+  max-width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 5px);
+  padding: var(--sp-8, 32px) var(--sp-6, 24px) var(--sp-6, 24px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+}
+
+/* Cave wordmark above the page heading — Usher owns the form markup, so the
+   brand is added here decoratively rather than in the page body. */
+.usher-card::before {
+  content: "Cave";
+  display: block;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: .95rem;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: var(--sp-5, 20px);
+}
+
+.usher-title {
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0 0 var(--sp-4, 16px);
+}
+
+.usher-text {
+  color: var(--text-secondary);
+  font-size: .85rem;
+  margin: 0 0 var(--sp-4, 16px);
+}
+
+.usher-error {
+  background: var(--red-bg);
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-size: .85rem;
+  padding: var(--sp-2, 8px) var(--sp-3, 12px);
+  border-radius: var(--radius, 3px);
+  margin: 0 0 var(--sp-4, 16px);
+}
+
+.usher-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 16px);
+}
+
+.usher-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1, 4px);
+}
+
+.usher-label {
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.usher-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 3px);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: .9rem;
+  padding: var(--sp-2, 8px) var(--sp-3, 12px);
+  line-height: 1.5;
+}
+.usher-input::placeholder { color: var(--text-muted); }
+.usher-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent-dim);
+}
+
+.usher-submit {
+  width: 100%;
+  margin-top: var(--sp-1, 4px);
+  background: var(--accent-dim);
+  border: 1px solid transparent;
+  border-radius: var(--radius, 3px);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: .85rem;
+  font-weight: 500;
+  padding: var(--sp-2, 8px) var(--sp-4, 16px);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.usher-submit:hover { background: var(--accent); }
+.usher-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Social-login links, rendered as secondary buttons under the form. */
+.usher-social { margin: var(--sp-3, 12px) 0 0; text-align: center; }
+.usher-social-link {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 3px);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  padding: var(--sp-2, 8px) var(--sp-3, 12px);
+  text-decoration: none;
+}
+.usher-social-link:hover { border-color: var(--text-muted); color: var(--text); }
