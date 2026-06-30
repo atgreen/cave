@@ -414,7 +414,10 @@ real, browsable repos."
           (bt2:make-thread
            (lambda ()
              (loop
-               (sleep 300)
+               ;; Tick at the finest task cadence (reap claims at 120s); each
+               ;; task is DB-claimed at its own interval, so a short tick just
+               ;; means cheap claim checks, not duplicate work.
+               (sleep 60)
                (handler-case
                    (postmodern:with-connection *db-spec* (run-scheduled-tasks))
                  (error (e) (llog:warn "Scheduler tick failed"
@@ -1461,6 +1464,15 @@ object string. Empty list -> \"\"."
                   ;; Job-level outputs: NAME=<expr> to resolve after the steps run.
                   (output-defs (handler-case (slot-value task 'cave::output-defs)
                                  (error () "")))
+                  ;; Per-job timeout (seconds). 0/absent = no job deadline (the
+                  ;; stale-job reaper is the global backstop). When set, the whole
+                  ;; step sequence is bounded by JOB-DEADLINE, so a job that wedges
+                  ;; with no per-step timeout still fails at its declared budget
+                  ;; instead of running to the 120-min reaper cap. (issue #10)
+                  (job-timeout (let ((ts (handler-case (slot-value task 'cave::timeout-seconds)
+                                           (error () 0))))
+                                 (when (and (integerp ts) (plusp ts)) ts)))
+                  (job-deadline (when job-timeout (+ (get-universal-time) job-timeout)))
                   (job-env-pairs (%cave-mirror-pairs
                                   (append (%kv-lines->pairs context-env)
                                           (list "RUNNER_OS=Linux"
@@ -1590,9 +1602,20 @@ object string. Empty list -> \"\"."
                     (when overall-success
                      (let ((steps-table (make-hash-table :test 'equal))
                            (job-failed nil)
+                           ;; Set when the job timeout fires (see JOB-DEADLINE).
+                           (job-timed-out nil)
                            ;; Action post-thunks (e.g. cache save), run at job end.
                            (post-actions nil))
                       (dolist (step steps)
+                        ;; Job-level deadline spent between steps: fail the job now.
+                        ;; Remaining steps see job-failed and are skipped by their
+                        ;; should-run check (so they're marked skipped, not run).
+                        (when (and job-deadline (not job-timed-out)
+                                   (>= (get-universal-time) job-deadline))
+                          (setf job-timed-out t job-failed t)
+                          (format *error-output*
+                                  "  Job timed out after ~As — skipping remaining steps~%"
+                                  job-timeout))
                         (let* ((step-id (slot-value step 'cave::step-id))
                                (step-name (slot-value step 'cave::name))
                                (step-cmd (or (slot-value step 'cave::command) ""))
@@ -1757,11 +1780,21 @@ object string. Empty list -> \"\"."
                                                                       :metadata (make-auth-metadata auth-token)))))))
                                                          (error (e)
                                                            (format *error-output* "  Log send error: ~A~%" e)))))
-                                                (let ((deadline (when step-timeout
-                                                                  (+ (get-universal-time) step-timeout))))
+                                                (let* ((step-deadline (when step-timeout
+                                                                        (+ (get-universal-time) step-timeout)))
+                                                       ;; Kill at whichever of the step or job deadline is
+                                                       ;; sooner. A job-deadline kill also fails the job and
+                                                       ;; stops later steps, overriding continue-on-error.
+                                                       (deadline (cond ((and step-deadline job-deadline)
+                                                                        (min step-deadline job-deadline))
+                                                                       (t (or step-deadline job-deadline)))))
                                                   (loop while (uiop:process-alive-p process)
                                                         do (when (and deadline (>= (get-universal-time) deadline))
-                                                             (format *error-output* "    Step timed out after ~As~%" step-timeout)
+                                                             (if (and job-deadline (>= (get-universal-time) job-deadline))
+                                                                 (progn
+                                                                   (setf job-timed-out t)
+                                                                   (format *error-output* "    Job timed out after ~As~%" job-timeout))
+                                                                 (format *error-output* "    Step timed out after ~As~%" step-timeout))
                                                              (uiop:terminate-process process :urgent t)
                                                              (uiop:wait-process process)
                                                              (send-log)
@@ -1817,7 +1850,10 @@ object string. Empty list -> \"\"."
                                     (when (and (not ok) step-continue-on-error)
                                       (format t "    continue-on-error: proceeding despite failure~%"))
                                     (when (and (not ok) (not step-continue-on-error))
-                                      (setf job-failed t))))))))
+                                      (setf job-failed t))
+                                    ;; A job-timeout kill fails the job even when
+                                    ;; the step has continue-on-error.
+                                    (when job-timed-out (setf job-failed t))))))))
                       (when job-failed (setf overall-success nil))
                       ;; Run action post-thunks (e.g. cache save) in reverse step
                       ;; order — like GitHub post steps; failures are warnings.
