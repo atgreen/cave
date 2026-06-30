@@ -42,11 +42,14 @@ leaks the viewer's IP the way a remote Gravatar fetch would."
       (format nil "data:image/svg+xml;base64,~A"
               (cl-base64:string-to-base64-string svg)))))
 
-(defun render-avatar (email &key (size 20) (class "avatar"))
-  "Render a deterministic identicon avatar for EMAIL."
+(defun render-avatar (email &key (size 20) (class "avatar") (alt ""))
+  "Render a deterministic identicon avatar for EMAIL. ALT defaults to empty
+(decorative) for callers that show the name as adjacent text; pass a name for
+standalone use."
   (spinneret:with-html
     (:img :src (identicon-data-uri email)
      :class class :width (princ-to-string size) :height (princ-to-string size)
+     :alt alt
      :style "border-radius:3px;vertical-align:middle")))
 
 (defun effective-theme ()
@@ -103,7 +106,8 @@ explicitly chosen another theme."
                  (:a.btn.btn-sm :href "/-/settings" "Settings")
                  (when (getf *current-user* :is-admin)
                    (:a.btn.btn-sm :href "/-/admin" "Admin"))
-                 (render-avatar (getf *current-user* :email) :size 20)
+                 (render-avatar (getf *current-user* :email) :size 20
+                                :alt (format nil "~A avatar" (getf *current-user* :username)))
                  (:span.nav-user (getf *current-user* :username))
                  (:form :method "post" :action "/logout" :style "display:inline"
                   (:button.btn.btn-sm :type "submit" "Sign out")))
