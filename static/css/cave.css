@@ -1218,3 +1218,20 @@ html[data-theme="dracula"] {
   font: inherit;
 }
 .cave-line-menu-item:hover { background: var(--surface-2, rgba(255, 255, 255, .04)); }
+
+/* ============================================================
+   Responsive — small screens (no breakpoints existed before, so
+   the fixed-width nav ran off the right edge and scrolled the page).
+   ============================================================ */
+@media (max-width: 720px) {
+  .nav-inner { flex-wrap: wrap; gap: var(--sp-2); }
+  /* Let the action cluster wrap to a second line instead of overflowing. */
+  .nav-right { flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); }
+  /* Search takes its own full-width row above the wrapped buttons. */
+  .nav-search { flex: 1 1 100%; }
+  .nav-search-input { width: 100%; }
+  /* Tabs scroll horizontally rather than clipping the last tab. */
+  .repo-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .repo-tab { white-space: nowrap; }
+  .container { padding: var(--sp-4) var(--sp-3); }
+}
