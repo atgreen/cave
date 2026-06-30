@@ -417,8 +417,12 @@ data: featured repositories, recent activity, and instance stats."
               "A self-hosted code forge in Common Lisp")
              (:p :style "color:var(--text-muted);font-size:.9rem;margin:0"
               "push · review · merge · deploy — own your infrastructure")))
+       ;; A custom hero (cave-landing:index.md) already links API docs + CLI, so
+       ;; only surface the API-docs button on the built-in default hero — avoids
+       ;; the duplicate "API docs" in one viewport on instances with custom copy.
        (:div :style "display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin-top:1.25rem"
-        (:a.btn :href "/api/v1/docs" "API docs")
+        (unless hero-html
+          (:a.btn :href "/api/v1/docs" "API docs"))
         (:a.btn :href "/-/auth/login" "Sign in")
         (:a.btn.btn-primary :href "/-/register" "Register")))
       ;; Two columns: featured repos | recent activity
