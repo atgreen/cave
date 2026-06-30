@@ -6,6 +6,10 @@
  */
 
 :root {
+  /* Dark by default — keeps native controls (selects, scrollbars,
+     date pickers) in the matching color scheme instead of light-on-dark. */
+  color-scheme: dark;
+
   /* Palette — warm charcoal base, amber accent */
   --bg:             #131216;
   --bg-warm:        #18171c;
@@ -16,7 +20,9 @@
 
   --text:           #d4d0c8;
   --text-secondary: #9e9a8f;
-  --text-muted:     #6e6b63;
+  /* Lifted from #6e6b63 (~3.5:1) to meet WCAG AA 4.5:1 on --bg for the
+     secondary text it carries: timestamps, "opened by", helper copy. */
+  --text-muted:     #8a857b;
 
   --accent:         #e8a84c;
   --accent-dim:     #c4893a;
@@ -70,6 +76,14 @@ a { color: var(--link); text-decoration: none; }
 a:hover { color: var(--link-hover); }
 code, pre, kbd { font-family: var(--font-mono); }
 ::selection { background: rgba(232, 168, 76, 0.25); }
+
+/* Keyboard focus — the browser default outline (auto, near-black) is invisible
+   on dark themes. Use an explicit accent ring; mouse clicks stay ring-free. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
 
 /* --- Typography --- */
 h1, h2, h3, h4, h5, h6 {
@@ -919,6 +933,7 @@ code.diff-code {
 
 /* Solarized Dark */
 html[data-theme="solarized-dark"] {
+  color-scheme: dark;
   --bg: #002b36;
   --bg-warm: #073642;
   --surface: #073642;
@@ -946,6 +961,7 @@ html[data-theme="solarized-dark"] {
 
 /* Nord */
 html[data-theme="nord"] {
+  color-scheme: dark;
   --bg: #2e3440;
   --bg-warm: #3b4252;
   --surface: #3b4252;
@@ -973,6 +989,7 @@ html[data-theme="nord"] {
 
 /* Light */
 html[data-theme="light"] {
+  color-scheme: light;
   --bg: #ffffff;
   --bg-warm: #f6f8fa;
   --surface: #f6f8fa;
@@ -1000,6 +1017,7 @@ html[data-theme="light"] {
 
 /* Dracula */
 html[data-theme="dracula"] {
+  color-scheme: dark;
   --bg: #282a36;
   --bg-warm: #2d2f3d;
   --surface: #343746;
@@ -1200,3 +1218,22 @@ html[data-theme="dracula"] {
   font: inherit;
 }
 .cave-line-menu-item:hover { background: var(--surface-2, rgba(255, 255, 255, .04)); }
+
+/* ============================================================
+   Responsive — small screens (no breakpoints existed before, so
+   the fixed-width nav ran off the right edge and scrolled the page).
+   ============================================================ */
+@media (max-width: 720px) {
+  .nav-inner { flex-wrap: wrap; gap: var(--sp-2); }
+  /* Let the action cluster wrap to a second line instead of overflowing. */
+  .nav-right { flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); }
+  /* Search takes its own full-width row above the wrapped buttons. */
+  .nav-search { flex: 1 1 100%; }
+  .nav-search-input { width: 100%; }
+  /* Tabs scroll horizontally rather than clipping the last tab. */
+  .repo-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .repo-tab { white-space: nowrap; }
+  .container { padding: var(--sp-4) var(--sp-3); }
+  /* Long inline-code tokens (clone URLs, hashes) must wrap, not push width. */
+  .readme-content code, .issue-body code, .comment-body code { overflow-wrap: anywhere; }
+}

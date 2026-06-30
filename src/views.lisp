@@ -42,11 +42,14 @@ leaks the viewer's IP the way a remote Gravatar fetch would."
       (format nil "data:image/svg+xml;base64,~A"
               (cl-base64:string-to-base64-string svg)))))
 
-(defun render-avatar (email &key (size 20) (class "avatar"))
-  "Render a deterministic identicon avatar for EMAIL."
+(defun render-avatar (email &key (size 20) (class "avatar") (alt ""))
+  "Render a deterministic identicon avatar for EMAIL. ALT defaults to empty
+(decorative) for callers that show the name as adjacent text; pass a name for
+standalone use."
   (spinneret:with-html
     (:img :src (identicon-data-uri email)
      :class class :width (princ-to-string size) :height (princ-to-string size)
+     :alt alt
      :style "border-radius:3px;vertical-align:middle")))
 
 (defun effective-theme ()
@@ -91,22 +94,26 @@ explicitly chosen another theme."
                      :placeholder "Search code..." :autocomplete "off")))
                  (let ((unread (ignore-errors (count-unread-notifications *current-user-id*))))
                    (:a.btn.btn-sm :href "/-/notifications" :title "Notifications"
-                    (if (and unread (plusp unread))
-                        (:span :style "color:var(--primary,#7c9a5e);font-weight:600"
-                         (format nil "● ~A" unread))
-                        "○")))
+                    :aria-label (if (and unread (plusp unread))
+                                    (format nil "Notifications, ~A unread" unread)
+                                    "Notifications")
+                    (:raw "<svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" style=\"vertical-align:middle\"><path d=\"M8 2a4 4 0 0 0-4 4c0 3-1.2 4.2-1.7 4.7a.5.5 0 0 0 .35.85h10.7a.5.5 0 0 0 .35-.85C13.2 10.2 12 9 12 6a4 4 0 0 0-4-4z\"/><path d=\"M6.5 13a1.5 1.5 0 0 0 3 0\"/></svg>")
+                    (when (and unread (plusp unread))
+                      (:span :style "color:var(--green,#7c9a5e);font-weight:600;margin-left:.35em"
+                       (format nil "~A" unread)))))
                  (:a.btn.btn-sm :href "/-/explore" "Explore")
                  (:a.btn.btn-sm :href "/-/new-org" "New org")
                  (:a.btn.btn-sm :href "/-/settings" "Settings")
                  (when (getf *current-user* :is-admin)
                    (:a.btn.btn-sm :href "/-/admin" "Admin"))
-                 (render-avatar (getf *current-user* :email) :size 20)
+                 (render-avatar (getf *current-user* :email) :size 20
+                                :alt (format nil "~A avatar" (getf *current-user* :username)))
                  (:span.nav-user (getf *current-user* :username))
                  (:form :method "post" :action "/logout" :style "display:inline"
-                  (:button.btn.btn-sm :type "submit" "Log out")))
+                  (:button.btn.btn-sm :type "submit" "Sign out")))
                (progn
                  (:a.btn.btn-sm :href "/-/explore" "Explore")
-                 (:a.btn.btn-sm :href "/-/auth/login" "Log in"))))))
+                 (:a.btn.btn-sm :href "/-/auth/login" "Sign in"))))))
         (:main.container ,@body)
         (:footer.site-footer
          (:span (format nil "Cave ~A" +version+)))
@@ -417,8 +424,12 @@ data: featured repositories, recent activity, and instance stats."
               "A self-hosted code forge in Common Lisp")
              (:p :style "color:var(--text-muted);font-size:.9rem;margin:0"
               "push · review · merge · deploy — own your infrastructure")))
+       ;; A custom hero (cave-landing:index.md) already links API docs + CLI, so
+       ;; only surface the API-docs button on the built-in default hero — avoids
+       ;; the duplicate "API docs" in one viewport on instances with custom copy.
        (:div :style "display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin-top:1.25rem"
-        (:a.btn :href "/api/v1/docs" "API docs")
+        (unless hero-html
+          (:a.btn :href "/api/v1/docs" "API docs"))
         (:a.btn :href "/-/auth/login" "Sign in")
         (:a.btn.btn-primary :href "/-/register" "Register")))
       ;; Two columns: featured repos | recent activity
@@ -893,7 +904,13 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                                           (if (equal r default-branch)
                                               (format nil "/~A/~A" org-name repo-name)
                                               (format nil "/~A/~A?ref=~A" org-name repo-name
-                                                      (hunchentoot:url-encode r))))))))
+                                                      (hunchentoot:url-encode r)))))
+          ;; Match the Code tab's bar: don't leave this container empty.
+          (:span.repo-info-stat
+           (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
+          (when tags
+            (:span.repo-info-stat
+             (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))))
       ;; Clone widget — SSH/HTTPS toggle with copy button
       (render-clone-widget org-name repo-name)
       ;; Watch / unwatch toggle — subscribe to in-app notifications
@@ -1693,17 +1710,32 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
          (:a.btn.btn-primary :href (format nil "/~A/~A/pulls/new" org-name repo-name)
           "New pull request")))
       (if pulls
-          (:ul.issue-list
+          (:ul.issues
            (dolist (cs pulls)
-             (:li
-              (:a :href (format nil "/~A/~A/pulls/~A" org-name repo-name
-                                 (getf cs :number))
-               (:span.issue-number (format nil "#~A" (getf cs :number)))
-               (format nil " ~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
-              (:span.badge
-               (cond ((getf cs :is-merged) "merged")
-                     ((getf cs :is-closed) "closed")
-                     (t "open"))))))
+             (let* ((num (getf cs :number))
+                    (merged (getf cs :is-merged))
+                    (closed (getf cs :is-closed))
+                    (state (cond (merged "merged") (closed "closed") (t "open")))
+                    (author (let ((u (ignore-errors (find-user-by-id (getf cs :author-id)))))
+                              (and u (getf u :username))))
+                    (ago (format-relative-time (getf cs :created-at)))
+                    (ver (getf cs :version)))
+               (:li.issue-row
+                (:span.issue-icon
+                 :title state
+                 :style (format nil "background:~A"
+                                (cond (merged "#a371f7") (closed "#c25450") (t "#3fb950"))))
+                (:div.issue-main
+                 (:div.issue-titleline
+                  (:a.issue-title
+                   :href (format nil "/~A/~A/pulls/~A" org-name repo-name num)
+                   (format nil "~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
+                  (:span.badge state))
+                 (:div.issue-meta
+                  (format nil "#~A" num)
+                  (when author (format nil " · opened by ~A" author))
+                  (when ago (format nil " · ~A" ago))
+                  (when (and (numberp ver) (> ver 1)) (format nil " · v~A" ver))))))))
           (:p.empty "No pull requests found.")))))
 
 (defun view-new-pull-request (&key owner-name repo branches default-branch)
