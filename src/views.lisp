@@ -103,10 +103,10 @@ explicitly chosen another theme."
                  (render-avatar (getf *current-user* :email) :size 20)
                  (:span.nav-user (getf *current-user* :username))
                  (:form :method "post" :action "/logout" :style "display:inline"
-                  (:button.btn.btn-sm :type "submit" "Log out")))
+                  (:button.btn.btn-sm :type "submit" "Sign out")))
                (progn
                  (:a.btn.btn-sm :href "/-/explore" "Explore")
-                 (:a.btn.btn-sm :href "/-/auth/login" "Log in"))))))
+                 (:a.btn.btn-sm :href "/-/auth/login" "Sign in"))))))
         (:main.container ,@body)
         (:footer.site-footer
          (:span (format nil "Cave ~A" +version+)))
