@@ -106,7 +106,7 @@
                                            (if (eq sha :null) "" sha))
                              :ref (let ((r (getf run :ref)))
                                     (if (eq r :null) "" r))
-                             :timeout-seconds (if def (getf def :timeout-seconds) 60)))
+                             :timeout-seconds (if def (or (getf def :timeout-seconds) 0) 0)))
             (make-instance 'cave::fetch-task-response :has-task nil))))))
 
 (defun handle-append-task-log (request ctx)
@@ -197,7 +197,7 @@
                                  (if (eq sha :null) "" sha))
                    :ref (let ((r (getf run :ref)))
                           (if (eq r :null) "" r))
-                   :timeout-seconds (if def (getf def :timeout-seconds) 60))))
+                   :timeout-seconds (if def (or (getf def :timeout-seconds) 0) 0))))
 
 (defun %cache-volume-name (repo-id path)
   "Deterministic, repo-scoped, podman-safe volume name for a cache PATH.
@@ -304,8 +304,13 @@ RUNNER_*/file-protocol vars)."
                                                 rb))
                                           owner-name repo-name)
                                   "")
+                   ;; Send the job's explicit timeout; 0 = unset (the runner
+                   ;; then applies no per-job deadline and the stale-job reaper
+                   ;; remains the global backstop). Do NOT default to a low value
+                   ;; here — the runner enforces this, so a default would cap
+                   ;; every timeout-less job.
                    :timeout-seconds (let ((t-s (getf job :timeout-seconds 0)))
-                                      (if (and t-s (plusp t-s)) t-s 300))
+                                      (if (and (integerp t-s) (plusp t-s)) t-s 0))
                    :secrets-env (if repo
                                     (secrets-env-string (secrets-for-repo repo))
                                     "")
