@@ -1234,4 +1234,6 @@ html[data-theme="dracula"] {
   .repo-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .repo-tab { white-space: nowrap; }
   .container { padding: var(--sp-4) var(--sp-3); }
+  /* Long inline-code tokens (clone URLs, hashes) must wrap, not push width. */
+  .readme-content code, .issue-body code, .comment-body code { overflow-wrap: anywhere; }
 }
