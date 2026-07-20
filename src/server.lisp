@@ -3633,6 +3633,44 @@ any trigger (review submitted, status reported); a no-op otherwise."
           (try-auto-merge owner repo-name (getf pr :id))
           (json-response review :status 201))))))
 
+(easy-routes:defroute api-merge-pull
+    ("/api/v1/repos/:owner/:repo-name/pulls/:number/merge" :method :post) ()
+  "Merge an open, mergeable pull request. Admin-only (mirrors the web merge
+route). Optional JSON body: {\"strategy\": \"merge|squash|fast-forward-only\",
+\"override\": true} — OVERRIDE bypasses the eligibility gate and is audit-logged.
+Returns the merged PR on success."
+  (unless *current-user-id*
+    (return-from api-merge-pull (json-error "unauthorized" :status 401)))
+  (with-visible-repo (repo owner repo-name (lambda () (json-error "not found" :status 404)))
+    (let* ((num (parse-integer number :junk-allowed t))
+           (pr (when num (find-pull-request (getf repo :id) num))))
+      (unless pr (return-from api-merge-pull (json-error "not found" :status 404)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (return-from api-merge-pull (json-error "forbidden" :status 403)))
+      (when (or (getf pr :is-merged) (getf pr :is-closed))
+        (return-from api-merge-pull
+          (json-error "pull request is already merged or closed" :status 409)))
+      (let* ((body-text (hunchentoot:raw-post-data :force-text t))
+             (json (when (and body-text (plusp (length body-text)))
+                     (ignore-errors (com.inuoe.jzon:parse body-text))))
+             (strategy (and (hash-table-p json) (gethash "strategy" json)))
+             (override (and (hash-table-p json)
+                            (let ((o (gethash "override" json)))
+                              (and o (not (eq o 'null))))))
+             (eligibility (compute-merge-eligibility pr repo)))
+        (unless (or (pull-request-mergeable-p eligibility) override)
+          (return-from api-merge-pull (json-error "pull request is not mergeable" :status 422)))
+        (when override
+          (log-event "pr.merge_override" :user-id *current-user-id* :repo-id (getf repo :id)
+                     :entity-type "pull_request" :entity-id (getf pr :id)
+                     :metadata "API admin override"))
+        (multiple-value-bind (ok msg)
+            (perform-pr-merge owner repo-name pr repo
+                              (and (stringp strategy) strategy)
+                              *current-user-id*)
+          (unless ok (return-from api-merge-pull (json-error msg :status 409)))
+          (json-response (find-pull-request (getf repo :id) num)))))))
+
 ;; ----------------------------------------------------------------------------
 ;; Routes: API v1 — Commit Statuses
 

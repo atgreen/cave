@@ -120,6 +120,11 @@ type pullUpdateRequest struct {
 	State string `json:"state"`
 }
 
+type pullMergeRequest struct {
+	Strategy string `json:"strategy,omitempty"`
+	Override bool   `json:"override,omitempty"`
+}
+
 type Review struct {
 	ID         int64  `json:"id"`
 	ReviewerID int64  `json:"reviewer_id"`
@@ -776,6 +781,8 @@ func runPulls(c *client, ownerName, repoName string, args []string) error {
 		return runPullChecks(c, ownerName, repoName, args[1:])
 	case "review":
 		return runPullReview(c, ownerName, repoName, args[1:])
+	case "merge":
+		return runPullMerge(c, ownerName, repoName, args[1:])
 	case "help", "-h", "--help":
 		printPullUsage(os.Stdout)
 		return nil
@@ -1029,6 +1036,46 @@ func runPullReview(c *client, ownerName, repoName string, args []string) error {
 	return nil
 }
 
+func runPullMerge(c *client, ownerName, repoName string, args []string) error {
+	fs := flag.NewFlagSet("pr merge", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	strategy := fs.String("strategy", "", "Merge strategy: merge|squash|fast-forward-only")
+	override := fs.Bool("admin-override", false, "Admin: bypass the mergeability gate (audit-logged)")
+	jsonOut := fs.Bool("json", false, "Emit raw JSON")
+
+	var positional []string
+	remaining := args
+	for {
+		if err := fs.Parse(remaining); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		remaining = rest[1:]
+	}
+	if len(positional) != 1 {
+		return errors.New("usage: cave pr merge <number> [--strategy merge|squash|fast-forward-only] [--admin-override]")
+	}
+	number := positional[0]
+
+	var pr PullRequest
+	rawURL := pullURL(c.baseURL, ownerName, repoName, number, nil) + "/merge"
+	if err := c.doJSON(http.MethodPost, rawURL, pullMergeRequest{Strategy: *strategy, Override: *override}, &pr); err != nil {
+		return err
+	}
+	if *jsonOut {
+		return writeJSON(os.Stdout, pr)
+	}
+	fmt.Fprintf(os.Stdout, "Merged pull request #%d (%s → %s)\n", pr.Number, pr.SourceBranch, pr.TargetBranch)
+	return nil
+}
+
 func pullURL(baseURL, ownerName, repoName, number string, query url.Values) string {
 	path := fmt.Sprintf("%s/api/v1/repos/%s/%s/pulls", baseURL, url.PathEscape(ownerName), url.PathEscape(repoName))
 	if number != "" {
@@ -1185,6 +1232,7 @@ func printPullUsage(w io.Writer) {
 	fmt.Fprintln(w, "  pr create --source BRANCH --target BRANCH [--json]")
 	fmt.Fprintln(w, "  pr checks [--json] <number>     (exit 1 unless all checks pass)")
 	fmt.Fprintln(w, "  pr review <number> --approve|--request-changes|--comment [--body TEXT|-]")
+	fmt.Fprintln(w, "  pr merge <number> [--strategy merge|squash|fast-forward-only] [--admin-override] [--json]")
 	fmt.Fprintln(w, "  pr close <number>")
 	fmt.Fprintln(w, "  pr reopen <number>")
 }
