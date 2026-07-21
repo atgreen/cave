@@ -1017,18 +1017,24 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
   (let* ((requeued
            ;; Recoverable: abandoned, retries left, not yet hard-timed-out.
            (postmodern:query
+            ;; The updated table j may not be referenced inside the FROM
+            ;; clause's join tree (Postgres: \"invalid reference to FROM-clause
+            ;; entry for table j\"), so the runner lookup is a correlated
+            ;; NOT EXISTS in WHERE — where j IS in scope. NOT EXISTS(online &
+            ;; fresh runner) reproduces the old LEFT JOIN test
+            ;; (r.id IS NULL OR r.status <> 'online' OR r.last_seen_at stale).
             "UPDATE cave_workflow_jobs j
                 SET status='queued', runner_id=NULL, started_at=NULL,
                     finished_at=NULL, attempts=attempts+1
                FROM cave_workflow_runs w
-               LEFT JOIN cave_runners r ON r.id = j.runner_id
               WHERE w.id = j.workflow_run_id
                 AND j.status IN ('running','assigned')
                 AND j.attempts < $2
                 AND COALESCE(w.started_at, j.created_at) >= now() - make_interval(mins => $1::int)
-                AND ( r.id IS NULL
-                      OR r.status <> 'online'
-                      OR r.last_seen_at < now() - interval '3 minutes'
+                AND ( NOT EXISTS (SELECT 1 FROM cave_runners r
+                                   WHERE r.id = j.runner_id
+                                     AND r.status = 'online'
+                                     AND r.last_seen_at >= now() - interval '3 minutes')
                       OR (j.status = 'assigned' AND j.started_at IS NULL
                           AND j.created_at < now() - make_interval(mins => $3::int)) )
             RETURNING j.id"
@@ -1036,16 +1042,19 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
          (failed-runs
            ;; Unrecoverable: hard timeout, or abandoned with no attempts left.
            (postmodern:query
+            ;; Same target-table-in-FROM restriction as the requeue query above:
+            ;; the runner-abandoned test is a correlated NOT EXISTS on j.
             "UPDATE cave_workflow_jobs j
                 SET status='failure', finished_at=now()
                FROM cave_workflow_runs w
-               LEFT JOIN cave_runners r ON r.id = j.runner_id
               WHERE w.id = j.workflow_run_id
                 AND j.status IN ('running','assigned')
                 AND ( COALESCE(w.started_at, j.created_at) < now() - make_interval(mins => $1::int)
                       OR ( j.attempts >= $2
-                           AND ( r.id IS NULL OR r.status <> 'online'
-                                 OR r.last_seen_at < now() - interval '3 minutes' ) ) )
+                           AND NOT EXISTS (SELECT 1 FROM cave_runners r
+                                            WHERE r.id = j.runner_id
+                                              AND r.status = 'online'
+                                              AND r.last_seen_at >= now() - interval '3 minutes') ) )
             RETURNING j.workflow_run_id"
             max-minutes max-attempts :column)))
     (dolist (rid (remove-duplicates failed-runs))
