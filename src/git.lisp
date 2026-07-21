@@ -27,6 +27,13 @@
         (uiop:run-program cmd
                           :output '(:string :stripped t)
                           :error-output '(:string :stripped t)
+                          ;; Git output (diffs, logs, blobs) can carry arbitrary
+                          ;; bytes — latin-1 source, binary hunks, mixed encodings.
+                          ;; The default bare :utf-8 slurp raises STREAM-DECODING-ERROR
+                          ;; on the first undecodable octet, which bubbles up as a 500.
+                          ;; Decode with a replacement char: valid UTF-8 still decodes
+                          ;; exactly, bad octets become U+FFFD instead of crashing.
+                          :external-format '(:utf-8 :replacement #\Replacement_Character)
                           :ignore-error-status t)
       (values output error-output exit-code))))
 

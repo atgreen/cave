@@ -49,6 +49,7 @@
 ### Resilience
 - Chamber RPC failures (including the ag-grpc framing bug we hit on cave-themes) used to walk all the way up to SBCL's top-level and exit the image. Now wrapped in `chamber-or` — every read falls back to direct git on `chamber-rpc-error`; the channel is reset so the next call doesn't reuse a poisoned stream.
 - `/raw/` binary blobs are streamed directly to the response instead of being round-tripped through Chamber gRPC.
+- Git CLI output (diffs, logs, blobs) is now decoded with a replacement character instead of a bare `:utf-8` slurp. A diff carrying a non-UTF-8 byte (latin-1 source, binary hunk) used to raise `STREAM-DECODING-ERROR` and 500 the page — most visibly on the PR view when the Chamber RPC path was degraded and `chamber-or` fell back to direct git. Valid UTF-8 still decodes exactly; only the bad octet becomes `U+FFFD`.
 
 ### UX polish
 - Trailing-slash URIs (`/atgreen/`) now 301-redirect to the slash-trimmed form with a path-only `Location` header so we don't take an extra `http→https` hop behind Caddy.
