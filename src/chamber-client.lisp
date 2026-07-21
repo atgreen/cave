@@ -10,6 +10,42 @@
 
 (defvar *chamber-channel* nil "gRPC channel to Chamber service.")
 
+;;; --- Per-channel call serialization ---
+;;;
+;;; ag-grpc's client connection is NOT safe for concurrent calls: it starts no
+;;; reader thread (connection-reader-thread-active-p stays nil) and takes no
+;;; read-lock, so channel-receive-headers/-message each pull frames straight off
+;;; the shared socket. Cave shares one channel per node across every Hunchentoot
+;;; worker, so two workers calling grpc-call on the same channel interleave their
+;;; frame reads and desync the HTTP/2 stream — surfacing as garbage frame lengths
+;;; ("-N is not of type (MOD ...)" binding AVAILABLE) and torn buffers ("NIL is
+;;; not of type BUFFER"), after which reset closes the socket under the others
+;;; (broken pipe / closed stream). Serialize calls per channel until the library
+;;; grows a real reader thread. Writes already take connection-write-lock; this
+;;; extends that discipline to the whole request/response so reads can't overlap.
+;;; The lock is per channel (keyed by identity), so calls to *different* nodes
+;;; still run in parallel — only same-channel calls serialize.
+
+(defvar *channel-call-locks* (make-hash-table :test 'eq :weakness :key)
+  "Channel object -> lock serializing gRPC calls on that channel.
+   Weak on the key so a closed/GC'd channel's lock is collected with it.")
+
+(defvar *channel-call-locks-lock* (bt2:make-lock :name "channel-call-locks")
+  "Guards *channel-call-locks* map mutation.")
+
+(defun channel-call-lock (channel)
+  "The call-serialization lock for CHANNEL, created on first use."
+  (bt2:with-lock-held (*channel-call-locks-lock*)
+    (or (gethash channel *channel-call-locks*)
+        (setf (gethash channel *channel-call-locks*)
+              (bt2:make-lock :name "chamber-channel-call")))))
+
+(defun locked-grpc-call (channel method request &rest args)
+  "ag-grpc:grpc-call serialized per CHANNEL. Use this instead of calling
+   ag-grpc:grpc-call directly on a shared channel — see the note above."
+  (bt2:with-lock-held ((channel-call-lock channel))
+    (apply #'ag-grpc:grpc-call channel method request args)))
+
 (defun chamber-enabled-p ()
   (config-value :chamber-enabled))
 
@@ -65,9 +101,9 @@ the Hunchentoot worker forever."
           (if (multi-chamber-p)
               (router-call method request response-type
                            :owner owner :repo-name repo-name :write-p write-p)
-              (ag-grpc:grpc-call (ensure-chamber-channel) method request
-                                  :response-type response-type
-                                  :timeout deadline)))
+              (locked-grpc-call (ensure-chamber-channel) method request
+                                :response-type response-type
+                                :timeout deadline)))
       (bt2:timeout ()
         (llog:warn "Chamber RPC timed out" :method method :deadline deadline)
         (reset-chamber-channel)
