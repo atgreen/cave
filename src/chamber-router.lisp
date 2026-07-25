@@ -101,14 +101,14 @@
         (let ((node (pick-read-node repo-id)))
           (unless node
             (error "No healthy chamber node for ~A/~A" owner repo-name))
-          (ag-grpc:grpc-call (get-node-channel node) method request
+          (locked-grpc-call (get-node-channel node) method request
                               :response-type response-type)))))
 
 (defun router-write-and-replicate (method request response-type
                                    &key owner repo-name repo-id)
   "Execute write on primary, return result, async replicate to secondaries."
   (let* ((primary (pick-write-node repo-id))
-         (result (ag-grpc:grpc-call (get-node-channel primary) method request
+         (result (locked-grpc-call (get-node-channel primary) method request
                                      :response-type response-type)))
     ;; Bump generation on primary
     (handler-case (bump-repo-generation repo-id (getf primary :id))
@@ -121,7 +121,7 @@
            (dolist (node secondaries)
              (handler-case
                  (progn
-                   (ag-grpc:grpc-call (get-node-channel node) method request
+                   (locked-grpc-call (get-node-channel node) method request
                                        :response-type response-type)
                    (bump-repo-generation repo-id (getf node :id)))
                (error (e)
@@ -139,7 +139,7 @@
   (dolist (node *chamber-nodes*)
     (unless (and exclude-node-id (= (getf node :id) exclude-node-id))
       (handler-case
-          (ag-grpc:grpc-call
+          (locked-grpc-call
            (get-node-channel node)
            "/cave.chamber.Chamber/InvalidateCache"
            (make-instance 'cave::invalidate-cache-request
@@ -165,7 +165,7 @@
              (dolist (node *chamber-nodes*)
                (handler-case
                    (progn
-                     (ag-grpc:grpc-call
+                     (locked-grpc-call
                       (get-node-channel node)
                       "/cave.chamber.Chamber/IsEmpty"
                       (make-instance 'cave::is-empty-request
