@@ -15,6 +15,22 @@
   ()
   (:documentation "Cave HTTP acceptor with per-request auth."))
 
+(defmethod hunchentoot:acceptor-ssl-p ((acceptor cave-acceptor))
+  "TLS is terminated at the reverse proxy (Caddy); cave's own acceptor speaks
+   plain HTTP on loopback, so Hunchentoot would otherwise treat every request as
+   insecure. That makes HUNCHENTOOT:REDIRECT absolutize a relative target to an
+   http:// URL (misc.lisp REDIRECT defaults PROTOCOL to (if (ssl-p) :https :http)),
+   so e.g. merging a PR bounced the browser to http://.../pulls/N. Trust the
+   proxy's X-Forwarded-Proto header instead: the acceptor binds only to
+   127.0.0.1, so nothing but the proxy can set it. This also makes Secure-cookie
+   logic correct behind TLS. Falls back to the default (NIL) for direct HTTP
+   (local dev), so nothing changes there."
+  (or (and (boundp 'hunchentoot:*request*)
+           hunchentoot:*request*
+           (let ((proto (hunchentoot:header-in :x-forwarded-proto hunchentoot:*request*)))
+             (and proto (string-equal proto "https"))))
+      (call-next-method)))
+
 (defmethod hunchentoot:acceptor-dispatch-request ((acceptor cave-acceptor) request)
   "Wrap every request with a pooled DB connection, auth context, and metrics."
   (let ((method (hunchentoot:request-method request))
