@@ -666,11 +666,22 @@ Returns a markdown string, or NIL when there is nothing to report."
         basename)))
 
 (defun git-push-mirror (repo-path remote-url &optional auth-token)
-  "Push all refs to a remote URL. Returns (VALUES success-p error-string)."
+  "Push all of cave's branches and tags to REMOTE-URL, force-updating them but
+NOT pruning. Returns (VALUES success-p error-string).
+
+Deliberately not a `git push --mirror`/`--prune`: a pruning push deletes any ref
+on the remote that cave doesn't have, which destroys refs the remote's own CI
+maintains — notably a `gh-pages` branch built by GitHub Actions on the mirror,
+which never exists on cave. Pruning it wipes the published site and disables
+GitHub Pages on every push. We force-update only the refs cave owns (heads +
+tags) and leave everything else on the remote intact. Trade-off: a branch
+deleted on cave is no longer deleted on the mirror."
   (ensure-safe-remote-url remote-url)
   (let ((url (inject-auth-token remote-url auth-token)))
     (multiple-value-bind (output err exit-code)
-        (git-run-net repo-path "push" "--mirror" url)
+        (git-run-net repo-path "push" url
+                     "+refs/heads/*:refs/heads/*"
+                     "+refs/tags/*:refs/tags/*")
       (declare (ignore output))
       (values (zerop exit-code) err))))
 
