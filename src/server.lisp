@@ -2073,6 +2073,24 @@ leaking the viewer's IP or breaking HTTPS."
       (archive-repo (getf repo :id) :archived nil)
       (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
 
+(easy-routes:defroute repo-visibility-submit
+    ("/:owner/:repo-name/settings/visibility" :method :post) ()
+  (when (require-login)
+    (let ((repo (find-repo owner repo-name)))
+      (unless repo (return-from repo-visibility-submit (not-found)))
+      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
+        (setf (hunchentoot:return-code*) 403)
+        (return-from repo-visibility-submit "Forbidden"))
+      (let* ((make-private (when (hunchentoot:post-parameter "private") t))
+             (was-private (getf repo :is-private)))
+        (set-repo-visibility (getf repo :id) :private make-private)
+        ;; Going private->public: re-index so the repo becomes searchable
+        ;; immediately (search visibility is enforced at query time, so no
+        ;; de-index is needed when going public->private).
+        (when (and was-private (not make-private))
+          (zoekt-index-repo owner repo-name)))
+      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+
 (easy-routes:defroute repo-delete-submit
     ("/:owner/:repo-name/settings/delete" :method :post) ()
   (when (require-sudo (format nil "/~A/~A/settings" owner repo-name))
