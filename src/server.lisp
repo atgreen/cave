@@ -3236,6 +3236,40 @@ auto-merge. Allowed for the PR author or any repo member."
            (set-pull-request-auto-merge (getf pr :id) nil *current-user-id*))))
       (hunchentoot:redirect (format nil "/~A/~A/pulls/~A" owner repo-name num)))))
 
+(defun sync-repo-push-mirrors (owner repo-name repo-id)
+  "Push REPO to all its enabled push mirrors, in a background thread.
+
+Normal git pushes sync mirrors via the post-receive hook (which shells out to
+`cave-server sync-mirrors`). A web/API merge updates the target ref out of band
+of that hook, so without this the mirror silently falls behind (issue #18).
+Best-effort: records per-mirror status, logs failures, never signals into the
+caller."
+  (bt2:make-thread
+   (lambda ()
+     (handler-case
+         (postmodern:with-connection *db-spec*
+           (dolist (m (list-mirrors repo-id))
+             (when (and (equal (getf m :direction) "push") (getf m :enabled))
+               (multiple-value-bind (ok err)
+                   (chamber-push-mirror owner repo-name
+                                        (getf m :remote-url) (getf m :auth-token))
+                 (if ok
+                     (progn
+                       (update-mirror-sync (getf m :id))
+                       (llog:info "Push mirror synced"
+                                  :repo (format nil "~A/~A" owner repo-name)
+                                  :url (getf m :remote-url)))
+                     (progn
+                       (update-mirror-sync (getf m :id) :error err)
+                       (llog:warn "Push mirror failed"
+                                  :repo (format nil "~A/~A" owner repo-name)
+                                  :url (getf m :remote-url) :error err)))))))
+       (error (e)
+         (llog:warn "Push mirror sync error"
+                    :repo (format nil "~A/~A" owner repo-name)
+                    :error (princ-to-string e)))))
+   :name (format nil "push-mirror-sync-~A/~A" owner repo-name)))
+
 (defun perform-pr-merge (owner repo-name pr repo strategy actor-id)
   "Run the git merge for PR with STRATEGY, verify the target advanced, mark the
 PR merged, auto-delete the source branch if configured, and fire post-merge side
@@ -3277,6 +3311,9 @@ eligibility checks."
                       (make-webhook-payload "pull_request.merged"
                                             :owner owner :repo repo-name
                                             :number (getf pr :number)))
+       ;; The merge updated the target ref out of band of the post-receive hook,
+       ;; so sync push mirrors ourselves — otherwise they fall behind (#18).
+       (sync-repo-push-mirrors owner repo-name (getf repo :id))
        (values t "merged")))))
 
 (defun try-auto-merge (owner repo-name pr-id)
