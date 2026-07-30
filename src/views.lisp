@@ -3167,6 +3167,25 @@ function caveShowCommentForm(td) {
       (:section
        (:h2 :style "color:var(--red)" "Danger zone")
        (:div :style "border:1px solid var(--red);border-radius:var(--radius);padding:var(--sp-4)"
+        (if (getf repo :is-private)
+            (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)"
+             (:div
+              (:strong "Make this repository public")
+              (:p :style "color:var(--text-muted);font-size:.85rem;margin:0"
+               "Anyone will be able to see and search this repository."))
+             (:form :method "post"
+              :action (format nil "/~A/~A/settings/visibility" owner-name repo-name)
+              (:button.btn :type "submit" "Make public")))
+            (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)"
+             (:div
+              (:strong "Make this repository private")
+              (:p :style "color:var(--text-muted);font-size:.85rem;margin:0"
+               "Only members will be able to see this repository."))
+             (:form :method "post"
+              :action (format nil "/~A/~A/settings/visibility" owner-name repo-name)
+              (:input :type "hidden" :name "private" :value "true")
+              (:button.btn :type "submit" :style "border-color:var(--red);color:var(--red)"
+               "Make private"))))
         (if (getf repo :is-archived)
             (:div :style "display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)"
              (:div

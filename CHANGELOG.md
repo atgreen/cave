@@ -28,6 +28,10 @@
 ### Clone widget
 - Every repo overview and Code tab gets an SSH/HTTPS clone-URL widget with a one-click Copy button.
 
+### Repo visibility
+- A repo's visibility can now be changed after creation from the settings Danger zone (admin-only). Previously `is_private` was fixed at creation time.
+- Going private→public re-indexes the repo in Zoekt so it becomes searchable immediately; search results are already filtered by live visibility at query time.
+
 ### cavectl
 - New `cavectl doctor` runs end-to-end health checks: container runtime, SELinux, `ip_unprivileged_port_start` vs configured ports, DNS, every expected container, cave's SSH listener, keycloak database, schema version, realm SMTP placeholder substitution.
 - New `cave-keycloak` container image bakes the cave theme and the realm import on top of `keycloak:26.0`; runs `kc.sh build --db=postgres` in a builder stage so `start --optimized` works at runtime.
