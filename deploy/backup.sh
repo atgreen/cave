@@ -21,12 +21,10 @@ mkdir -p "${BACKUP_DIR}" "${SNAPSHOT}"
 echo "=== Cave Backup ${TIMESTAMP} ==="
 echo "Container prefix: ${PREFIX}"
 
-# 1. Dump Postgres (both cave and keycloak databases)
+# 1. Dump Postgres (the cave database; auth lives in cave's own usher_* tables)
 echo "Dumping PostgreSQL..."
 podman exec "${PREFIX}-pg" pg_dump -U cave -d cave --format=custom \
   > "${SNAPSHOT}/cave.pgdump"
-podman exec "${PREFIX}-pg" pg_dump -U cave -d keycloak --format=custom \
-  > "${SNAPSHOT}/keycloak.pgdump" 2>/dev/null || echo "  (no keycloak DB, skipping)"
 
 # 2. Copy git repos
 echo "Backing up git repositories..."

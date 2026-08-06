@@ -1,6 +1,6 @@
 [Unit]
 Description=Cave Code Forge
-After=cave-pg.service cave-keycloak.service
+After=cave-pg.service
 Requires=cave-pg.service
 
 [Container]
@@ -13,10 +13,16 @@ PublishPort=127.0.0.1:9443:9443
 Volume=cave-data.volume:/var/lib/cave
 Volume=cave-zoekt.volume:/data/zoekt-index
 Environment=CAVE_DB_HOST=cave-prod-pg
-Environment=CAVE_OIDC_ISSUER=http://localhost:9180/realms/cave
-Environment=CAVE_OIDC_ISSUER_INTERNAL=http://cave-prod-keycloak:8080/realms/cave
+# Auth is served in-process by the embedded Usher OIDC provider: the issuer is
+# Cave's own base URL (/authorize, /token, /userinfo are mounted at the root).
+# ISSUER is browser-facing; ISSUER_INTERNAL is Cave calling its own in-container
+# HTTP port for the server-to-server token/userinfo exchange.
+Environment=CAVE_OIDC_ISSUER=http://localhost:9080
+Environment=CAVE_OIDC_ISSUER_INTERNAL=http://localhost:8080
 Environment=CAVE_OIDC_CLIENT_ID=cave
-Environment=CAVE_OIDC_CLIENT_SECRET=cave-dev-secret
+# Self-referential client secret (Cave is both provider and relying party).
+# Change this to a unique per-instance value.
+Environment=CAVE_OIDC_CLIENT_SECRET=cave-local-secret
 Environment=CAVE_BASE_URL=http://localhost:9080
 # CAVE_SECRET_KEY is auto-generated on first start if not set
 Environment=CAVE_ZOEKT_ENABLED=t

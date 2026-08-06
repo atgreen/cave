@@ -1,6 +1,6 @@
 [Unit]
 Description=Cave PostgreSQL
-Before=cave-keycloak.service cave.service
+Before=cave.service
 
 [Container]
 ContainerName=cave-prod-pg

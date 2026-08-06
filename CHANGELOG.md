@@ -2,6 +2,12 @@
 
 ## v0.4.0 — unreleased
 
+### Auth (Keycloak retired)
+- Cave now authenticates entirely through its embedded in-process Usher OpenID Provider (`auth.mode: local`): every OIDC endpoint (`/authorize`, `/token`, `/userinfo`, `/.well-known/*`) is served at cave's own root, so no external IdP is required.
+- Removed the external Keycloak container, the `cave-keycloak` image, the `keycloak/` realm + theme directory, `Containerfile.keycloak`, and cavectl's keycloak provisioning (no more `ports.keycloak` / port 9180).
+- `cavectl` `auth.mode` is now `local` (embedded Usher — the default) or `oidc` (federate to an external provider); the `keycloak` mode is gone.
+- New `cave-server usher-add-user` subcommand bootstraps the first admin on a fresh instance (`--username/--password/--email --admin`); `make podman-up` runs it automatically to create `admin` / `admin`.
+
 ### Releases (new tab)
 - Releases tied to git tags, with a Markdown body and pre-release / draft flags.
 - Per-asset uploads (≤ 100 MB), stored on disk under `<data>/releases/<repo>/<release>/`, with download counts and a "Latest" badge in the list.

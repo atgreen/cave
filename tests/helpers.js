@@ -4,18 +4,20 @@ const ADMIN_USER = process.env.CAVE_ADMIN_USER || "admin";
 const ADMIN_PASS = process.env.CAVE_ADMIN_PASSWORD || "admin";
 
 /**
- * Log in via Keycloak OIDC flow.
- * Navigates to Cave's login, fills Keycloak's form, waits for redirect back.
+ * Log in via the embedded Usher OIDC flow.
+ * Navigates to Cave's login, which redirects to Usher's /authorize sign-in page
+ * (served on Cave's own origin), fills the form, waits for the redirect back.
+ * Usher's form has no element ids — select by name / class.
  */
 async function login(page) {
   await page.goto("/-/auth/login");
-  // Now on Keycloak login page
-  await page.waitForSelector("#username");
-  await page.fill("#username", ADMIN_USER);
-  await page.fill("#password", ADMIN_PASS);
+  // Now on the embedded Usher sign-in page
+  await page.waitForSelector('input[name="username"]');
+  await page.fill('input[name="username"]', ADMIN_USER);
+  await page.fill('input[name="password"]', ADMIN_PASS);
   await Promise.all([
     page.waitForURL("**/"),
-    page.click("#kc-login"),
+    page.click("button.usher-submit"),
   ]);
   return page;
 }

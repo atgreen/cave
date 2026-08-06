@@ -16,8 +16,9 @@ The fast path uses cavectl (declarative; generates a cave.yaml with the right
 secrets, brings up the full stack):
 
 ```bash
-./cavectl init   # spins up postgres, keycloak (with cave theme + realm),
-                 # mailpit, zoekt, cave, runner — pulling from ghcr.io
+./cavectl init   # spins up postgres, mailpit, zoekt, cave, runner — pulling
+                 # from ghcr.io. Auth is Cave's embedded Usher OIDC provider
+                 # (auth.mode: local); no external IdP.
 ```
 
 The plumbing path uses raw podman:
@@ -31,20 +32,30 @@ podman build -t cave -f Containerfile.local .
 podman run -d --name cave --network cave-net \
   -p 8080:8080 -p 2222:22 \
   -e CAVE_DB_HOST=cave-pg \
-  -e CAVE_OIDC_ISSUER=http://cave-keycloak:8080/realms/cave \
-  -e CAVE_OIDC_CLIENT_ID=cave -e CAVE_OIDC_CLIENT_SECRET=... \
+  -e CAVE_OIDC_ISSUER=http://localhost:8080 \
+  -e CAVE_OIDC_ISSUER_INTERNAL=http://localhost:8080 \
+  -e CAVE_OIDC_CLIENT_ID=cave -e CAVE_OIDC_CLIENT_SECRET=cave-dev-secret \
+  -e CAVE_BASE_URL=http://localhost:8080 \
   -v cave-data:/var/lib/cave cave:latest
+# Bootstrap the first admin (embedded Usher has no users on a fresh instance):
+podman exec cave cave-server usher-add-user --config /etc/cave.conf \
+  --username admin --password admin --email admin@example.com --admin
 ```
 
-Cave uses OIDC via Keycloak for all user auth — there's no local-admin
-username/password flag.
+Cave hosts its own OpenID Provider (Usher) in-process, so it authenticates all
+users itself — the `oidc-issuer` is Cave's own base URL and every OIDC endpoint
+(`/authorize`, `/token`, `/userinfo`) is served at the root. There's no
+local-admin username/password flag; bootstrap the first admin with
+`cave-server usher-add-user --admin` (see `make podman-up`). Cave can still
+federate to an external OIDC provider by setting a different `oidc-issuer`.
 
 ## Architecture
 
 - **src/package.lisp** — Package definition and exports
 - **src/config.lisp** — S-expression config parser (cave.conf)
 - **src/db.lisp** — PostgreSQL via postmodern, numbered migrations
-- **src/auth.lisp** — OIDC auth, sessions, API tokens, sudo mode
+- **src/auth.lisp** — embedded Usher OIDC provider (`init-usher`) + relying-party
+  client, sessions, API tokens, sudo mode
 - **src/model.lisp** — Domain queries: users, orgs, repos, issues, PRs, reviews,
   releases, signatures, page views, SSH keys, etc.
 - **src/git.lisp** — Git CLI integration (branch listing, log, file tree, diff,
@@ -68,9 +79,6 @@ username/password flag.
 - **cli/cavectl/** — Go source for the declarative deploy tool
 - **internal/cavectl/** — Go libraries: config, plan, apply, runtime, doctor,
   backup, instance discovery
-- **keycloak/themes/cave/** — Custom Keycloak login theme (parent: keycloak.v2)
-- **keycloak/cave-realm.json** — Realm import with `__PLACEHOLDER__` tokens
-  substituted at container start by `keycloak/entrypoint.sh`
 - **deploy/quadlet/** — systemd-user quadlet units for production
 
 ## Key conventions
@@ -99,7 +107,7 @@ username/password flag.
   which falls back to direct git on `chamber-rpc-error`. Never let a chamber
   RPC failure bubble — it'll take down the SBCL image.
 - Container images are published from `main` and tagged releases to
-  `ghcr.io/atgreen/{cave,cave-runner,cave-zoekt,cave-keycloak}` by the
+  `ghcr.io/atgreen/{cave,cave-runner,cave-zoekt}` by the
   containers.yaml GHA workflow. `cavectl` pulls from `:main` by default.
 - Static files served from `static/`.
 

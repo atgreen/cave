@@ -177,7 +177,7 @@ explicitly chosen another theme."
                   (:strong (if (listp crumb) (second crumb) crumb)))))))
 
 ;;; ========================== AUTH PAGES ==========================
-;;; Login is handled by Keycloak — no local login form needed.
+;;; Login is handled by the embedded Usher OIDC provider — no local login form needed.
 
 ;;; ========================== DASHBOARD ==========================
 

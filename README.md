@@ -34,7 +34,7 @@ are not built yet.
 - **Public landing** — anonymous visitors get a landing page driven by the `cave-landing` system repo (edit content with a git push), with a list of public repos and recent activity, no login required
 - **Explore** — discover public repos with search, sort, and trending; browse people; facet by language with colored language dots (`/-/explore`)
 - **User themes** — built-in (Terminal Warmth, Solarized Dark, Nord, Dracula, Light) plus custom themes via `cave-themes` repos
-- **Built-in identity (Usher)** — cave embeds its own OpenID Provider (Usher) in-process, so no external IdP is required: OIDC login, self-registration gated by admin approval, email verification, password reset, self-service password change, and 2FA (TOTP) with backup codes. SSH and GPG key management live in Settings. cave still speaks plain OIDC, so it can also federate to an external provider (e.g. Keycloak)
+- **Built-in identity (Usher)** — cave embeds its own OpenID Provider (Usher) in-process, so no external IdP is required: OIDC login, self-registration gated by admin approval, email verification, password reset, self-service password change, and 2FA (TOTP) with backup codes. SSH and GPG key management live in Settings. cave still speaks plain OIDC, so it can also federate to an external OIDC provider (`auth.mode: oidc`)
 - **Email** — SMTP via mailpit (dev) or any external relay (Resend / Postmark / SES / Fastmail …) configured per deploy
 - **Observability** — Prometheus metrics, Grafana dashboards, SBCL runtime stats
 - **Backup/restore** — one-command backup and restore of Postgres + repos + config
@@ -51,7 +51,6 @@ are not built yet.
 
 - **Atomic stack landing** — ordered validation plus all-or-nothing merge of a stack
 - **`Closes #N` auto-close** — close issues automatically from commit/PR messages (labels, assignees, milestones, and filtering are now *Implemented*)
-- **Deployment auth migration** — the cave binary embeds Usher, but the `cavectl` tooling still provisions an external Keycloak (`auth.mode: keycloak`); wiring `cavectl` to deploy the embedded provider directly is pending
 - **Fully sandboxed checks** — pre-receive checks already run under a Landlock filesystem sandbox (cross-repo isolation, scoped to the extracted worktree) with a scrubbed environment, network isolation (`unshare -n` plus Landlock TCP-deny, best-effort where the container can't `unshare`), and a wall-clock timeout (`:checks-*`). Still missing for full isolation: cgroup memory/CPU limits and dropping to a per-repo unprivileged UID
 - **Repo deployment / CD** — build images, queue deploys, roll back, manage secrets
 - **Unit/integration tests** — for migrations, the REST API, and merge-policy rules (today only the end-to-end Playwright suite exists)
@@ -62,8 +61,8 @@ are not built yet.
 # Build cave-server + cave (CLI) + cavectl
 make build
 
-# Spin up the full stack locally (postgres, keycloak with cave theme + realm,
-# mailpit, zoekt, cave, runner) — picks free ports, generates secrets
+# Spin up the full stack locally (postgres, mailpit, zoekt, cave, runner) —
+# picks free ports, generates secrets
 ./cavectl init
 
 # Visit cave at http://localhost:9080
@@ -71,6 +70,18 @@ make build
 
 `cavectl init` writes a `cave.yaml` with every secret already filled in. Edit it
 to change images, ports, or auth mode, then `cavectl apply --yes` to reconcile.
+
+Cave authenticates users itself through its embedded in-process Usher OpenID
+Provider — no external IdP to run. A fresh instance starts with no users, so
+bootstrap the first admin:
+
+```bash
+podman exec <cave-container> \
+  cave-server usher-add-user --config /etc/cave.conf \
+    --username admin --password <pw> --email you@example.com --admin
+```
+
+`make podman-up` does this for you automatically (creating `admin` / `admin`).
 
 ## Production deployment
 
@@ -89,11 +100,12 @@ go build -o cavectl ./cli/cavectl
 #    before anything is created.
 ./cavectl init --name cave
 
-# 3. Edit cave.yaml: set base_url to https://cave.example.com,
-#    auth.mode to "keycloak", auth.keycloak.public_url to
-#    https://auth.cave.example.com, smtp.mode to "external" with your
-#    relay credentials, and ports.ssh to 22 if cave's SSH should be on
-#    the public port (then move system sshd off 22 first).
+# 3. Edit cave.yaml: set base_url to https://cave.example.com. Leave
+#    auth.mode at "local" to use cave's embedded Usher provider (the
+#    default — no external IdP), or set it to "oidc" with an oidc: block
+#    to federate to an external provider. Set smtp.mode to "external"
+#    with your relay credentials, and ports.ssh to 22 if cave's SSH
+#    should be on the public port (then move system sshd off 22 first).
 #    Then reconcile the edits:
 ./cavectl apply --yes
 
@@ -105,7 +117,6 @@ Front it with Caddy:
 
 ```caddyfile
 cave.example.com         { reverse_proxy 127.0.0.1:9080 }
-auth.cave.example.com    { reverse_proxy 127.0.0.1:9180 }
 runner.cave.example.com  { reverse_proxy h2c://127.0.0.1:9443 }
 ```
 
@@ -122,7 +133,7 @@ make prod-install            # drop quadlet units in ~/.config/containers/system
 make prod-start
 ```
 
-Default ports: cave 9080, keycloak 9180, mailpit 9025, SSH 9222.
+Default ports: cave 9080, mailpit 9025, SSH 9222.
 
 ### Rollback / backup
 
@@ -142,7 +153,6 @@ GitHub Actions workflow:
 | `ghcr.io/atgreen/cave`             | `Containerfile.local`        |
 | `ghcr.io/atgreen/cave-runner`      | `Containerfile.runner`       |
 | `ghcr.io/atgreen/cave-zoekt`       | `Containerfile.zoekt`        |
-| `ghcr.io/atgreen/cave-keycloak`    | `Containerfile.keycloak`     |
 
 Tags: `:sha-<short>` (immutable), `:main` (rolling), and on `v*` tags
 `:<version>`, `:prod`, `:latest`.
@@ -181,8 +191,6 @@ src/
 
 cli/cavectl/            — Go deployment tool source
 internal/cavectl/       — Go libraries: config, plan, apply, runtime, doctor, …
-keycloak/themes/cave/   — Custom Keycloak login theme
-keycloak/cave-realm.json — Realm import (placeholders substituted at runtime)
 deploy/quadlet/         — systemd-user quadlet units
 ```
 
@@ -216,11 +224,13 @@ Two configs live side-by-side:
     :db-user "cave"
     :db-password "…"
     :base-url "https://cave.example.com"
-    ;; OIDC issuer. For the embedded Usher provider, set this to your base URL —
-    ;; cave self-serves OIDC, no external IdP needed. For an external provider
-    ;; (e.g. Keycloak) point it at the realm and set :oidc-issuer-internal to the
-    ;; in-cluster URL.
+    ;; OIDC issuer. By default cave self-serves OIDC through its embedded Usher
+    ;; provider, so set this to your base URL and :oidc-issuer-internal to the
+    ;; in-cluster URL (e.g. http://localhost:8080) — no external IdP needed.
+    ;; To federate to an optional external provider instead, point :oidc-issuer
+    ;; at that provider's issuer URL.
     :oidc-issuer "https://cave.example.com"
+    :oidc-issuer-internal "http://localhost:8080"
     :oidc-client-id "cave"
     :oidc-client-secret "…"
     :zoekt-enabled t
@@ -267,14 +277,13 @@ Two configs live side-by-side:
                   secret_key: <32-byte hex> }
    ports:       { http: 9080, ssh: 22, ssh_bind: 0.0.0.0,
                   grpc: 9443, grpc_bind: 0.0.0.0,
-                  keycloak: 9180, mailpit: 9025 }
+                  mailpit: 9025 }
    database:    { mode: local, image: docker.io/postgres:16-alpine, password: <random> }
    auth:
-     mode: keycloak
-     keycloak:  { image: ghcr.io/atgreen/cave-keycloak:main,
-                  admin_user: admin, admin_password: <strong>,
-                  public_url: https://auth.cave.example.com,
-                  client_secret: <random 32-char> }
+     # mode: local uses cave's embedded in-process Usher provider — the
+     # default, no external IdP. Switch to mode: oidc with an oidc: block
+     # to federate to an external provider instead.
+     mode: local
    runner:      { enabled: true, image: ghcr.io/atgreen/cave-runner:main, count: 1 }
    zoekt:       { enabled: true, image: ghcr.io/atgreen/cave-zoekt:main }
    smtp:
@@ -332,6 +341,9 @@ unless every check is green, so it composes in scripts (`cave pr checks 7 && …
 cave-server serve          Start the web server
 cave-server init           Initialize the database
 cave-server migrate        Run pending migrations
+cave-server usher-add-user Create a user in the embedded Usher provider
+                           (--username/--password/--email, --admin for the
+                           first admin on a fresh instance)
 cave-server runner         Start an automation runner agent
 cave-server run-checks     Run pre-receive checks + enforce protected branches
                            (called by git hook)
@@ -356,7 +368,7 @@ cavectl apply               Reconcile containers to match cave.yaml
 cavectl status              Show running containers + assigned ports
 cavectl logs <service>      Tail container logs
 cavectl doctor              Run sanity checks: runtime, ports, DNS, containers,
-                            schema, OIDC, SMTP realm config
+                            schema, OIDC, SMTP config
 cavectl backup              Tar up postgres + repos + cave.yaml
 cavectl restore <archive>   Restore from a cavectl backup archive
 cavectl instances           List all cavectl-managed instances on this host
@@ -571,8 +583,10 @@ CAVE_ADMIN_USER=admin CAVE_ADMIN_PASSWORD=admin \
 ```
 
 `npm test` runs `playwright test` (15 specs covering smoke pages, registration,
-org/repo flows, and the file browser). The tests assume an admin user can log
-in via Keycloak.
+org/repo flows, and the file browser). The tests assume an admin user can sign
+in to cave through its embedded Usher provider (bootstrap one with
+`cave-server usher-add-user --admin`, or let `make podman-up` create `admin` /
+`admin`).
 
 There is not yet a unit/integration suite for migrations, the REST API, or
 merge-policy rules — see **Planned** above.

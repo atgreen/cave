@@ -24,9 +24,6 @@ func Read(cfg *config.Config, rt runtime.Runtime) (*DeploymentState, error) {
 
 	// Check containers
 	services := []string{"cave", "pg"}
-	if cfg.KeycloakEnabled() {
-		services = append(services, "keycloak")
-	}
 	if cfg.Zoekt.Enabled {
 		services = append(services, "zoekt-web")
 	}

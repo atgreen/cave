@@ -24,8 +24,6 @@ const (
 	WaitForHealthy
 	GenerateConfig
 	MigrateDatabase
-	ConfigureKeycloak
-	CreateKeycloakDB
 	CreateRunnerToken
 	RestoreBackup
 )
@@ -40,7 +38,7 @@ type Action struct {
 
 func (a Action) Symbol() string {
 	switch a.Type {
-	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, ConfigureKeycloak, CreateKeycloakDB, CreateRunnerToken, RestoreBackup:
+	case CreateNetwork, CreateVolume, CreateContainer, GenerateConfig, CreateRunnerToken, RestoreBackup:
 		return "+"
 	case UpdateContainer:
 		return "~"
@@ -138,7 +136,7 @@ func Diff(cfg *config.Config, current *state.DeploymentState, backupPath ...stri
 		})
 	}
 
-	// 3c. Mailpit (must be up before keycloak so DNS resolves for SMTP send)
+	// 3c. Mailpit
 	mpInfo := current.Containers["mailpit"]
 	if cfg.MailpitEnabled() {
 		if mpInfo == nil || mpInfo.Status == "not-found" {
@@ -159,46 +157,6 @@ func Diff(cfg *config.Config, current *state.DeploymentState, backupPath ...stri
 			Type:        RemoveContainer,
 			Service:     "mailpit",
 			Description: fmt.Sprintf("remove container %q (mailpit disabled)", cfg.ContainerName("mailpit")),
-		})
-	}
-
-	// 4. Keycloak
-	kcInfo := current.Containers["keycloak"]
-	if cfg.KeycloakEnabled() {
-		if kcInfo == nil || kcInfo.Status == "not-found" {
-			// keycloak needs its own DB; postgres only created "cave"
-			actions = append(actions, Action{
-				Type:        CreateKeycloakDB,
-				Service:     "keycloak",
-				Description: "ensure keycloak database exists",
-			})
-			actions = append(actions, Action{
-				Type:        CreateContainer,
-				Service:     "keycloak",
-				Description: fmt.Sprintf("create container %q (%s)", cfg.ContainerName("keycloak"), cfg.Auth.Keycloak.Image),
-			})
-			actions = append(actions, Action{
-				Type:        WaitForHealthy,
-				Service:     "keycloak",
-				Description: fmt.Sprintf("wait for %q healthy", cfg.ContainerName("keycloak")),
-			})
-			actions = append(actions, Action{
-				Type:        ConfigureKeycloak,
-				Service:     "keycloak",
-				Description: "configure Keycloak realm",
-			})
-		} else if needsUpdate(kcInfo, cfg.Auth.Keycloak.Image) {
-			actions = append(actions, Action{
-				Type:        UpdateContainer,
-				Service:     "keycloak",
-				Description: fmt.Sprintf("update container %q", cfg.ContainerName("keycloak")),
-			})
-		}
-	} else if kcInfo != nil && kcInfo.Status != "not-found" {
-		actions = append(actions, Action{
-			Type:        RemoveContainer,
-			Service:     "keycloak",
-			Description: fmt.Sprintf("remove container %q (auth mode changed)", cfg.ContainerName("keycloak")),
 		})
 	}
 

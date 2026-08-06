@@ -129,6 +129,46 @@
             (format t "~%"))
           (format t "~&No new accounts (all cave_users already exist in Usher).~%")))))
 
+(defun make-usher-add-user-command ()
+  (clingon:make-command
+   :name "usher-add-user"
+   :description "Create (or update) a local Usher account non-interactively.
+                 With --admin, grant the cave-admin group. Used to bootstrap the
+                 first administrator on a fresh instance (dev harness, deploy)."
+   :options (list (make-config-option)
+                  (clingon:make-option :string
+                   :long-name "username" :key :username :required t
+                   :description "Login username")
+                  (clingon:make-option :string
+                   :long-name "password" :key :password :required t
+                   :description "Initial password")
+                  (clingon:make-option :string
+                   :long-name "email" :key :email
+                   :description "Email address (marks the account email-verified)")
+                  (clingon:make-option :string
+                   :long-name "display-name" :key :display-name
+                   :description "Display name (defaults to the username)")
+                  (clingon:make-option :flag
+                   :long-name "admin" :key :admin
+                   :description "Grant the cave-admin group"))
+   :handler #'handle-usher-add-user))
+
+(defun handle-usher-add-user (cmd)
+  (let ((config-path (clingon:getopt cmd :config))
+        (username (clingon:getopt cmd :username))
+        (password (clingon:getopt cmd :password))
+        (email (clingon:getopt cmd :email))
+        (display-name (clingon:getopt cmd :display-name))
+        (admin (clingon:getopt cmd :admin)))
+    (load-config config-path)
+    (connect-db)
+    (init-usher)
+    (usher-add-user username password :email email
+                    :display-name display-name :admin admin)
+    (disconnect-db)
+    (format t "~&Provisioned Usher account ~S~:[~; (cave-admin)~].~%"
+            username admin)))
+
 ;;; --- System repos (cave-themes, cave-landing): create + seed at startup ---
 
 (defun system-repo-empty-p (owner name)
@@ -2348,6 +2388,7 @@ object string. Empty list -> \"\"."
    :license "MIT"
    :sub-commands (list (make-init-command)
                        (make-usher-migrate-users-command)
+                       (make-usher-add-user-command)
                        (make-serve-command)
                        (make-migrate-command)
                        (make-reverify-command)

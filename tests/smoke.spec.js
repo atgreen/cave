@@ -3,11 +3,12 @@ const { test, expect } = require("@playwright/test");
 const { login, screenshot } = require("./helpers");
 
 test.describe("public pages", () => {
-  test("login redirects to Keycloak", async ({ page }) => {
+  test("login redirects to the embedded Usher sign-in page", async ({ page }) => {
     await page.goto("/-/auth/login");
-    // Should be on Keycloak login page
-    await expect(page).toHaveURL(/\/realms\/cave\//);
-    await screenshot(page, "keycloak-login");
+    // Should be on Usher's /authorize sign-in page (Cave's own origin)
+    await expect(page).toHaveURL(/\/authorize\?/);
+    await expect(page.locator('input[name="username"]')).toBeVisible();
+    await screenshot(page, "usher-login");
   });
 });
 

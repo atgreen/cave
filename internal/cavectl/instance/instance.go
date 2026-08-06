@@ -143,7 +143,7 @@ func Discover(runtimeBin string) ([]Instance, error) {
 			inst.Status = "running"
 		}
 
-		// Extract ports from the main cave container (not -pg, -keycloak, etc.)
+		// Extract ports from the main cave container (not -pg, -zoekt-web, etc.)
 		if c.containerName() == prefix {
 			inst.HTTPPort = extractHostPort(c.Ports, 8080)
 			inst.SSHPort = extractHostPort(c.Ports, 22)
@@ -228,7 +228,7 @@ func extractPrefix(names interface{}, labels map[string]string) string {
 			}
 		}
 	}
-	for _, suffix := range []string{"-pg", "-keycloak", "-zoekt-web", "-mailpit", "-init"} {
+	for _, suffix := range []string{"-pg", "-zoekt-web", "-mailpit", "-init"} {
 		if strings.HasSuffix(name, suffix) {
 			return strings.TrimSuffix(name, suffix)
 		}

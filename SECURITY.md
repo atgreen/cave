@@ -14,7 +14,7 @@ You should receive a response within 48 hours. We will work with you to understa
 
 ## Scope
 
-This policy covers the Cave server, CLI, and runner agent. It does not cover third-party dependencies (Keycloak, PostgreSQL, Podman), though we appreciate reports about how Cave's use of those dependencies may introduce vulnerabilities.
+This policy covers the Cave server (including its embedded Usher OIDC provider), CLI, and runner agent. It does not cover third-party dependencies (PostgreSQL, Podman), though we appreciate reports about how Cave's use of those dependencies may introduce vulnerabilities.
 
 ## Supported versions
 
