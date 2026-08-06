@@ -337,23 +337,63 @@
 
 (defparameter *sudo-timeout-seconds* 300 "Sudo mode lasts 5 minutes.")
 
+(defun constant-time-string= (a b)
+  "Constant-time equality for equal-length strings (MAC/token comparison).
+   Returns NIL immediately on a length mismatch; for equal lengths the compare
+   time does not depend on where the first differing byte is, so it does not leak
+   the match prefix. Used to verify HMACs without an early-exit timing oracle."
+  (let ((a (or a "")) (b (or b "")))
+    (if (/= (length a) (length b))
+        nil
+        (let ((diff 0))
+          (loop for ca across a for cb across b
+                do (setf diff (logior diff (logxor (char-code ca) (char-code cb)))))
+          (zerop diff)))))
+
+(defun sudo-token-mac (session-token timestamp)
+  "HMAC-SHA256 (hex) binding a sudo TIMESTAMP to SESSION-TOKEN, keyed by the
+   instance :secret-key. Makes the sudo cookie unforgeable (an attacker cannot
+   produce a valid MAC without the secret) and non-replayable to another session
+   (the MAC covers the session token, which only the legitimate session holds)."
+  (let ((mac (ironclad:make-mac :hmac
+              (flexi-streams:string-to-octets (or (config-value :secret-key) "")
+                                              :external-format :utf-8)
+              :sha256)))
+    (ironclad:update-mac mac
+     (flexi-streams:string-to-octets
+      (format nil "~A:~A" (or session-token "") timestamp)
+      :external-format :utf-8))
+    (ironclad:byte-array-to-hex-string (ironclad:produce-mac mac))))
+
 (defun sudo-active-p ()
-  "Check if the current user has recently re-authenticated (sudo mode)."
+  "Check if the current user has recently re-authenticated (sudo mode).
+   The cave_sudo cookie is a `TIMESTAMP:HMAC` pair; a forged or replayed value
+   fails MAC verification, so a plain client-set timestamp no longer grants sudo."
   (let ((sudo-cookie (hunchentoot:cookie-in "cave_sudo")))
     (when sudo-cookie
       (handler-case
-          (let ((timestamp (parse-integer sudo-cookie :junk-allowed t)))
-            (and timestamp
-                 (< (- (get-universal-time) timestamp) *sudo-timeout-seconds*)))
+          (let ((colon (position #\: sudo-cookie)))
+            (when colon
+              (let* ((timestamp (parse-integer sudo-cookie :end colon :junk-allowed t))
+                     (mac (subseq sudo-cookie (1+ colon)))
+                     (session-token (hunchentoot:cookie-in "cave_session")))
+                (and timestamp
+                     (constant-time-string=
+                      mac (sudo-token-mac session-token timestamp))
+                     (< (- (get-universal-time) timestamp) *sudo-timeout-seconds*)))))
         (error () nil)))))
 
 (defun set-sudo-cookie ()
-  "Set the sudo cookie to current time."
-  (hunchentoot:set-cookie "cave_sudo"
-                          :value (princ-to-string (get-universal-time))
-                          :path "/"
-                          :http-only t
-                          :max-age *sudo-timeout-seconds*))
+  "Set the sudo cookie to the current time, signed with an HMAC bound to this
+   session so it cannot be forged or replayed to another session."
+  (let* ((ts (get-universal-time))
+         (session-token (hunchentoot:cookie-in "cave_session")))
+    (hunchentoot:set-cookie "cave_sudo"
+                            :value (format nil "~A:~A" ts
+                                           (sudo-token-mac session-token ts))
+                            :path "/"
+                            :http-only t
+                            :max-age *sudo-timeout-seconds*)))
 
 ;;; --- API tokens ---
 

@@ -565,14 +565,69 @@ Returns a markdown string, or NIL when there is nothing to report."
           (uiop:delete-directory-tree (pathname tmp) :validate t
                                                      :if-does-not-exist :ignore))))))
 
+(defun %parse-int-auto (s)
+  "Parse S the way libc inet_aton does: `0x`/`0X` prefix = hex, a leading `0` =
+   octal, otherwise decimal. Returns the integer or NIL."
+  (when (plusp (length s))
+    (cond
+      ((and (> (length s) 2) (char= (char s 0) #\0) (member (char s 1) '(#\x #\X)))
+       (ignore-errors (parse-integer s :start 2 :radix 16)))
+      ((and (> (length s) 1) (char= (char s 0) #\0))
+       (ignore-errors (parse-integer s :start 1 :radix 8)))
+      (t (ignore-errors (parse-integer s :radix 10))))))
+
 (defun %parse-ipv4-octets (host)
-  "Return the four integer octets of HOST if it is a dotted-quad IPv4 literal,
-   else NIL."
-  (let ((parts (uiop:split-string host :separator '(#\.))))
-    (when (= (length parts) 4)
-      (let ((octets (mapcar (lambda (p) (ignore-errors (parse-integer p))) parts)))
-        (when (every (lambda (o) (and (integerp o) (<= 0 o 255))) octets)
-          octets)))))
+  "Return the four octets (0-255) of HOST when it is any IPv4 literal that libc
+   (and therefore git/curl) accepts: dotted-quad, but also the octal/hex and
+   1-to-3-part short forms inet_aton recognizes. Classifying by the REAL address
+   is what stops numeric-encoding SSRF tricks (0177.0.0.1, 0x7f.0.0.1, 127.1,
+   2130706433) from slipping past the range check below. Returns NIL when HOST
+   is not a numeric IPv4 literal."
+  (let* ((parts (uiop:split-string host :separator '(#\.)))
+         (n (length parts)))
+    (when (and (<= 1 n 4) (notany (lambda (p) (zerop (length p))) parts))
+      (let ((nums (mapcar #'%parse-int-auto parts)))
+        (when (every #'integerp nums)
+          (let ((value
+                  (case n
+                    (1 (let ((a (first nums))) (when (<= 0 a #xffffffff) a)))
+                    (2 (destructuring-bind (a b) nums
+                         (when (and (<= 0 a 255) (<= 0 b #xffffff))
+                           (logior (ash a 24) b))))
+                    (3 (destructuring-bind (a b c) nums
+                         (when (and (<= 0 a 255) (<= 0 b 255) (<= 0 c #xffff))
+                           (logior (ash a 24) (ash b 16) c))))
+                    (4 (when (every (lambda (o) (<= 0 o 255)) nums)
+                         (destructuring-bind (a b c d) nums
+                           (logior (ash a 24) (ash b 16) (ash c 8) d)))))))
+            (when value
+              (list (ldb (byte 8 24) value) (ldb (byte 8 16) value)
+                    (ldb (byte 8 8) value)  (ldb (byte 8 0) value)))))))))
+
+(defun blocked-ipv4-octets-p (a b c d)
+  "True when IPv4 A.B.C.D is unspecified/loopback/private/link-local (incl. the
+   cloud metadata 169.254.0.0/16) — an SSRF target we refuse."
+  (declare (ignore c d))
+  (or (= a 0) (= a 127) (= a 10)
+      (and (= a 192) (= b 168))
+      (and (= a 172) (<= 16 b 31))
+      (and (= a 169) (= b 254))))
+
+(defun host-resolves-to-blocked-p (host)
+  "Best-effort: resolve HOST via DNS and return T if any resolved IPv4 address
+   is internal (loopback/private/link-local). Closes the common static
+   DNS-to-internal SSRF (a public name whose A record points inside). Fails open
+   on resolver error (a name that won't resolve won't connect either) and does
+   NOT defend against active DNS rebinding — pair with disabled redirects.
+   IPv6-only names are not range-checked here; literal IPv6 targets are still
+   caught by BLOCKED-REMOTE-HOST-P."
+  (handler-case
+      (some (lambda (addr)
+              (and (vectorp addr) (= (length addr) 4)
+                   (blocked-ipv4-octets-p (aref addr 0) (aref addr 1)
+                                          (aref addr 2) (aref addr 3))))
+            (usocket:get-hosts-by-name host))
+    (error () nil)))
 
 (defun blocked-remote-host-p (host)
   "True when HOST is a loopback/link-local/private/internal target we refuse to
@@ -592,15 +647,16 @@ Returns a markdown string, or NIL when there is nothing to report."
              (or (uiop:string-prefix-p "fc" h) (uiop:string-prefix-p "fd" h)
                  (uiop:string-prefix-p "fe8" h) (uiop:string-prefix-p "fe9" h)
                  (uiop:string-prefix-p "fea" h) (uiop:string-prefix-p "feb" h)))
-        ;; IPv4 unspecified / loopback / private / link-local (incl. cloud metadata)
+        ;; IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) — check the embedded IPv4.
+        (and (find #\: h) (find #\. h)
+             (let ((o (%parse-ipv4-octets
+                       (subseq h (1+ (position #\: h :from-end t))))))
+               (and o (apply #'blocked-ipv4-octets-p o))))
+        ;; IPv4 unspecified / loopback / private / link-local (incl. cloud metadata).
+        ;; %PARSE-IPV4-OCTETS normalizes octal/hex/short forms to the real address.
         (let ((o (%parse-ipv4-octets h)))
           (when o
-            (destructuring-bind (a b c d) o
-              (declare (ignore c d))
-              (or (= a 0) (= a 127) (= a 10)
-                  (and (= a 192) (= b 168))
-                  (and (= a 172) (<= 16 b 31))
-                  (and (= a 169) (= b 254)))))))))
+            (apply #'blocked-ipv4-octets-p o))))))
 
 (defun safe-remote-url-p (url)
   "True when URL is a remote we are willing to fetch from / deliver to: an
@@ -615,7 +671,10 @@ Returns a markdown string, or NIL when there is nothing to report."
              (member scheme '("http" "https" "git" "ssh") :test #'string-equal)
              (stringp host)
              (plusp (length host))
-             (not (blocked-remote-host-p host))))
+             (not (blocked-remote-host-p host))
+             ;; Resolve names too, so a public host whose A record points at an
+             ;; internal address (static DNS-to-internal) is rejected as well.
+             (not (host-resolves-to-blocked-p host))))
     (error () nil)))
 
 (defun ensure-safe-remote-url (url)
