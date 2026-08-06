@@ -120,5 +120,14 @@ fi
 # pushes keeps object/pack ownership consistent. sshd stays root (started above);
 # only this final process drops. HOME is set explicitly so git reads the cave
 # user's ~/.gitconfig (safe.directory, identity) rather than root's.
+#
+# catatonit is pid 1 as a reaping init (issue #23). The post-receive hook syncs
+# mirrors via a backgrounded `cave-server sync-mirrors &`; when the push session
+# ends that process is orphaned to pid 1, and any git child of a thread that died
+# mid-push reparents there too. A bare `runuser`/`cave-server` pid 1 does not reap
+# adopted zombies, so those defunct entries accumulate until the container's PID
+# budget is spent and it stops forking git-SSH handlers. catatonit reaps them and
+# forwards SIGTERM for a clean shutdown.
 cd /opt/cave
-exec /usr/sbin/runuser -u cave -- env HOME=/home/cave cave-server serve --config "$CONFIG"
+exec /usr/libexec/catatonit/catatonit -- \
+  /usr/sbin/runuser -u cave -- env HOME=/home/cave cave-server serve --config "$CONFIG"

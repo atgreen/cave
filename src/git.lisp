@@ -6,7 +6,7 @@
 
 ;;; Shell out to git for all operations. Simple and correct.
 
-(defun %git-run (repo-path args &key network)
+(defun %git-run (repo-path args &key network timeout)
   "Run `git -C REPO-PATH ARGS` under the Landlock sandbox. When NETWORK is true,
    network egress is allowed (for git operations that contact an external
    remote); filesystem confinement to REPO-PATH is unchanged either way.
@@ -17,12 +17,35 @@
    `safe.directory = *` in root's global gitconfig, but the sandbox does not
    grant $HOME, so the sandboxed git can't read it. The flag carries the same
    exception on the command line. The sandbox already confines the filesystem to
-   REPO-PATH, so trusting `*` grants no extra reach."
-  (let ((cmd (sandbox-wrap repo-path
-                           (append (list "git" "-c" "safe.directory=*"
-                                         "-C" (namestring repo-path))
-                                   args)
-                           :network network)))
+   REPO-PATH, so trusting `*` grants no extra reach.
+
+   TIMEOUT (seconds), when set, wraps the subprocess in `timeout(1)` so a hung
+   network op can't block forever and leak its child (issue #23): a `git push`
+   to an unreachable remote never exits, so the blocking run-program below never
+   returns and the git process is never reaped — accumulate enough and the
+   container's fork budget is spent and it stops accepting pushes. On expiry git
+   gets SIGTERM, then SIGKILL after a 10s grace; landrun execs git in place, so
+   the signal reaches git directly and git's exit tears down its transport
+   helper. NETWORK ops additionally set git's low-speed abort so a *stalled*
+   transfer (the common GitHub-briefly-unreachable case) fails on its own after
+   ~60s and exits cleanly — run-program reaps it normally, no kill needed. The
+   hard timeout is the backstop for hangs low-speed can't see: a connect/TLS
+   handshake that never completes, where no bytes ever flow."
+  (let* ((net-cfg (when network
+                    ;; Abort a transfer that drops below 1 KB/s for 60s.
+                    (list "-c" "http.lowSpeedLimit=1000"
+                          "-c" "http.lowSpeedTime=60")))
+         (git-cmd (append (list "git" "-c" "safe.directory=*")
+                          net-cfg
+                          (list "-C" (namestring repo-path))
+                          args))
+         (sandboxed (sandbox-wrap repo-path git-cmd :network network))
+         ;; timeout(1) runs outside landrun and execs it; landrun then execs git
+         ;; in place, so timeout tracks and signals the git PID directly.
+         (cmd (if timeout
+                  (list* "/usr/sbin/timeout" "--kill-after=10"
+                         (format nil "~D" timeout) sandboxed)
+                  sandboxed)))
     (multiple-value-bind (output error-output exit-code)
         (uiop:run-program cmd
                           :output '(:string :stripped t)
@@ -42,12 +65,21 @@
    Returns (VALUES output error-output exit-code)."
   (%git-run repo-path args))
 
+(defparameter *git-net-timeout* 600
+  "Hard wall-clock cap (seconds) for a single network git op, enforced with
+   timeout(1). The backstop for hangs git's low-speed abort can't see — a
+   stalled connect/TLS handshake where no bytes ever flow — so a mirror
+   push/fetch to an unreachable remote can't block forever and leak its
+   subprocess (issue #23). Generous so a legitimately large initial mirror push
+   isn't killed; a stalled transfer is caught far sooner (~60s) by low-speed.")
+
 (defun git-run-net (repo-path &rest args)
   "Like GIT-RUN but with network egress allowed — for git operations that
    contact an external remote (mirror push/pull, fetch-from-url). The sandbox
    still confines the filesystem to REPO-PATH, so a compromised git process
-   reaches only this repo, not other repos or host secrets."
-  (%git-run repo-path args :network t))
+   reaches only this repo, not other repos or host secrets. Bounded by
+   *GIT-NET-TIMEOUT* so a hung remote can't leak the git subprocess (issue #23)."
+  (%git-run repo-path args :network t :timeout *git-net-timeout*))
 
 (defun %resolve-exe (prog)
   "Resolve a bare program name to an absolute path. landrun execs ARGV[0]
@@ -683,7 +715,16 @@ deleted on cave is no longer deleted on the mirror."
                      "+refs/heads/*:refs/heads/*"
                      "+refs/tags/*:refs/tags/*")
       (declare (ignore output))
-      (values (zerop exit-code) err))))
+      ;; timeout(1) exits 124 (SIGTERM took) or 137 (128+9, SIGKILL grace fired)
+      ;; when it kills a hung push; git's own stderr is empty in that case, so
+      ;; synthesize a clear reason rather than logging a blank error.
+      (values (zerop exit-code)
+              (if (and (not (zerop exit-code))
+                       (member exit-code '(124 137))
+                       (uiop:emptyp err))
+                  (format nil "mirror push timed out after ~Ds (remote unreachable)"
+                          *git-net-timeout*)
+                  err)))))
 
 (defun git-pull-mirror (repo-path remote-url &optional auth-token)
   "Fetch all refs from a remote URL into a bare repo.
