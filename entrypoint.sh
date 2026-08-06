@@ -84,12 +84,19 @@ chown cave:cave /home/cave/.ssh/authorized_keys 2>/dev/null || true
 # Ensure cave user owns data dirs and repos
 chown -R cave:cave /var/lib/cave
 
+# serve runs as the cave user (see below), so the zoekt index dir must be
+# cave-writable. A freshly-mounted volume can come up root-owned — chown the
+# mount point so indexing works. Non-recursive: it stays cave-owned thereafter.
+chown cave:cave /data/zoekt-index 2>/dev/null || true
+
 # Trust all cave repos (ownership may differ between init and runtime)
 # Set for both root (Cave server) and cave user (SSH/git-shell)
 git config --global --add safe.directory '*'
 git config --global user.email "cave@localhost"
 git config --global user.name "Cave"
 su -c "git config --global --add safe.directory '*'" cave
+su -c "git config --global user.email 'cave@localhost'" cave
+su -c "git config --global user.name 'Cave'" cave
 
 # Persist SSH host keys across restarts
 if [ ! -f /var/lib/cave/ssh_host_ed25519_key ]; then
@@ -103,6 +110,15 @@ fi
 # Start sshd
 /usr/sbin/sshd
 
-# Start Cave (foreground) — run from /opt/cave so static/ is found
+# Start Cave (foreground) — run from /opt/cave so static/ is found.
+#
+# Run serve as the non-root `cave` user (issue #22). Pushes arrive over SSH and
+# run as `cave`; if serve ran as root, PR merges — and the `git gc --auto` they
+# trigger — would write root-owned objects/packs into repos, and the next push's
+# quarantine migration could no longer write into them ("unable to migrate
+# objects to permanent storage"). Sharing one uid across merges, auto-gc, and
+# pushes keeps object/pack ownership consistent. sshd stays root (started above);
+# only this final process drops. HOME is set explicitly so git reads the cave
+# user's ~/.gitconfig (safe.directory, identity) rather than root's.
 cd /opt/cave
-exec cave-server serve --config "$CONFIG"
+exec /usr/sbin/runuser -u cave -- env HOME=/home/cave cave-server serve --config "$CONFIG"
