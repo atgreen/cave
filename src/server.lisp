@@ -197,12 +197,17 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
   "Not found")
 
 (defun sanitize-next-url (next-url)
-  "Return NEXT-URL when it is a safe in-app redirect target, otherwise \"/\"."
+  "Return NEXT-URL when it is a safe in-app redirect target, otherwise \"/\".
+   Only a same-origin absolute path is allowed: a leading '/', not '//' (a
+   scheme-relative URL to another host), and no backslash (browsers normalize
+   '\\' to '/', so '/\\evil.com' would otherwise resolve to '//evil.com'), and
+   no CR/LF (header injection)."
   (if (and next-url
            (> (length next-url) 0)
            (char= (char next-url 0) #\/)
            (or (= (length next-url) 1)
                (not (char= (char next-url 1) #\/)))
+           (not (find #\\ next-url))
            (not (find #\Newline next-url))
            (not (find #\Return next-url)))
       next-url
@@ -1606,9 +1611,19 @@ leaking the viewer's IP or breaking HTTPS."
           (hunchentoot:redirect (format nil "/~A/~A" username repo-name)))))))
 
 ;; Tree (directory) browsing
+(defun %valid-git-ref-name-p (name)
+  "Permissive git branch/tag name check: 1–255 chars, allowed chars only, no
+   leading dash, no '..'. The git command runs argv-style (no shell), so this
+   just guards against flag-injection and obviously bad names."
+  (and (stringp name) (plusp (length name)) (<= (length name) 255)
+       (not (char= (char name 0) #\-))
+       (not (search ".." name))
+       (every (lambda (c) (or (alphanumericp c) (member c '(#\_ #\- #\. #\/)))) name)))
+
 (easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from tree-page repo))
+    (unless (%valid-git-ref-name-p ref) (return-from tree-page (not-found)))
     (let* ((path (or (hunchentoot:get-parameter "path") ""))
            (file-tree (chamber-get-tree owner repo-name :ref ref :path path))
            (default-branch (or (chamber-get-default-branch owner repo-name) "main"))
@@ -1623,15 +1638,6 @@ leaking the viewer's IP or breaking HTTPS."
                   :branches branches :tags tags
                   :default-branch default-branch
                   :last-commits last-commits)))))
-
-(defun %valid-git-ref-name-p (name)
-  "Permissive git branch/tag name check: 1–255 chars, allowed chars only, no
-   leading dash, no '..'. The git command runs argv-style (no shell), so this
-   just guards against flag-injection and obviously bad names."
-  (and (stringp name) (plusp (length name)) (<= (length name) 255)
-       (not (char= (char name 0) #\-))
-       (not (search ".." name))
-       (every (lambda (c) (or (alphanumericp c) (member c '(#\_ #\- #\. #\/)))) name)))
 
 (easy-routes:defroute create-branch-route ("/:owner/:repo-name/branches" :method :post) ()
   (when (require-login)
@@ -1662,6 +1668,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute blob-page ("/:owner/:repo-name/blob/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from blob-page repo))
+    (unless (%valid-git-ref-name-p ref) (return-from blob-page (not-found)))
     (let* ((path (or (hunchentoot:get-parameter "path") ""))
            (info (chamber-get-blob-info owner repo-name ref path)))
       ;; If not found, might be a directory — redirect to tree view
@@ -1768,6 +1775,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
   (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
     (unless repo (return-from raw-page repo))
+    (unless (%valid-git-ref-name-p ref) (return-from raw-page (not-found)))
     (let* ((path (or (hunchentoot:get-parameter "path") ""))
            (mime (raw-mime-type path))
            (info (chamber-get-blob-info owner repo-name ref path)))
@@ -1822,6 +1830,8 @@ leaking the viewer's IP or breaking HTTPS."
            (clean-hash (cond (is-patch (subseq hash 0 (- (length hash) 6)))
                              (is-diff (subseq hash 0 (- (length hash) 5)))
                              (t hash))))
+      (unless (%valid-git-ref-name-p clean-hash)
+        (return-from commit-page (not-found)))
       (cond
         ;; .patch — git format-patch output
         (is-patch
