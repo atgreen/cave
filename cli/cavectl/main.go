@@ -191,7 +191,7 @@ func cmdInit(args []string) error {
 		return err
 	}
 	header := fmt.Sprintf("# Cave instance: %s\n# Edit this file and run: cavectl apply\n\n", name)
-	if err := os.WriteFile(file, []byte(header+string(data)), 0644); err != nil {
+	if err := os.WriteFile(file, []byte(header+string(data)), 0600); err != nil {
 		return err
 	}
 

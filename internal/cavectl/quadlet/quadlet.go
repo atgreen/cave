@@ -36,7 +36,7 @@ func Install(cfg *config.Config) error {
 	units := generate(cfg)
 	for name, content := range units {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			return fmt.Errorf("writing %s: %w", name, err)
 		}
 	}
