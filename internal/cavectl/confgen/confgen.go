@@ -36,12 +36,14 @@ func Generate(cfg *config.Config) string {
 	// OIDC config
 	if cfg.OIDCEnabled() {
 		switch cfg.Auth.Mode {
-		case "keycloak":
-			internalURL := fmt.Sprintf("http://%s:8080/realms/cave", cfg.ContainerName("keycloak"))
-			ws("oidc-issuer", cfg.Cave.BaseURL+"/realms/cave") // placeholder — user sets base URL
-			ws("oidc-issuer-internal", internalURL)
+		case "local":
+			// Embedded Usher: cave hosts its own OIDC provider. The browser
+			// reaches it at the public base URL; cave itself calls its own
+			// in-container HTTP port.
+			ws("oidc-issuer", cfg.Cave.BaseURL)
+			ws("oidc-issuer-internal", "http://localhost:8080")
 			ws("oidc-client-id", "cave")
-			ws("oidc-client-secret", "")
+			ws("oidc-client-secret", cfg.Auth.OIDC.ClientSecret)
 		case "oidc":
 			ws("oidc-issuer", cfg.Auth.OIDC.Issuer)
 			ws("oidc-issuer-internal", cfg.Auth.OIDC.Issuer)

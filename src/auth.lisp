@@ -14,7 +14,7 @@
     `(let ((,var ,expr))
        (when ,var ,@body))))
 
-;;; --- OIDC (Keycloak) ---
+;;; --- OIDC (relying-party client for the embedded Usher provider) ---
 
 (defun generate-oidc-state ()
   "Generate a random state parameter for OIDC CSRF protection."
@@ -318,7 +318,7 @@
 
 (defun usher-add-user (username password &key email display-name admin)
   "Provision (or update) a local Usher user; optionally grant cave-admin.
-   For manually migrating accounts off Keycloak."
+   For provisioning or bootstrapping local Usher accounts."
   (let* ((store (usher:provider-store usher::*provider*))
          (user (or (usher:store-find-user-by-username store username)
                    (let ((u (usher:make-user :subject (usher:random-uuid)

@@ -158,10 +158,27 @@
                               (if (and err (plusp (length err)))
                                   (concatenate 'string (string #\Newline) err) "")))))
 
+(defun %safe-object-key (path)
+  "Return PATH as a store-relative object key, or signal an error. Rejects
+   absolute paths and any `..` component so a caller-supplied object-path (e.g. a
+   runner's RegisterArtifact object_path) cannot escape the store root and turn
+   the artifact-download route into an arbitrary host-file read (CWE-22). In CL,
+   `merge-pathnames' of an absolute PATH ignores the root entirely, and a `..'
+   is resolved by the OS on copy — both must be refused here."
+  (let ((s (princ-to-string path)))
+    (when (or (zerop (length s))
+              (eql (char s 0) #\/)
+              (find #\Nul s)
+              (member ".." (uiop:split-string s :separator '(#\/ #\\))
+                      :test #'string=))
+      (error "unsafe object path: ~S" s))
+    s))
+
 (defun %store-path (store path)
-  (ecase (getf store :backend)
-    (:dir (merge-pathnames path (uiop:ensure-directory-pathname (getf store :root))))
-    (:s3 (format nil "~A/~A" (getf store :base) path))))
+  (let ((path (%safe-object-key path)))
+    (ecase (getf store :backend)
+      (:dir (merge-pathnames path (uiop:ensure-directory-pathname (getf store :root))))
+      (:s3 (format nil "~A/~A" (getf store :base) path)))))
 
 (defun %store-exists (store path)
   "True if object PATH exists in STORE."

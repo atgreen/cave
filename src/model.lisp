@@ -1158,6 +1158,18 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
       :set 'outputs outputs-json
       :where (:= 'id job-id)))))
 
+(defun runner-owns-run-p (runner-id run-id)
+  "True when RUNNER-ID was assigned a job of workflow run RUN-ID. Authorization
+   gate for artifact registration — a runner may only attach artifacts to a run
+   it actually worked on, never to an arbitrary run it names over gRPC."
+  (and runner-id (integerp run-id) (plusp run-id)
+       (postmodern:query
+        (:limit (:select 'id :from 'cave-workflow-jobs
+                 :where (:and (:= 'workflow-run-id run-id)
+                              (:= 'runner-id runner-id)))
+                1)
+        :single)))
+
 (defun create-artifact (&key workflow-run-id job-id name object-path (size-bytes 0))
   "Record an artifact for a run (replacing any existing one of the same name).
    Returns the row plist."

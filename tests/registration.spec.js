@@ -1,48 +1,38 @@
-// Test self-registration with email verification via Keycloak + Mailpit
+// Self-registration via Cave's native /-/register (embedded Usher).
+// The account is created in Usher and awaits admin approval before first sign-in.
+// (Unlike the old Keycloak flow, Cave's register does not send a verification
+// email — email verification is a separate Usher concern, not exercised here.)
 const { test, expect } = require("@playwright/test");
 const { screenshot } = require("./helpers");
 
-const MAILPIT = process.env.MAILPIT_URL || "http://localhost:8025";
-
-test("new user registration sends verification email", async ({ page }) => {
-  // Navigate to login, which redirects to Keycloak
-  await page.goto("/-/auth/login");
-  await page.waitForSelector("#kc-login");
-
-  // Click the Register link
-  await page.click('a:has-text("Register")');
-  await page.waitForSelector("#firstName");
-
-  // Fill registration form
+test("self-registration creates an account and rejects duplicates", async ({ page }) => {
   const suffix = Date.now().toString(36);
-  const email = `testuser-${suffix}@example.com`;
-  await page.fill("#firstName", "Test");
-  await page.fill("#lastName", "User");
-  await page.fill("#email", email);
-  await page.fill("#username", `testuser-${suffix}`);
-  await page.fill("#password", "testpass123");
-  await page.fill("#password-confirm", "testpass123");
+  const username = `testuser-${suffix}`;
+  const email = `${username}@example.com`;
 
+  // Registration form loads.
+  await page.goto("/-/register");
+  await expect(page.locator("h1")).toHaveText("Create an account");
   await screenshot(page, "registration-form");
 
-  // Submit registration
+  // A valid new registration succeeds and redirects to sign-in. Cave's
+  // /-/register redirects to /-/auth/login, which (being logged-out) immediately
+  // redirects on to the embedded Usher /authorize sign-in page, so that is the
+  // URL we land on.
+  await page.fill('input[name="username"]', username);
+  await page.fill('input[name="email"]', email);
+  await page.fill('input[name="password"]', "testpass123");
   await Promise.all([
-    page.waitForNavigation(),
-    page.click('input[type="submit"], button[type="submit"]'),
+    page.waitForURL("**/authorize**"),
+    page.click('button[type="submit"]'),
   ]);
 
-  await screenshot(page, "verify-email-page");
-
-  // Check that the verify-email page is shown
-  const content = await page.textContent("body");
-  expect(content).toContain("verify your email");
-
-  // Check Mailpit received the verification email
-  const response = await fetch(`${MAILPIT}/api/v1/messages`);
-  const data = await response.json();
-  expect(data.messages.length).toBeGreaterThan(0);
-
-  const lastMessage = data.messages[0];
-  expect(lastMessage.To[0].Address).toBe(email);
-  expect(lastMessage.Subject).toContain("Verify email");
+  // Re-registering the same username is rejected.
+  await page.goto("/-/register");
+  await page.fill('input[name="username"]', username);
+  await page.fill('input[name="email"]', email);
+  await page.fill('input[name="password"]', "testpass123");
+  await page.click('button[type="submit"]');
+  await expect(page.locator("body")).toContainText("already taken");
+  await screenshot(page, "registration-duplicate");
 });

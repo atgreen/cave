@@ -8,11 +8,11 @@ Thanks for your interest in contributing to Cave.
 # Build
 make
 
-# Start the dev environment (Cave + Postgres + Keycloak + Mailpit)
+# Start the dev environment (Cave + Postgres + Mailpit; auth is Cave's
+# in-process Usher OIDC provider — no external IdP)
 make podman-up
 
-# Open Cave at http://localhost:8080
-# Keycloak admin at http://localhost:8180 (admin/admin)
+# Open Cave at http://localhost:8080 and sign in as admin/admin
 ```
 
 See the [README](README.md) for full setup instructions.

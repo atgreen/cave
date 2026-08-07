@@ -52,29 +52,18 @@ func Backup(cfg *config.Config, rt runtime.Runtime, backupDir string) (string, e
 		return "", fmt.Errorf("pg_dump cave: %w", err)
 	}
 
-	// 2. Dump keycloak database (optional)
-	if cfg.KeycloakEnabled() {
-		fmt.Println("  Dumping keycloak database...")
-		err := rt.ExecToFile(pgName,
-			[]string{"pg_dump", "-U", "cave", "-d", "keycloak", "--format=custom"},
-			filepath.Join(snapshot, "keycloak.pgdump"))
-		if err != nil {
-			fmt.Println("    (no keycloak DB, skipping)")
-		}
-	}
-
-	// 3. Copy git repos
+	// 2. Copy git repos
 	fmt.Println("  Backing up git repositories...")
 	err = rt.Copy(caveName+":/var/lib/cave/repos", filepath.Join(snapshot, "repos"))
 	if err != nil {
 		fmt.Println("    (no repos directory)")
 	}
 
-	// 4. Copy config
+	// 3. Copy config
 	fmt.Println("  Backing up config...")
 	rt.Copy(caveName+":/etc/cave.conf", filepath.Join(snapshot, "cave.conf"))
 
-	// 5. Copy cave.yaml if it exists next to where we're running
+	// 4. Copy cave.yaml if it exists next to where we're running
 	for _, yamlName := range []string{prefix + ".yaml", "cave.yaml"} {
 		if _, err := os.Stat(yamlName); err == nil {
 			data, _ := os.ReadFile(yamlName)
@@ -83,11 +72,11 @@ func Backup(cfg *config.Config, rt runtime.Runtime, backupDir string) (string, e
 		}
 	}
 
-	// 6. Copy SSH authorized_keys
+	// 5. Copy SSH authorized_keys
 	rt.Copy(caveName+":/home/cave/.ssh/authorized_keys",
 		filepath.Join(snapshot, "authorized_keys"))
 
-	// 7. Metadata
+	// 6. Metadata
 	caveVersion, _ := rt.Exec(caveName, []string{"cave", "--version"})
 	pgVersion, _ := rt.Exec(pgName, []string{"postgres", "--version"})
 	schemaVersion, _ := rt.Exec(pgName, []string{"psql", "-U", "cave", "-d", "cave", "-Atc",
@@ -123,7 +112,7 @@ repo_count: %d
 	os.WriteFile(filepath.Join(snapshot, "metadata.txt"), []byte(metadata), 0644)
 	fmt.Print("\n" + metadata)
 
-	// 8. Compress
+	// 7. Compress
 	archiveName := fmt.Sprintf("%s-%s.tar.gz", prefix, timestamp)
 	archivePath := filepath.Join(backupDir, archiveName)
 	cmd := exec.Command("tar", "-czf", archivePath, "-C", workDir, snapshotName)
@@ -131,7 +120,7 @@ repo_count: %d
 		return "", fmt.Errorf("creating archive: %w", err)
 	}
 
-	// 9. Prune old backups
+	// 8. Prune old backups
 	pruneBackups(backupDir, prefix)
 
 	return archivePath, nil

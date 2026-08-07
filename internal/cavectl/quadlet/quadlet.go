@@ -36,7 +36,7 @@ func Install(cfg *config.Config) error {
 	units := generate(cfg)
 	for name, content := range units {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			return fmt.Errorf("writing %s: %w", name, err)
 		}
 	}
@@ -63,9 +63,6 @@ func Install(cfg *config.Config) error {
 func Enable(cfg *config.Config) error {
 	prefix := cfg.Runtime.Prefix
 	services := []string{prefix + "-pg", prefix}
-	if cfg.KeycloakEnabled() {
-		services = append(services, prefix+"-keycloak")
-	}
 	if cfg.Zoekt.Enabled {
 		services = append(services, prefix+"-zoekt-web")
 	}
@@ -156,48 +153,6 @@ WantedBy=default.target
 			prefix, prefix, cfg.Database.Password, prefix)
 	}
 
-	// Keycloak
-	if cfg.KeycloakEnabled() {
-		var kcHostnameLines strings.Builder
-		if cfg.Auth.Keycloak.PublicURL != "" {
-			kcHostnameLines.WriteString(fmt.Sprintf("Environment=KC_HOSTNAME=%s\n", cfg.Auth.Keycloak.PublicURL))
-			kcHostnameLines.WriteString("Environment=KC_PROXY_HEADERS=xforwarded\n")
-			kcHostnameLines.WriteString("Environment=KC_HTTP_ENABLED=true\n")
-		}
-		units[prefix+"-keycloak.container"] = fmt.Sprintf(`[Unit]
-Description=Cave Keycloak (%s)
-After=%s-pg.service
-Requires=%s-pg.service
-
-[Container]
-ContainerName=%s
-Image=%s
-Network=%s.network
-PodmanArgs=--no-hosts
-PublishPort=127.0.0.1:%d:8080
-Environment=KC_DB=postgres
-Environment=KC_DB_URL=jdbc:postgresql://%s:5432/keycloak
-Environment=KC_DB_USERNAME=cave
-Environment=KC_DB_PASSWORD=%s
-%sEnvironment=KEYCLOAK_ADMIN=%s
-Environment=KEYCLOAK_ADMIN_PASSWORD=%s
-Exec=start-dev
-Label=cave.managed-by=cavectl
-Label=cave.instance=%s
-
-[Service]
-Restart=always
-
-[Install]
-WantedBy=default.target
-`, prefix, prefix, prefix,
-			cfg.ContainerName("keycloak"), cfg.Auth.Keycloak.Image,
-			prefix, cfg.Ports.Keycloak,
-			cfg.ContainerName("pg"), cfg.Database.Password,
-			kcHostnameLines.String(),
-			cfg.Auth.Keycloak.AdminUser, cfg.Auth.Keycloak.AdminPassword, prefix)
-	}
-
 	// Cave
 	var caveAfter, caveRequires string
 	if cfg.Database.Mode == "local" {
@@ -227,16 +182,14 @@ WantedBy=default.target
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_ZOEKT_WEB_URL=http://%s:6070\n", cfg.ContainerName("zoekt-web")))
 	}
 
-	if cfg.Auth.Mode == "keycloak" {
-		issuer := fmt.Sprintf("http://localhost:%d/realms/cave", cfg.Ports.Keycloak)
-		if cfg.Auth.Keycloak.PublicURL != "" {
-			issuer = strings.TrimRight(cfg.Auth.Keycloak.PublicURL, "/") + "/realms/cave"
-		}
-		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=%s\n", issuer))
-		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER_INTERNAL=http://%s:8080/realms/cave\n", cfg.ContainerName("keycloak")))
+	if cfg.Auth.Mode == "local" {
+		// Embedded Usher: cave hosts its own OIDC provider. Browser reaches it
+		// at the public base URL; cave calls its own in-container HTTP port.
+		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=%s\n", cfg.Cave.BaseURL))
+		envLines.WriteString("Environment=CAVE_OIDC_ISSUER_INTERNAL=http://localhost:8080\n")
 		envLines.WriteString("Environment=CAVE_OIDC_CLIENT_ID=cave\n")
-		if cfg.Auth.Keycloak.ClientSecret != "" {
-			envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_CLIENT_SECRET=%s\n", cfg.Auth.Keycloak.ClientSecret))
+		if cfg.Auth.OIDC.ClientSecret != "" {
+			envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_CLIENT_SECRET=%s\n", cfg.Auth.OIDC.ClientSecret))
 		}
 	} else if cfg.Auth.Mode == "oidc" {
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=%s\n", cfg.Auth.OIDC.Issuer))

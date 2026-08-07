@@ -159,8 +159,6 @@ func cmdInit(args []string) error {
 	usedPorts[httpPort] = true
 	sshPort := findFreePort(9222, usedPorts)
 	usedPorts[sshPort] = true
-	keycloakPort := findFreePort(9180, usedPorts)
-	usedPorts[keycloakPort] = true
 	mailpitPort := findFreePort(9025, usedPorts)
 	usedPorts[mailpitPort] = true
 	grpcPort := findFreePort(9443, usedPorts)
@@ -171,13 +169,12 @@ func cmdInit(args []string) error {
 	cfg.Runtime.Network = name + "-net"
 	cfg.Ports.HTTP = httpPort
 	cfg.Ports.SSH = sshPort
-	cfg.Ports.Keycloak = keycloakPort
 	cfg.Ports.Mailpit = mailpitPort
 	cfg.Ports.GRPC = grpcPort
 	cfg.Cave.BaseURL = fmt.Sprintf("http://localhost:%d", httpPort)
 	cfg.Cave.SecretKey = instance.RandomSecretKey()
 	cfg.Database.Password = instance.RandomPassword(24)
-	cfg.Auth.Keycloak.ClientSecret = instance.RandomPassword(32)
+	cfg.Auth.OIDC.ClientSecret = instance.RandomPassword(32)
 
 	// Pre-flight: check for existing containers/volumes that aren't ours
 	if err := checkForCollisions(cfg, rt); err != nil {
@@ -194,7 +191,7 @@ func cmdInit(args []string) error {
 		return err
 	}
 	header := fmt.Sprintf("# Cave instance: %s\n# Edit this file and run: cavectl apply\n\n", name)
-	if err := os.WriteFile(file, []byte(header+string(data)), 0644); err != nil {
+	if err := os.WriteFile(file, []byte(header+string(data)), 0600); err != nil {
 		return err
 	}
 
@@ -255,7 +252,7 @@ func cmdInit(args []string) error {
 
 func checkForCollisions(cfg *config.Config, rt runtime.Runtime) error {
 	// Check containers
-	for _, svc := range []string{"cave", "pg", "keycloak", "zoekt-web"} {
+	for _, svc := range []string{"cave", "pg", "zoekt-web"} {
 		name := cfg.ContainerName(svc)
 		info, err := rt.Inspect(name)
 		if err != nil {
@@ -539,7 +536,7 @@ func cmdDestroy(args []string) error {
 			services = append(services, fmt.Sprintf("runner-%d", i))
 		}
 	}
-	services = append(services, "zoekt-web", "keycloak", "pg")
+	services = append(services, "zoekt-web", "pg")
 	for _, svc := range services {
 		name := cfg.ContainerName(svc)
 		info, _ := rt.Inspect(name)

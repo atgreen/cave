@@ -49,7 +49,7 @@ test-workflow: ## Run org/repo workflow tests only
 
 # --- Podman (local dev) ---
 
-podman-up: cave-server cave ## Build container and start cave-server + postgres + keycloak via podman
+podman-up: cave-server cave ## Build container and start cave-server + postgres + mailpit (embedded Usher auth) via podman
 	podman network exists cave-net 2>/dev/null || podman network create cave-net
 	podman container exists cave-pg 2>/dev/null || \
 		podman run -d --name cave-pg --network cave-net \
@@ -60,47 +60,35 @@ podman-up: cave-server cave ## Build container and start cave-server + postgres 
 			podman exec cave-pg pg_isready -U cave -q 2>/dev/null && break; \
 			sleep 1; \
 		done
-	podman exec cave-pg psql -U cave -tc "SELECT 1 FROM pg_database WHERE datname='keycloak'" | grep -q 1 || \
-		podman exec cave-pg psql -U cave -c "CREATE DATABASE keycloak"
 	podman container exists mailpit 2>/dev/null || \
 		podman run -d --name mailpit --network cave-net \
 			-p 8025:8025 \
 			docker.io/axllent/mailpit:latest
-	podman container exists cave-keycloak 2>/dev/null || \
-		podman run -d --name cave-keycloak --network cave-net \
-			-p 8180:8080 \
-			-e KC_DB=postgres \
-			-e KC_DB_URL=jdbc:postgresql://cave-pg:5432/keycloak \
-			-e KC_DB_USERNAME=cave \
-			-e KC_DB_PASSWORD=cave \
-			-e KC_HOSTNAME=http://localhost:8180 \
-			-e KC_HOSTNAME_STRICT=false \
-			-e KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true \
-			-e KC_HTTP_ENABLED=true \
-			-e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
-			-e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-			-v $(CURDIR)/keycloak/cave-realm.json:/opt/keycloak/data/import/cave-realm.json:ro,z \
-			-v $(CURDIR)/keycloak/themes/cave:/opt/keycloak/themes/cave:ro,z \
-			quay.io/keycloak/keycloak:26.0 start-dev --import-realm
-	$(CURDIR)/keycloak/configure-realm.sh http://localhost:8180
 	podman build -t cave -f Containerfile.local .
 	podman stop cave 2>/dev/null; podman rm cave 2>/dev/null; true
 	podman run -d --name cave --network cave-net \
 		-p 8080:8080 -p 2222:22 \
 		-e CAVE_DB_HOST=cave-pg \
-		-e CAVE_OIDC_ISSUER=http://localhost:8180/realms/cave \
-		-e CAVE_OIDC_ISSUER_INTERNAL=http://cave-keycloak:8080/realms/cave \
+		-e CAVE_OIDC_ISSUER=http://localhost:8080 \
+		-e CAVE_OIDC_ISSUER_INTERNAL=http://localhost:8080 \
 		-e CAVE_OIDC_CLIENT_ID=cave \
 		-e CAVE_OIDC_CLIENT_SECRET=cave-dev-secret \
 		-e CAVE_BASE_URL=http://localhost:8080 \
 		-v cave-data:/var/lib/cave cave:latest
-	@echo "\n  Cave:     http://localhost:8080"
-	@echo "  Keycloak: http://localhost:8180  (admin/admin)"
+	@echo "Waiting for Cave to come up..."; \
+		for i in $$(seq 1 60); do \
+			curl -sf -o /dev/null http://localhost:8080/ 2>/dev/null && break; \
+			sleep 1; \
+		done
+	@echo "Bootstrapping admin user (admin/admin)..."; \
+		podman exec cave cave-server usher-add-user --config /etc/cave.conf \
+			--username admin --password admin --email admin@example.com --admin
+	@echo "\n  Cave:     http://localhost:8080  (admin/admin — embedded Usher OIDC)"
 	@echo "  Mailpit:  http://localhost:8025"
 
-podman-down: ## Stop and remove cave + postgres + keycloak + mailpit containers
-	podman stop cave cave-keycloak mailpit cave-pg 2>/dev/null; true
-	podman rm cave cave-keycloak mailpit cave-pg 2>/dev/null; true
+podman-down: ## Stop and remove cave + postgres + mailpit containers
+	podman stop cave mailpit cave-pg 2>/dev/null; true
+	podman rm cave mailpit cave-pg 2>/dev/null; true
 
 podman-rebuild: podman-down podman-up ## Tear down and rebuild everything
 
@@ -173,8 +161,7 @@ prod-install: ## Install quadlet units for production (systemd --user)
 	cp deploy/quadlet/*.container deploy/quadlet/*.volume deploy/quadlet/*.network $(QUADLET_DIR)/
 	systemctl --user daemon-reload
 	@echo "Quadlet units installed. Run 'make prod-start' to start."
-	@echo "\n  Cave:     http://localhost:9080"
-	@echo "  Keycloak: http://localhost:9180"
+	@echo "\n  Cave:     http://localhost:9080  (embedded Usher OIDC)"
 	@echo "  Mailpit:  http://localhost:9025"
 	@echo "  SSH:      port 9222"
 
@@ -184,14 +171,12 @@ prod-uninstall: prod-stop ## Remove quadlet units
 	@echo "Quadlet units removed."
 
 prod-start: ## Start production Cave via systemd
-	systemctl --user start cave-pg cave-mailpit cave-init cave-keycloak cave
-	$(CURDIR)/keycloak/configure-realm.sh http://localhost:9180 cave-prod-mailpit
-	@echo "\n  Cave:     http://localhost:9080"
-	@echo "  Keycloak: http://localhost:9180"
+	systemctl --user start cave-pg cave-mailpit cave
+	@echo "\n  Cave:     http://localhost:9080  (embedded Usher OIDC)"
 	@echo "  Mailpit:  http://localhost:9025"
 
 prod-stop: ## Stop production Cave
-	systemctl --user stop cave cave-keycloak cave-mailpit cave-init cave-pg 2>/dev/null; true
+	systemctl --user stop cave cave-mailpit cave-pg 2>/dev/null; true
 
 prod-logs: ## Tail production Cave logs
 	journalctl --user -u cave -f
@@ -204,6 +189,6 @@ prod-restore: ## Restore from backup (usage: make prod-restore F=path/to/archive
 	$(CURDIR)/deploy/restore.sh $(F) cave-prod
 
 prod-status: ## Show production service status
-	@systemctl --user is-active cave-pg cave-keycloak cave cave-mailpit 2>/dev/null || true
+	@systemctl --user is-active cave-pg cave cave-mailpit 2>/dev/null || true
 	@echo "---"
 	@systemctl --user status cave --no-pager -l 2>/dev/null | head -15 || echo "cave: not installed"

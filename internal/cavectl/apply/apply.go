@@ -59,10 +59,6 @@ func (e *Executor) executeOne(a plan.Action) error {
 		return nil // config is written as part of container creation
 	case plan.MigrateDatabase:
 		return fmt.Errorf("live database migration not yet implemented")
-	case plan.ConfigureKeycloak:
-		return nil // TODO: run realm configuration
-	case plan.CreateKeycloakDB:
-		return e.createKeycloakDB()
 	case plan.CreateRunnerToken:
 		return e.createRunnerToken()
 	case plan.RestoreBackup:
@@ -91,8 +87,6 @@ func (e *Executor) createContainer(a plan.Action) error {
 		return e.createPostgres()
 	case "mailpit":
 		return e.createMailpit()
-	case "keycloak":
-		return e.createKeycloak()
 	case "zoekt-web":
 		return e.createZoekt()
 	case "cave":
@@ -181,91 +175,6 @@ func (e *Executor) createPostgres() error {
 	})
 }
 
-func (e *Executor) createKeycloakDB() error {
-	// postgres only creates the one DB named by POSTGRES_DB. Keycloak needs
-	// its own. Idempotent SELECT-then-CREATE via psql inside cave-pg.
-	pg := e.Config.ContainerName("pg")
-	cmd := []string{"sh", "-c",
-		`psql -U cave -tc "SELECT 1 FROM pg_database WHERE datname='keycloak'" | grep -q 1 || psql -U cave -c "CREATE DATABASE keycloak"`,
-	}
-	_, err := e.Runtime.Exec(pg, cmd)
-	return err
-}
-
-func (e *Executor) createKeycloak() error {
-	env := map[string]string{
-		"KC_DB":                    "postgres",
-		"KC_DB_URL":                fmt.Sprintf("jdbc:postgresql://%s:5432/keycloak", e.Config.ContainerName("pg")),
-		"KC_DB_USERNAME":           "cave",
-		"KC_DB_PASSWORD":           e.Config.Database.Password,
-		"KEYCLOAK_ADMIN":           e.Config.Auth.Keycloak.AdminUser,
-		"KEYCLOAK_ADMIN_PASSWORD":  e.Config.Auth.Keycloak.AdminPassword,
-		"KC_HTTP_ENABLED":          "true",
-		"KC_HOSTNAME_STRICT":       "false",
-		// Picked up by the cave-keycloak entrypoint and substituted into
-		// the baked realm.json before --import-realm runs.
-		"CAVE_OIDC_CLIENT_SECRET": e.Config.Auth.Keycloak.ClientSecret,
-		"CAVE_BASE_URL":           e.Config.Cave.BaseURL,
-	}
-
-	// SMTP — either mailpit (default) or operator-provided external server.
-	smtpHost := e.Config.SMTP.Host
-	smtpPort := e.Config.SMTP.Port
-	if e.Config.MailpitEnabled() {
-		smtpHost = e.Config.ContainerName("mailpit")
-		smtpPort = 1025
-	}
-	if smtpHost != "" {
-		env["SMTP_HOST"] = smtpHost
-	}
-	if smtpPort > 0 {
-		env["SMTP_PORT"] = fmt.Sprintf("%d", smtpPort)
-	}
-	if e.Config.SMTP.From != "" {
-		env["SMTP_FROM"] = e.Config.SMTP.From
-	}
-	if e.Config.SMTP.FromDisplayName != "" {
-		env["SMTP_FROM_DISPLAY"] = e.Config.SMTP.FromDisplayName
-	}
-	if e.Config.SMTP.SSL {
-		env["SMTP_SSL"] = "true"
-	}
-	if e.Config.SMTP.StartTLS {
-		env["SMTP_STARTTLS"] = "true"
-	}
-	if e.Config.SMTP.User != "" || e.Config.SMTP.Password != "" {
-		env["SMTP_AUTH"] = "true"
-		env["SMTP_USER"] = e.Config.SMTP.User
-		env["SMTP_PASSWORD"] = e.Config.SMTP.Password
-	}
-
-	// When a public URL is configured, run in production mode behind a reverse
-	// proxy that terminates TLS. Otherwise fall back to start-dev for laptop use.
-	cmd := []string{"start-dev", "--import-realm"}
-	if url := e.Config.Auth.Keycloak.PublicURL; url != "" {
-		env["KC_HOSTNAME"] = url
-		env["KC_HOSTNAME_BACKCHANNEL_DYNAMIC"] = "true"
-		env["KC_PROXY_HEADERS"] = "xforwarded"
-		cmd = []string{"start", "--optimized", "--import-realm"}
-	}
-
-	opts := runtime.RunOptions{
-		Name:    e.Config.ContainerName("keycloak"),
-		Image:   e.Config.Auth.Keycloak.Image,
-		Network: e.Config.Runtime.Network,
-		Detach:  true,
-		Env:     env,
-		Cmd:     cmd,
-		Labels:  e.managedLabels(),
-	}
-	if e.Config.Ports.Keycloak > 0 {
-		opts.Ports = []runtime.PortMapping{
-			{HostIP: "127.0.0.1", HostPort: e.Config.Ports.Keycloak, Port: 8080},
-		}
-	}
-	return e.Runtime.Run(opts)
-}
-
 func (e *Executor) createZoekt() error {
 	return e.Runtime.Run(runtime.RunOptions{
 		Name:    e.Config.ContainerName("zoekt-web"),
@@ -296,18 +205,13 @@ func (e *Executor) createCave() error {
 
 	if e.Config.OIDCEnabled() {
 		switch e.Config.Auth.Mode {
-		case "keycloak":
-			// Local cave-keycloak: browser-facing URL prefers the operator-set
-			// public_url (when running behind a reverse proxy), otherwise
-			// falls back to the published keycloak port on localhost.
-			browserIssuer := e.Config.Auth.Keycloak.PublicURL
-			if browserIssuer == "" {
-				browserIssuer = fmt.Sprintf("http://localhost:%d", e.Config.Ports.Keycloak)
-			}
-			env["CAVE_OIDC_ISSUER"] = browserIssuer + "/realms/cave"
-			env["CAVE_OIDC_ISSUER_INTERNAL"] = fmt.Sprintf("http://%s:8080/realms/cave", e.Config.ContainerName("keycloak"))
+		case "local":
+			// Embedded Usher: cave hosts its own OIDC provider. Browser reaches
+			// it at the public base URL; cave calls its own in-container port.
+			env["CAVE_OIDC_ISSUER"] = e.Config.Cave.BaseURL
+			env["CAVE_OIDC_ISSUER_INTERNAL"] = "http://localhost:8080"
 			env["CAVE_OIDC_CLIENT_ID"] = "cave"
-			env["CAVE_OIDC_CLIENT_SECRET"] = e.Config.Auth.Keycloak.ClientSecret
+			env["CAVE_OIDC_CLIENT_SECRET"] = e.Config.Auth.OIDC.ClientSecret
 		case "oidc":
 			env["CAVE_OIDC_ISSUER"] = e.Config.Auth.OIDC.Issuer
 			env["CAVE_OIDC_ISSUER_INTERNAL"] = e.Config.Auth.OIDC.Issuer
@@ -430,17 +334,6 @@ func (e *Executor) restoreBackup(archivePath string) error {
 			caveDump); err != nil {
 			return fmt.Errorf("pg_restore cave: %w", err)
 		}
-	}
-
-	// Restore keycloak database (if present)
-	kcDump := filepath.Join(snapshot, "keycloak.pgdump")
-	if _, err := os.Stat(kcDump); err == nil {
-		fmt.Println("    Restoring keycloak database...")
-		e.Runtime.Exec(pgName, []string{"dropdb", "-U", "cave", "--if-exists", "keycloak"})
-		e.Runtime.Exec(pgName, []string{"createdb", "-U", "cave", "keycloak"})
-		e.Runtime.ExecFromFile(pgName,
-			[]string{"pg_restore", "-U", "cave", "-d", "keycloak", "--no-owner"},
-			kcDump)
 	}
 
 	// Restore git repos — copy into the data volume via a temp container

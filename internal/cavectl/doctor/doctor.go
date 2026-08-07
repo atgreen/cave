@@ -67,14 +67,9 @@ func Run(cfg *config.Config, rt runtime.Runtime) []Result {
 		checkUnprivPorts(cfg),
 		checkDNS("base_url", cfg.Cave.BaseURL),
 	}
-	if cfg.KeycloakEnabled() {
-		results = append(results, checkDNS("keycloak.public_url", cfg.Auth.Keycloak.PublicURL))
-	}
 	results = append(results, checkContainers(cfg, rt)...)
 	results = append(results, checkSSHListening(cfg))
-	results = append(results, checkKeycloakDB(cfg, rt))
 	results = append(results, checkSchemaVersion(cfg, rt))
-	results = append(results, checkRealmSMTP(cfg, rt))
 	return results
 }
 
@@ -106,7 +101,7 @@ func checkUnprivPorts(cfg *config.Config) Result {
 		return Result{Name: "unprivileged port range", Status: Skip, Detail: "cannot read sysctl"}
 	}
 	start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	min := minOf(cfg.Ports.HTTP, cfg.Ports.SSH, cfg.Ports.Keycloak, cfg.Ports.Mailpit)
+	min := minOf(cfg.Ports.HTTP, cfg.Ports.SSH, cfg.Ports.Mailpit)
 	if min < start {
 		return Result{
 			Name: "unprivileged port range", Status: Fail,
@@ -143,9 +138,6 @@ func checkContainers(cfg *config.Config, rt runtime.Runtime) []Result {
 		return nil
 	}
 	want := []string{"pg", "cave"}
-	if cfg.KeycloakEnabled() {
-		want = append(want, "keycloak")
-	}
 	if cfg.Zoekt.Enabled {
 		want = append(want, "zoekt-web")
 	}
@@ -195,26 +187,6 @@ func checkSSHListening(cfg *config.Config) Result {
 	return Result{Name: "cave SSH listening", Status: OK, Detail: fmt.Sprintf("%s:%d", addr, cfg.Ports.SSH)}
 }
 
-func checkKeycloakDB(cfg *config.Config, rt runtime.Runtime) Result {
-	if !cfg.KeycloakEnabled() {
-		return Result{Name: "keycloak DB", Status: Skip}
-	}
-	if rt == nil {
-		return Result{Name: "keycloak DB", Status: Skip, Detail: "no runtime"}
-	}
-	pg := cfg.ContainerName("pg")
-	out, err := rt.Exec(pg, []string{"sh", "-c",
-		`psql -U cave -tAc "SELECT 1 FROM pg_database WHERE datname='keycloak'"`})
-	if err != nil {
-		return Result{Name: "keycloak DB", Status: Warn, Detail: "could not query postgres"}
-	}
-	if strings.TrimSpace(out) != "1" {
-		return Result{Name: "keycloak DB", Status: Fail, Detail: "missing",
-			Fix: "podman exec " + pg + " psql -U cave -c 'CREATE DATABASE keycloak'"}
-	}
-	return Result{Name: "keycloak DB", Status: OK}
-}
-
 func checkSchemaVersion(cfg *config.Config, rt runtime.Runtime) Result {
 	if rt == nil {
 		return Result{Name: "cave schema", Status: Skip}
@@ -231,25 +203,6 @@ func checkSchemaVersion(cfg *config.Config, rt runtime.Runtime) Result {
 			Fix: "podman exec " + cfg.ContainerName("cave") + " cave-server migrate --config /etc/cave.conf"}
 	}
 	return Result{Name: "cave schema", Status: OK, Detail: "version " + v}
-}
-
-func checkRealmSMTP(cfg *config.Config, rt runtime.Runtime) Result {
-	if !cfg.KeycloakEnabled() || rt == nil {
-		return Result{Name: "keycloak realm SMTP", Status: Skip}
-	}
-	pg := cfg.ContainerName("pg")
-	out, err := rt.Exec(pg, []string{"sh", "-c",
-		`psql -U cave -d keycloak -tAc "SELECT value FROM realm_smtp_config WHERE realm_id=(SELECT id FROM realm WHERE name='cave') AND name='host'" 2>/dev/null`})
-	if err != nil || strings.TrimSpace(out) == "" {
-		return Result{Name: "keycloak realm SMTP", Status: Warn, Detail: "smtpHost not set in realm",
-			Fix: "drop the keycloak DB and re-apply so the realm imports with current SMTP env"}
-	}
-	host := strings.TrimSpace(out)
-	if strings.Contains(host, "__") {
-		return Result{Name: "keycloak realm SMTP", Status: Fail, Detail: "still has placeholder: " + host,
-			Fix: "the cave-keycloak entrypoint didn't substitute; check SMTP_HOST env on cave-keycloak"}
-	}
-	return Result{Name: "keycloak realm SMTP", Status: OK, Detail: "host=" + host}
 }
 
 // --- helpers ---

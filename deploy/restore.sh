@@ -47,15 +47,6 @@ podman exec "${PREFIX}-pg" createdb -U cave cave
 podman exec -i "${PREFIX}-pg" pg_restore -U cave -d cave --no-owner \
   < "${SNAPSHOT}/cave.pgdump"
 
-# 2. Restore Postgres — keycloak DB (if present)
-if [ -f "${SNAPSHOT}/keycloak.pgdump" ]; then
-  echo "Restoring keycloak database..."
-  podman exec "${PREFIX}-pg" dropdb -U cave --if-exists keycloak
-  podman exec "${PREFIX}-pg" createdb -U cave keycloak
-  podman exec -i "${PREFIX}-pg" pg_restore -U cave -d keycloak --no-owner \
-    < "${SNAPSHOT}/keycloak.pgdump"
-fi
-
 # 3. Restore git repos
 if [ -d "${SNAPSHOT}/repos" ]; then
   echo "Restoring git repositories..."
@@ -83,5 +74,5 @@ rm -rf "${WORK_DIR}"
 
 echo ""
 echo "Restore complete. Restart services:"
-echo "  systemctl --user restart ${PREFIX/cave-prod/cave}-keycloak ${PREFIX/cave-prod/cave}"
+echo "  systemctl --user restart ${PREFIX/cave-prod/cave}"
 echo "  (or: make prod-stop && make prod-start)"

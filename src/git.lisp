@@ -639,7 +639,7 @@ Returns a markdown string, or NIL when there is nothing to report."
         (uiop:string-suffix-p h ".internal")
         (uiop:string-suffix-p h ".local")
         ;; A single-label host (no dot, not IPv6) is an internal service name
-        ;; (e.g. cave-pg, cave-keycloak), never a real public remote.
+        ;; (e.g. cave-pg, cave-zoekt), never a real public remote.
         (and (not (find #\. h)) (not (find #\: h)))
         ;; IPv6 loopback / unspecified / unique-local (fc/fd) / link-local (fe8-feb)
         (member h '("::1" "::") :test #'string=)
