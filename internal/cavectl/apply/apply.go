@@ -1,9 +1,12 @@
 package apply
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -301,6 +304,51 @@ func (e *Executor) waitForHealthy(a plan.Action) error {
 	return fmt.Errorf("container %q did not become healthy after 30s", name)
 }
 
+// verifyTarMembers rejects a backup archive whose members would escape the
+// extraction dir (tar-slip): an absolute path, a ".." component, or a
+// symlink/hardlink whose target points outside the archive root. Headers only
+// are read — nothing is written and no member body is executed — so it is safe
+// to run against an operator-supplied, possibly-untrusted archive before the
+// real `tar -xzf` extraction.
+func verifyTarMembers(archivePath string) error {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("reading archive: %w", err)
+	}
+	defer gz.Close()
+	escapes := func(name string) bool {
+		clean := filepath.Clean(name)
+		return filepath.IsAbs(clean) || strings.HasPrefix(name, "/") ||
+			clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
+	}
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading archive: %w", err)
+		}
+		if escapes(hdr.Name) {
+			return fmt.Errorf("refusing backup archive: unsafe member path %q", hdr.Name)
+		}
+		if hdr.Linkname != "" {
+			if filepath.IsAbs(hdr.Linkname) ||
+				escapes(filepath.Join(filepath.Dir(hdr.Name), hdr.Linkname)) {
+				return fmt.Errorf("refusing backup archive: link %q escapes archive root (-> %q)",
+					hdr.Name, hdr.Linkname)
+			}
+		}
+	}
+	return nil
+}
+
 func (e *Executor) restoreBackup(archivePath string) error {
 	pgName := e.Config.ContainerName("pg")
 
@@ -310,6 +358,12 @@ func (e *Executor) restoreBackup(archivePath string) error {
 		return err
 	}
 	defer os.RemoveAll(workDir)
+
+	// Guard against a maliciously-crafted archive escaping workDir before we
+	// hand it to `tar -xzf` (tar-slip / path traversal).
+	if err := verifyTarMembers(archivePath); err != nil {
+		return err
+	}
 
 	cmd := exec.Command("tar", "-xzf", archivePath, "-C", workDir)
 	if err := cmd.Run(); err != nil {

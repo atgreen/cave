@@ -447,7 +447,12 @@ func runStatus() error {
 	}
 	fmt.Fprintf(os.Stdout, "Server:  %s\n", firstNonEmpty(cfg.BaseURL, defaultBaseURL))
 	if cfg.Token != "" {
-		fmt.Fprintf(os.Stdout, "Token:   %s...%s\n", cfg.Token[:8], cfg.Token[len(cfg.Token)-4:])
+		// Guard the slice: a short token would panic on Token[:8]/[len-4:].
+		if len(cfg.Token) >= 12 {
+			fmt.Fprintf(os.Stdout, "Token:   %s...%s\n", cfg.Token[:8], cfg.Token[len(cfg.Token)-4:])
+		} else {
+			fmt.Fprintln(os.Stdout, "Token:   (set)")
+		}
 	}
 	fmt.Fprintf(os.Stdout, "Config:  %s\n", configPath())
 	return nil

@@ -239,6 +239,13 @@ func (c *Config) Validate() error {
 	if c.Runtime.Prefix == "" {
 		return fmt.Errorf("runtime.prefix is required")
 	}
+	// The prefix names containers, volumes, the network, and systemd unit files,
+	// and is interpolated into a quadlet ExecStartPre `/bin/sh -c` line. Restrict
+	// it to a shell/DNS/systemd-safe allow-list so it can't inject shell
+	// metacharacters or produce malformed resource names.
+	if !prefixPattern.MatchString(c.Runtime.Prefix) {
+		return fmt.Errorf("runtime.prefix %q is invalid: use letters, digits, '-' or '_' and start with a letter or digit", c.Runtime.Prefix)
+	}
 	if c.Runtime.Network == "" {
 		return fmt.Errorf("runtime.network is required")
 	}
@@ -335,6 +342,8 @@ func (c *Config) DBName() string {
 	}
 	return "cave"
 }
+
+var prefixPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 

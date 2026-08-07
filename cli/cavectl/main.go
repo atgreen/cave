@@ -176,6 +176,13 @@ func cmdInit(args []string) error {
 	cfg.Database.Password = instance.RandomPassword(24)
 	cfg.Auth.OIDC.ClientSecret = instance.RandomPassword(32)
 
+	// Validate before creating anything — in particular rejects an unsafe --name
+	// (the prefix names containers/volumes/units and is interpolated into a
+	// quadlet shell line), which the init path would otherwise never check.
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	// Pre-flight: check for existing containers/volumes that aren't ours
 	if err := checkForCollisions(cfg, rt); err != nil {
 		return err
