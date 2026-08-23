@@ -792,9 +792,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
           (:tr
            (:td.file-icon "..")
            (:td (:a :href (if (uiop:emptyp parent)
-                              (format nil "/~A/~A" owner-name repo-name)
-                              (format nil "/~A/~A/tree/~A?path=~A"
-                                      owner-name repo-name default-branch parent))
+                              (repo-url owner-name repo-name)
+                              (tree-url owner-name repo-name default-branch parent))
                  ".."))
            (:td.file-commit "")
            (:td.file-age ""))))
@@ -809,10 +808,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
            (:td.file-icon (render-file-icon is-dir name))
            (:td
             (:a :href (if is-dir
-                          (format nil "/~A/~A/tree/~A?path=~A"
-                                  owner-name repo-name default-branch entry-path)
-                          (format nil "/~A/~A/blob/~A?path=~A"
-                                  owner-name repo-name default-branch entry-path))
+                          (tree-url owner-name repo-name default-branch entry-path)
+                          (blob-url owner-name repo-name default-branch entry-path))
              name))
            (:td.file-commit
             (when commit
@@ -1090,8 +1087,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                        (built ""))
                    (dolist (part parts)
                      (setf built (if (uiop:emptyp built) part (format nil "~A/~A" built part)))
-                     (push (list (format nil "/~A/~A/tree/~A?path=~A"
-                                         owner-name repo-name ref built)
+                     (push (list (tree-url owner-name repo-name ref built)
                                  part)
                            crumbs))
                    ;; Last one is just text, not a link
@@ -1152,8 +1148,7 @@ serves the unrendered bytes."
                                                (repo-member-role (getf repo :id)
                                                                  *current-user-id*))
                                :href-fn (lambda (r)
-                                          (format nil "/~A/~A/blob/~A?path=~A"
-                                                  owner-name repo-name r path))))))
+                                          (blob-url owner-name repo-name r path))))))
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
                      (list (format nil "/~A/~A" owner-name repo-name) repo-name))
@@ -1165,8 +1160,7 @@ serves the unrendered bytes."
                      (built ""))
                  (dolist (part parts)
                    (setf built (if (uiop:emptyp built) part (format nil "~A/~A" built part)))
-                   (push (list (format nil "/~A/~A/tree/~A?path=~A"
-                                       owner-name repo-name ref built)
+                   (push (list (tree-url owner-name repo-name ref built)
                                part)
                          crumbs))
                  (let ((reversed (nreverse crumbs)))
@@ -1186,8 +1180,7 @@ serves the unrendered bytes."
         (when is-markdown
           (if (eq view-mode :rendered)
               (:span.btn.btn-sm.btn-active "Rendered")
-              (:a.btn.btn-sm :href (format nil "/~A/~A/blob/~A?path=~A"
-                                           owner-name repo-name ref path)
+              (:a.btn.btn-sm :href (blob-url owner-name repo-name ref path)
                "Rendered")))
         (when is-markdown
           (if (eq view-mode :source)

@@ -50,6 +50,7 @@
   :serial      t
   :components  ((:file "src/package")
                 (:file "src/config")
+                (:file "src/url")
                 (:file "src/db")
                 (:file "src/auth")
                 (:file "src/yaml")

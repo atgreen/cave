@@ -75,7 +75,7 @@
                               :exclude-user-id *current-user-id*)
     (notify-inapp (getf repo :id) "issue"
                   (format nil "New issue #~A: ~A" (getf issue :number) (getf issue :title))
-                  (format nil "/~A/~A/issues/~A" owner-name repo-name (getf issue :number))
+                  (issue-url owner-name repo-name (getf issue :number))
                   :exclude-user-id *current-user-id*)))
 
 (defun notify-issue-comment (repo owner-name repo-name issue comment-body)
@@ -92,7 +92,7 @@
                               :exclude-user-id *current-user-id*)
     (notify-inapp (getf repo :id) "issue_comment"
                   (format nil "Comment on #~A: ~A" (getf issue :number) (getf issue :title))
-                  (format nil "/~A/~A/issues/~A" owner-name repo-name (getf issue :number))
+                  (issue-url owner-name repo-name (getf issue :number))
                   :exclude-user-id *current-user-id*)))
 
 (defun notify-pr-review (repo owner-name repo-name pr state)
@@ -111,7 +111,7 @@
                               :exclude-user-id *current-user-id*)
     (notify-inapp (getf repo :id) "pr_review"
                   (format nil "Review on PR #~A: ~A" (getf pr :number) state)
-                  (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+                  (pr-url owner-name repo-name (getf pr :number))
                   :exclude-user-id *current-user-id*)))
 
 (defun notify-pr-opened (repo owner-name repo-name pr)
@@ -135,7 +135,7 @@
     (notify-inapp (getf repo :id) "pr_opened"
                   (format nil "New PR #~A: ~A → ~A" (getf pr :number)
                           (getf pr :source-branch) (getf pr :target-branch))
-                  (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+                  (pr-url owner-name repo-name (getf pr :number))
                   :exclude-user-id (getf pr :author-id))))
 
 ;;; --- Webhooks ---
@@ -224,5 +224,5 @@
     (notify-inapp (getf repo :id) "pr_merged"
                   (format nil "PR #~A merged: ~A → ~A" (getf pr :number)
                           (getf pr :source-branch) (getf pr :target-branch))
-                  (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+                  (pr-url owner-name repo-name (getf pr :number))
                   :exclude-user-id *current-user-id*)))
