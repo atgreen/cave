@@ -52,16 +52,6 @@
        (:order-by (:select '* :from 'cave-users) 'username)
        :plists)))
 
-(defun deactivate-user (user-id)
-  "Deactivate a user account."
-  (postmodern:execute
-   (:update 'cave-users
-    :set 'is-active nil 'updated-at (:now)
-    :where (:= 'id user-id)))
-  ;; Invalidate all sessions
-  (postmodern:execute
-   (:delete-from 'cave-sessions :where (:= 'user-id user-id))))
-
 (defun count-users ()
   "Total number of rows in cave-users. Used by the OIDC provisioner to
    bootstrap the first user as approved when admin approval is required."
@@ -121,19 +111,6 @@
   (postmodern:query
    (:select '* :from 'cave-ssh-keys :where (:= 'user-id user-id))
    :plists))
-
-(defun find-user-by-ssh-key (public-key)
-  "Find a user by their SSH public key. Returns user plist or NIL."
-  (let ((fingerprint (compute-ssh-fingerprint public-key)))
-    (let ((row (postmodern:query
-                (:select 'cave-users.*
-                 :from 'cave-ssh-keys
-                 :inner-join 'cave-users
-                 :on (:= 'cave-ssh-keys.user-id 'cave-users.id)
-                 :where (:and (:= 'cave-ssh-keys.fingerprint fingerprint)
-                              (:= 'cave-users.is-active t)))
-                :plist)))
-      row)))
 
 (defun find-ssh-key-by-id (key-id)
   "Find an SSH key record by ID."
@@ -228,12 +205,6 @@
   (postmodern:query
    (:select '* :from 'cave-gpg-keys :where (:= 'user-id user-id))
    :plists))
-
-(defun find-gpg-key-by-id (key-id)
-  "Find a GPG key record by ID."
-  (postmodern:query
-   (:select '* :from 'cave-gpg-keys :where (:= 'id key-id))
-   :plist))
 
 (defun delete-gpg-key (key-id user-id)
   "Delete a GPG key (must belong to user)."
@@ -741,32 +712,6 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
     limit)
    :plists))
 
-(defun find-automation-run (run-id)
-  "Find an automation run by ID."
-  (postmodern:query
-   (:select '* :from 'cave-automation-runs :where (:= 'id run-id))
-   :plist))
-
-(defun update-run-status (run-id status &key runner-id)
-  "Update an automation run's status."
-  (cond
-    ((equal status "running")
-     (postmodern:execute
-      (:update 'cave-automation-runs
-       :set 'status status 'started-at (:now)
-            'runner-id (or runner-id :null)
-       :where (:= 'id run-id))))
-    ((member status '("success" "failure" "cancelled" "timed_out") :test #'equal)
-     (postmodern:execute
-      (:update 'cave-automation-runs
-       :set 'status status 'finished-at (:now)
-       :where (:= 'id run-id))))
-    (t
-     (postmodern:execute
-      (:update 'cave-automation-runs
-       :set 'status status
-       :where (:= 'id run-id))))))
-
 (defun update-run-status-for-runner (run-id runner-id status)
   "Update an automation run only if it is assigned to RUNNER-ID."
   (cond
@@ -791,13 +736,6 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
        :where (:and (:= 'id run-id) (:= 'runner-id runner-id))
        :returning '*)
       :plist))))
-
-(defun append-run-log (run-id chunk)
-  "Append a log chunk to an automation run."
-  (postmodern:execute
-   (:update 'cave-automation-runs
-    :set 'log (:|| 'log chunk)
-    :where (:= 'id run-id))))
 
 (defun append-run-log-for-runner (run-id runner-id chunk)
   "Append a log chunk only if the automation run is assigned to RUNNER-ID."
@@ -920,11 +858,6 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
        (:order-by (:select '* :from 'cave-runners) 'name)
        :plists)))
 
-(defun disable-runner (runner-id)
-  "Disable a runner."
-  (postmodern:execute
-   (:update 'cave-runners :set 'status "disabled" :where (:= 'id runner-id))))
-
 (defun delete-runner (runner-id)
   "Delete a runner."
   (postmodern:execute
@@ -978,17 +911,6 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
            'created-by-id (or created-by-id :null)
            'expires-at (:+ (:now) (:raw "'24 hours'"))
       :returning '*)
-     :plist)))
-
-(defun validate-registration-token (token)
-  "Validate a registration token without consuming it. Returns the token record
-   or NIL. Prefer CONSUME-REGISTRATION-TOKEN on the registration path."
-  (when token
-    (postmodern:query
-     (:select '* :from 'cave-runner-registration-tokens
-      :where (:and (:= 'token token)
-                   (:or (:is-null 'expires-at)
-                        (:> 'expires-at (:now)))))
      :plist)))
 
 (defun consume-registration-token (token)
@@ -1357,26 +1279,6 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
               'step-order)
    :plists))
 
-(defun update-step-status (step-id status &key exit-code)
-  "Update a workflow step's status."
-  (cond
-    ((equal status "running")
-     (postmodern:execute
-      (:update 'cave-workflow-steps
-       :set 'status status 'started-at (:now)
-       :where (:= 'id step-id))))
-    ((member status '("success" "failure" "skipped") :test #'equal)
-     (postmodern:execute
-      (:update 'cave-workflow-steps
-       :set 'status status 'finished-at (:now)
-            'exit-code (or exit-code :null)
-       :where (:= 'id step-id))))
-    (t
-     (postmodern:execute
-      (:update 'cave-workflow-steps
-       :set 'status status
-       :where (:= 'id step-id))))))
-
 (defun update-step-status-for-runner (step-id runner-id status &key exit-code)
   "Update a workflow step only if its job is assigned to RUNNER-ID."
   (cond
@@ -1411,13 +1313,6 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
                           :where (:= 'runner-id runner-id))))
        :returning '*)
       :plist))))
-
-(defun append-step-log (step-id chunk)
-  "Append log text to a workflow step."
-  (postmodern:execute
-   (:update 'cave-workflow-steps
-    :set 'log (:|| 'log chunk)
-    :where (:= 'id step-id))))
 
 (defun append-step-log-for-runner (step-id runner-id chunk)
   "Append step log text only if the step's job is assigned to RUNNER-ID."
@@ -2113,19 +2008,6 @@ mean zero. Used to show the per-row comment count on the issues list."
     'cave-diff-comments.created-at)
    :plists))
 
-(defun group-diff-comments (comments)
-  "Group diff comments into a hash table keyed by \"file:line:side\"."
-  (let ((table (make-hash-table :test 'equal)))
-    (dolist (c comments)
-      (let ((key (format nil "~A:~A:~A"
-                         (getf c :file-path)
-                         (getf c :line-number)
-                         (getf c :side))))
-        (push c (gethash key table))))
-    ;; Reverse each list so comments are in chronological order
-    (maphash (lambda (k v) (setf (gethash k table) (nreverse v))) table)
-    table))
-
 ;;; ========================== PULL REQUESTS ==========================
 
 (defun create-pull-request (&key repo-id author-id source-branch target-branch head-commit
@@ -2382,18 +2264,6 @@ by repo secrets. Returns an alist (name . value)."
   (postmodern:query
    (:select '* :from 'cave-deploy-keys :where (:= 'id id)) :plist))
 
-(defun find-deploy-key-by-fingerprint (fingerprint)
-  "Deploy key (with its repo's owner/name) by SSH fingerprint, or NIL."
-  (postmodern:query
-   "SELECT d.*, r.name AS repo_name,
-           COALESCE(o.name, u.username) AS owner_name
-      FROM cave_deploy_keys d
-      JOIN cave_repos r ON r.id = d.repo_id
-      LEFT JOIN cave_orgs o ON o.id = r.org_id
-      LEFT JOIN cave_users u ON u.id = r.owner_id
-     WHERE d.fingerprint = $1"
-   fingerprint :plist))
-
 (defun all-deploy-keys-with-repo ()
   "All deploy keys joined with owner/name, for the authorized_keys file."
   (postmodern:query
@@ -2456,21 +2326,6 @@ by repo secrets. Returns an alist (name . value)."
    :plists))
 
 ;;; ========================== STACKS ==========================
-
-(defun create-stack (&key repo-id name base-branch)
-  "Create a stack."
-  (postmodern:query
-   (:insert-into 'cave-stacks
-    :set 'repo-id repo-id 'name name 'base-branch base-branch
-    :returning '*)
-   :plist))
-
-(defun find-stack (repo-id name)
-  "Find a stack by name."
-  (postmodern:query
-   (:select '* :from 'cave-stacks
-    :where (:and (:= 'repo-id repo-id) (:= 'name name)))
-   :plist))
 
 (defun find-stack-by-id (stack-id)
   "Find a stack by ID."
@@ -2987,11 +2842,6 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
         'name)
        :plists)))
 
-(defun find-chamber-node (id)
-  (postmodern:query
-   (:select '* :from 'cave-chamber-nodes :where (:= 'id id))
-   :plist))
-
 (defun find-chamber-node-by-name (name)
   (postmodern:query
    (:select '* :from 'cave-chamber-nodes :where (:= 'name name))
@@ -3043,16 +2893,6 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
     :on (:= 'cave-repo-assignments.node-id 'cave-chamber-nodes.id)
     :where (:and (:= 'cave-repo-assignments.repo-id repo-id)
                  (:= 'cave-repo-assignments.role "secondary")))
-   :plists))
-
-(defun repo-all-nodes (repo-id)
-  "Get all chamber nodes assigned to a repo (primary + secondaries)."
-  (postmodern:query
-   (:select 'cave-chamber-nodes.* 'cave-repo-assignments.role
-    :from 'cave-repo-assignments
-    :inner-join 'cave-chamber-nodes
-    :on (:= 'cave-repo-assignments.node-id 'cave-chamber-nodes.id)
-    :where (:= 'cave-repo-assignments.repo-id repo-id))
    :plists))
 
 (defun repo-healthy-nodes (repo-id)
@@ -3335,19 +3175,6 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
       (format nil "https://cl-sec.github.io/cl-sec-advisories/#~A" osv-id)
       (format nil "https://osv.dev/vulnerability/~A" osv-id)))
 
-(defun find-advisory (osv-id)
-  "The advisory whose osv_id is exactly OSV-ID."
-  (postmodern:query
-   (:select '* :from 'cave-advisories :where (:= 'osv-id osv-id))
-   :plist))
-
-(defun find-advisory-by-alias (id)
-  "The canonical advisory whose osv_id equals ID or that lists ID as an alias."
-  (postmodern:query
-   "SELECT * FROM cave_advisories
-    WHERE osv_id = $1 OR $1 = ANY(aliases) LIMIT 1"
-   id :plist))
-
 (defun list-affected-for-package (ecosystem package-name)
   "Affected ranges for (ECOSYSTEM, PACKAGE-NAME) from non-withdrawn advisories;
    each row carries its advisory_id."
@@ -3412,17 +3239,6 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
    (:update 'cave-dep-alerts
     :set 'state state 'updated-at (:now)
     :where (:= 'id alert-id))))
-
-(defun list-dep-alerts (repo-id &key state)
-  "Alerts for REPO-ID, optionally filtered to a single STATE."
-  (if state
-      (postmodern:query
-       (:select '* :from 'cave-dep-alerts
-        :where (:and (:= 'repo-id repo-id) (:= 'state state)))
-       :plists)
-      (postmodern:query
-       (:select '* :from 'cave-dep-alerts :where (:= 'repo-id repo-id))
-       :plists)))
 
 (defun %open-or-dismissed-alerts (repo-id)
   "Live alerts (open or dismissed) as (id, dep_id, advisory_id) plists, for
@@ -3791,33 +3607,6 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
   (postmodern:query
    (:select '* :from 'cave-org-dep-policy :where (:= 'org-id org-id))
    :plist))
-
-(defun upsert-org-dep-policy (&key org-id allowed-ecosystems license-allow
-                                   license-deny (automerge-ceiling "none")
-                                   (security-always-on t) freeze-windows
-                                   (auto-fix-security t))
-  "Create or update an org's dependency policy."
-  (postmodern:execute
-   "INSERT INTO cave_org_dep_policy
-       (org_id, allowed_ecosystems, license_allow, license_deny,
-        automerge_ceiling, security_always_on, freeze_windows,
-        auto_fix_security, updated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8, NOW())
-    ON CONFLICT (org_id) DO UPDATE SET
-       allowed_ecosystems = EXCLUDED.allowed_ecosystems,
-       license_allow = EXCLUDED.license_allow,
-       license_deny = EXCLUDED.license_deny,
-       automerge_ceiling = EXCLUDED.automerge_ceiling,
-       security_always_on = EXCLUDED.security_always_on,
-       freeze_windows = EXCLUDED.freeze_windows,
-       auto_fix_security = EXCLUDED.auto_fix_security,
-       updated_at = NOW()"
-   org-id
-   (if allowed-ecosystems (coerce allowed-ecosystems 'vector) :null)
-   (if license-allow (coerce license-allow 'vector) :null)
-   (if license-deny (coerce license-deny 'vector) :null)
-   automerge-ceiling security-always-on (or freeze-windows "[]")
-   auto-fix-security))
 
 (defun repos-needing-dashboard-refresh (marker)
   "Repo ids that either have open alerts or already have a dashboard issue."

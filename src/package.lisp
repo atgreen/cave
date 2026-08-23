@@ -17,17 +17,7 @@
            #:run-migrations)
 
   ;; Auth
-  (:export #:generate-api-token
-           #:current-user)
-
-  ;; Domain
-  (:export #:cave-user
-           #:cave-org
-           #:cave-repo
-           #:cave-issue
-           #:cave-pull-request
-           #:cave-review
-           #:cave-concern)
+  (:export #:generate-api-token)
 
   ;; Entry point
   (:export #:main))

@@ -345,15 +345,6 @@ Returns a markdown string, or NIL when there is nothing to report."
                      entries)))
     (nreverse entries)))
 
-(defun git-file-tree (repo-path &key (ref "HEAD"))
-  "Get the file tree at REF. Returns list of (:mode :type :hash :name)."
-  (multiple-value-bind (output _err exit-code)
-      (git-run repo-path "ls-tree" "-r" "--name-only" ref)
-    (declare (ignore _err))
-    (when (zerop exit-code)
-      (remove-if #'uiop:emptyp
-                 (uiop:split-string output :separator '(#\Newline))))))
-
 (defun git-show-commit (repo-path hash)
   "Get a single commit's metadata. Returns plist or NIL."
   (let ((format-str "%H%n%h%n%an%n%ae%n%ai%n%s%n%b"))
@@ -823,25 +814,11 @@ deleted on cave is no longer deleted on the mirror."
     (declare (ignore _out))
     (values (zerop exit-code) err)))
 
-(defun git-diff (repo-path base-ref head-ref)
-  "Get diff between two refs."
-  (multiple-value-bind (output _err exit-code)
-      (git-run repo-path "diff" base-ref head-ref)
-    (declare (ignore _err))
-    (when (zerop exit-code) output)))
-
 (defun git-diff-merge-base (repo-path target-ref source-ref)
   "Get diff of changes introduced by source-ref relative to its merge-base with target-ref.
    Uses three-dot notation: target...source."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "diff" (format nil "~A...~A" target-ref source-ref))
-    (declare (ignore _err))
-    (when (zerop exit-code) output)))
-
-(defun git-diff-stat (repo-path base-ref head-ref)
-  "Get diff stat between two refs."
-  (multiple-value-bind (output _err exit-code)
-      (git-run repo-path "diff" "--stat" base-ref head-ref)
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
@@ -877,79 +854,6 @@ PR rounds. NIL on error or when a commit is missing."
            (parse-integer (subseq old-part 1) :junk-allowed t))
          (when new-part
            (parse-integer (subseq new-part 1) :junk-allowed t)))))))
-
-(defun parse-diff (diff-text)
-  "Parse unified diff text into a list of file diffs.
-   Each file is a plist: (:filename :old-filename :lines).
-   Each line in :lines is a plist with :type, :content, :old-line, :new-line."
-  (when (and diff-text (not (uiop:emptyp diff-text)))
-    (let ((files nil)
-          (current-file nil)
-          (current-lines nil)
-          (old-line 0)
-          (new-line 0))
-      (dolist (line (uiop:split-string diff-text :separator '(#\Newline)))
-        (cond
-          ;; New file header
-          ((and (>= (length line) 6) (string= "diff --" (subseq line 0 7)))
-           (when current-file
-             (push (list :filename (getf current-file :filename)
-                         :old-filename (getf current-file :old-filename)
-                         :lines (nreverse current-lines))
-                   files))
-           (setf current-lines nil old-line 0 new-line 0)
-           (let* ((parts (uiop:split-string line :separator '(#\Space)))
-                  (b-file (car (last parts)))
-                  (filename (if (and (>= (length b-file) 2)
-                                     (char= (char b-file 0) #\b)
-                                     (char= (char b-file 1) #\/))
-                                (subseq b-file 2)
-                                b-file)))
-             (setf current-file (list :filename filename :old-filename nil))))
-          ;; Hunk header
-          ((and (>= (length line) 3) (string= "@@" (subseq line 0 2)))
-           (multiple-value-bind (os ns) (parse-hunk-header line)
-             (setf old-line (or os 1) new-line (or ns 1)))
-           (push (list :type :hunk :content line
-                       :old-line nil :new-line nil)
-                 current-lines))
-          ;; Added line
-          ((and (> (length line) 0) (char= (char line 0) #\+)
-                (not (and (>= (length line) 3) (string= "+++" (subseq line 0 3)))))
-           (push (list :type :add :content (subseq line 1)
-                       :old-line nil :new-line new-line)
-                 current-lines)
-           (incf new-line))
-          ;; Deleted line
-          ((and (> (length line) 0) (char= (char line 0) #\-)
-                (not (and (>= (length line) 3) (string= "---" (subseq line 0 3)))))
-           (push (list :type :del :content (subseq line 1)
-                       :old-line old-line :new-line nil)
-                 current-lines)
-           (incf old-line))
-          ;; Meta lines
-          ((or (and (>= (length line) 3) (string= "---" (subseq line 0 3)))
-               (and (>= (length line) 3) (string= "+++" (subseq line 0 3)))
-               (and (>= (length line) 5) (string= "index" (subseq line 0 5))))
-           nil)
-          ;; Context line
-          (t
-           (when current-file
-             (push (list :type :context
-                         :content (if (and (> (length line) 0)
-                                           (char= (char line 0) #\Space))
-                                      (subseq line 1)
-                                      line)
-                         :old-line old-line :new-line new-line)
-                   current-lines)
-             (incf old-line)
-             (incf new-line)))))
-      (when current-file
-        (push (list :filename (getf current-file :filename)
-                    :old-filename (getf current-file :old-filename)
-                    :lines (nreverse current-lines))
-              files))
-      (nreverse files))))
 
 (defun git-commit-count (repo-path &key (branch nil))
   "Count commits on a branch (or all if nil)."
@@ -1181,14 +1085,6 @@ PR rounds. NIL on error or when a commit is missing."
       (git-run repo-path "cat-file" "blob" (format nil "~A:~A" ref path))
     (declare (ignore _err))
     (when (zerop exit-code) output)))
-
-(defun git-object-is-tree-p (repo-path ref path)
-  "Return T if PATH under REF is a tree (directory)."
-  (multiple-value-bind (output _err exit-code)
-      (git-run repo-path "cat-file" "-t" (format nil "~A:~A" ref path))
-    (declare (ignore _err))
-    (and (zerop exit-code)
-         (equal (string-trim '(#\Newline #\Space) output) "tree"))))
 
 (defun git-blob-bytes (repo-path ref path)
   "Read file content at PATH under REF as raw octets. Returns byte vector or NIL."

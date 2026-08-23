@@ -115,13 +115,6 @@ the Hunchentoot worker forever."
         (reset-chamber-channel)
         (error 'chamber-rpc-error :method method :cause e)))))
 
-(defmacro with-chamber-fallback (fallback-form &body body)
-  "Run BODY; if a chamber-rpc-error escapes, evaluate FALLBACK-FORM instead.
-   Used to keep cave responsive when Chamber's RPC layer hiccups — read paths
-   degrade gracefully to direct git calls on the local disk."
-  `(handler-case (progn ,@body)
-     (chamber-rpc-error () ,fallback-form)))
-
 (defmacro chamber-or (chamber-form direct-form)
   "If chamber is enabled, evaluate CHAMBER-FORM. On chamber-rpc-error (or
    when chamber is disabled), evaluate DIRECT-FORM instead. The intended
@@ -220,19 +213,6 @@ the Hunchentoot worker forever."
         (when (slot-value resp 'cave::found)
           (slot-value resp 'cave::content)))
       (git-blob (repo-disk-path owner repo-name) ref path)))
-
-(defun chamber-get-blob-bytes (owner repo-name ref path)
-  "Get file content as byte vector. Returns vector or NIL."
-  (chamber-or
-      (let ((resp (chamber-call "/cave.chamber.Chamber/GetBlobBytes"
-                                (make-instance 'cave::get-blob-bytes-request
-                                               :owner owner :repo-name repo-name
-                                               :ref ref :path path)
-                                'cave::get-blob-bytes-response
-                                :owner owner :repo-name repo-name)))
-        (when (slot-value resp 'cave::found)
-          (slot-value resp 'cave::content)))
-      (git-blob-bytes (repo-disk-path owner repo-name) ref path)))
 
 (defun chamber-get-blob-info (owner repo-name ref path)
   "Get blob hash, size, is-binary. Returns plist or NIL."

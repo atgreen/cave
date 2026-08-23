@@ -701,24 +701,6 @@ real, browsable repos."
               :description "Repo path as owner/name"))
    :handler #'handle-run-checks))
 
-(defun %pushed-shas-from-stdin ()
-  "Read pre-receive ref updates (`<old> <new> <ref>` per line) from stdin and
-   return the distinct non-zero new shas. Git closes stdin after the ref list,
-   so this returns promptly; NIL when stdin carries none."
-  (let ((shas nil))
-    (handler-case
-        (loop for line = (read-line *standard-input* nil nil)
-              while line
-              do (let ((parts (uiop:split-string
-                               (string-trim '(#\Space #\Tab #\Return) line)
-                               :separator '(#\Space))))
-                   (when (>= (length parts) 3)
-                     (let ((new (second parts)))
-                       (unless (every (lambda (c) (char= c #\0)) new)
-                         (pushnew new shas :test #'equal))))))
-      (error () nil))
-    (nreverse shas)))
-
 (defun %pushed-refs-from-stdin ()
   "Read pre-receive ref updates from stdin as a list of (old new ref) triples.
 Reads stdin once (it can't be re-read); callers derive shas from the result."

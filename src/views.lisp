@@ -7,14 +7,6 @@
 ;;; All HTML generation lives here. Each page is a function that returns
 ;;; an HTML string. No template files, no compilation step, no stale state.
 
-(defun gravatar-url (email &key (size 20))
-  "Return a Gravatar URL for EMAIL. Falls back to identicon."
-  (let* ((clean (string-trim '(#\Space) (string-downcase (or email ""))))
-         (hash (ironclad:byte-array-to-hex-string
-                (ironclad:digest-sequence :md5
-                 (flexi-streams:string-to-octets clean :external-format :utf-8)))))
-    (format nil "https://gravatar.com/avatar/~A?d=identicon&s=~A" hash size)))
-
 (defun identicon-data-uri (seed)
   "Deterministic GitHub-style identicon (5x5 mirrored grid) for SEED, as an
 inline SVG data URI. Self-contained — no external avatar service, so it never
@@ -1814,98 +1806,6 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
       ((string-equal base "Makefile") "makefile")
       ((string-equal base "Dockerfile") "dockerfile")
       (t "plaintext"))))
-
-(defun render-diff (diff-files owner-name repo-name ref
-                    &key diff-comments comment-action can-comment)
-  "Render parsed diff files as HTML with inline comments and syntax highlighting."
-  (spinneret:with-html
-    (dolist (file diff-files)
-      (let ((filename (getf file :filename))
-            (lang (hljs-language (getf file :filename))))
-        (:div.diff-file
-         (:div.diff-file-header
-          (:a :href (format nil "/~A/~A/blob/~A?path=~A"
-                            owner-name repo-name ref filename)
-           filename))
-         (:div.diff-body
-          (dolist (line (getf file :lines))
-            (let* ((type (getf line :type))
-                   (content (getf line :content))
-                   (old-ln (getf line :old-line))
-                   (new-ln (getf line :new-line))
-                   (side (if new-ln "new" "old"))
-                   (ln (or new-ln old-ln))
-                   (comment-key (when ln (format nil "~A:~A:~A" filename ln side)))
-                   (line-comments (when (and comment-key diff-comments)
-                                   (gethash comment-key diff-comments))))
-              (case type
-                (:hunk
-                 (:div.diff-line.diff-line-hunk
-                  (:span.diff-hunk-text content)))
-                (:add
-                 (:div.diff-line.diff-line-add
-                  :data-file filename :data-line new-ln :data-side "new"
-                  (:span.diff-line-num "")
-                  (:span.diff-line-num (princ-to-string new-ln))
-                  (:span.diff-add-btn :onclick "caveToggleCommentForm(this)"
-                   (when can-comment "+"))
-                  (:span.diff-gutter "+")
-                  (:code.diff-code :class (format nil "language-~A" lang) content)))
-                (:del
-                 (:div.diff-line.diff-line-del
-                  :data-file filename :data-line old-ln :data-side "old"
-                  (:span.diff-line-num (princ-to-string old-ln))
-                  (:span.diff-line-num "")
-                  (:span.diff-add-btn :onclick "caveToggleCommentForm(this)"
-                   (when can-comment "+"))
-                  (:span.diff-gutter "-")
-                  (:code.diff-code :class (format nil "language-~A" lang) content)))
-                (:context
-                 (:div.diff-line.diff-line-context
-                  :data-file filename :data-line (or new-ln "") :data-side "new"
-                  (:span.diff-line-num (if old-ln (princ-to-string old-ln) ""))
-                  (:span.diff-line-num (if new-ln (princ-to-string new-ln) ""))
-                  (:span.diff-add-btn :onclick "caveToggleCommentForm(this)"
-                   (when can-comment "+"))
-                  (:span.diff-gutter " ")
-                  (:code.diff-code :class (format nil "language-~A" lang) content))))
-              ;; Existing comments
-              (when line-comments
-                (:div.diff-comment-row
-                 (render-inline-comments line-comments)))
-              ;; Hidden comment form
-              (when (and can-comment ln)
-                (:div.diff-comment-form :id (format nil "cf-~A-~A-~A" filename ln side)
-                 (:form :method "post" :action comment-action
-                  (:input :type "hidden" :name "file_path" :value filename)
-                  (:input :type "hidden" :name "line_number"
-                   :value (princ-to-string ln))
-                  (:input :type "hidden" :name "side" :value side)
-                  (:textarea :name "body" :rows "3" :required t
-                   :placeholder "Write a comment...")
-                  (:div :style "display:flex;gap:var(--sp-2);margin-top:var(--sp-2)"
-                   (:button.btn.btn-primary.btn-sm :type "submit" "Comment")
-                   (:button.btn.btn-sm :type "button"
-                    :onclick "this.closest('.diff-comment-form').classList.remove('active')"
-                    "Cancel")))))))))))
-    ;; Inline JS for toggling comment forms
-    (when can-comment
-      (:script (:raw "
-function caveToggleCommentForm(btn) {
-  var row = btn.closest('.diff-line');
-  var file = row.dataset.file;
-  var line = row.dataset.line;
-  var side = row.dataset.side;
-  var formId = 'cf-' + file + '-' + line + '-' + side;
-  var form = document.getElementById(formId);
-  if (form) {
-    form.classList.toggle('active');
-    if (form.classList.contains('active')) {
-      form.querySelector('textarea').focus();
-    }
-  }
-}
-")))))
 
 (defparameter +checks-panel-css+
   ".checks-rollup{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 .5rem;font-weight:600}
