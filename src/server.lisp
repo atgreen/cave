@@ -236,6 +236,16 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
     (return-from ensure-repo-visible (values nil (funcall responder))))
   repo)
 
+(defmacro %with-repo-admin ((repo owner repo-name fail-form) &body body)
+  "Bind REPO from OWNER/REPO-NAME, requiring login + repo admin; else short-circuit."
+  `(when (require-login)
+     (let ((,repo (find-repo ,owner ,repo-name)))
+       (unless ,repo (return-from ,fail-form (not-found)))
+       (unless (equal (repo-member-role (getf ,repo :id) *current-user-id*) "admin")
+         (setf (hunchentoot:return-code*) 403)
+         (return-from ,fail-form "Forbidden"))
+       ,@body)))
+
 ;; ----------------------------------------------------------------------------
 ;; Routes: Internal hooks (called by git hooks inside the container)
 
@@ -1470,8 +1480,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 ;; Overview (default landing — README + clone URL)
 (easy-routes:defroute repo-page ("/:owner/:repo-name" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from repo-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((empty (chamber-is-empty owner repo-name))
            (default-branch (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
            (branches (unless empty (chamber-get-branches owner repo-name)))
@@ -1518,8 +1527,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 ;; Code (file browser)
 (easy-routes:defroute code-page ("/:owner/:repo-name/code" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from code-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((empty (chamber-is-empty owner repo-name))
            (default-branch (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
            (branches (unless empty (chamber-get-branches owner repo-name)))
@@ -1556,8 +1564,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute repo-watch-submit
     ("/:owner/:repo-name/watch" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from repo-watch-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (if (watching-repo-p (getf repo :id) *current-user-id*)
           (unwatch-repo (getf repo :id) *current-user-id*)
           (watch-repo (getf repo :id) *current-user-id*))
@@ -1621,8 +1628,7 @@ leaking the viewer's IP or breaking HTTPS."
        (every (lambda (c) (or (alphanumericp c) (member c '(#\_ #\- #\. #\/)))) name)))
 
 (easy-routes:defroute tree-page ("/:owner/:repo-name/tree/:ref" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from tree-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (%valid-git-ref-name-p ref) (return-from tree-page (not-found)))
     (let* ((path (or (hunchentoot:get-parameter "path") ""))
            (file-tree (chamber-get-tree owner repo-name :ref ref :path path))
@@ -1666,8 +1672,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 ;; Blob (file) viewing
 (easy-routes:defroute blob-page ("/:owner/:repo-name/blob/:ref" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from blob-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (%valid-git-ref-name-p ref) (return-from blob-page (not-found)))
     (let* ((path (or (hunchentoot:get-parameter "path") ""))
            (info (chamber-get-blob-info owner repo-name ref path)))
@@ -1802,8 +1807,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 ;; Raw file content
 (easy-routes:defroute raw-page ("/:owner/:repo-name/raw/:ref" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from raw-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (%valid-git-ref-name-p ref) (return-from raw-page (not-found)))
     (let* ((path (or (hunchentoot:get-parameter "path") ""))
            (mime (raw-mime-type path))
@@ -1848,8 +1852,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 ;; Commit detail page (also handles .patch and .diff suffixes)
 (easy-routes:defroute commit-page ("/:owner/:repo-name/commit/:hash" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from commit-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((disk-path (repo-disk-path owner repo-name))
            ;; Strip .patch or .diff suffix
            (is-patch (and (> (length hash) 6)
@@ -1947,58 +1950,33 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute repo-settings-page
     ("/:owner/:repo-name/settings" :method :get) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-settings-page (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-settings-page "Forbidden"))
-      (html-response
-       (view-repo-settings :owner-name owner :repo repo
-                           :members (list-repo-members (getf repo :id))
-                           :checks (list-check-configs (getf repo :id))
-                           :mirrors (list-mirrors (getf repo :id))
-                           :webhooks (list-webhooks (getf repo :id))
-                           :automations (list-automation-definitions (getf repo :id))
-                           :runners (list-runners :scope "repo" :scope-id (getf repo :id))
-                           :secrets (list-secret-names "repo" (getf repo :id))
-                           :protected-branches (list-protected-branches (getf repo :id))
-                           :deploy-keys (list-deploy-keys (getf repo :id)))))))
+  (%with-repo-admin (repo owner repo-name repo-settings-page)
+    (html-response
+     (view-repo-settings :owner-name owner :repo repo
+                         :members (list-repo-members (getf repo :id))
+                         :checks (list-check-configs (getf repo :id))
+                         :mirrors (list-mirrors (getf repo :id))
+                         :webhooks (list-webhooks (getf repo :id))
+                         :automations (list-automation-definitions (getf repo :id))
+                         :runners (list-runners :scope "repo" :scope-id (getf repo :id))
+                         :secrets (list-secret-names "repo" (getf repo :id))
+                         :protected-branches (list-protected-branches (getf repo :id))
+                         :deploy-keys (list-deploy-keys (getf repo :id))))))
 
 (easy-routes:defroute repo-secret-add-submit
     ("/:owner/:repo-name/settings/secrets" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-secret-add-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-secret-add-submit "Forbidden"))
-      (let ((name (string-trim " " (or (hunchentoot:post-parameter "name") "")))
-            (value (or (hunchentoot:post-parameter "value") "")))
-        (when (and (plusp (length name)) (plusp (length value)))
-          (set-secret "repo" (getf repo :id) name value)))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-secret-add-submit)
+    (let ((name (string-trim " " (or (hunchentoot:post-parameter "name") "")))
+          (value (or (hunchentoot:post-parameter "value") "")))
+      (when (and (plusp (length name)) (plusp (length value)))
+        (set-secret "repo" (getf repo :id) name value)))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-secret-delete-submit
     ("/:owner/:repo-name/settings/secrets/:name/delete" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-secret-delete-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-secret-delete-submit "Forbidden"))
-      (delete-secret "repo" (getf repo :id) name)
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
-
-(defmacro %with-repo-admin ((repo owner repo-name fail-form) &body body)
-  "Bind REPO from OWNER/REPO-NAME, requiring login + repo admin; else short-circuit."
-  `(when (require-login)
-     (let ((,repo (find-repo ,owner ,repo-name)))
-       (unless ,repo (return-from ,fail-form (not-found)))
-       (unless (equal (repo-member-role (getf ,repo :id) *current-user-id*) "admin")
-         (setf (hunchentoot:return-code*) 403)
-         (return-from ,fail-form "Forbidden"))
-       ,@body)))
+  (%with-repo-admin (repo owner repo-name repo-secret-delete-submit)
+    (delete-secret "repo" (getf repo :id) name)
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-protect-add-submit
     ("/:owner/:repo-name/settings/protect" :method :post) ()
@@ -2042,93 +2020,63 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-settings-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-settings-submit "Forbidden"))
-      (let ((section (hunchentoot:post-parameter "section")))
-        (when (equal section "merge")
-          (update-repo-settings (getf repo :id)
-            :required-approvals (or (parse-integer
-                                     (or (hunchentoot:post-parameter "required_approvals") "1")
-                                     :junk-allowed t) 1)
-            :allow-self-approval (when (hunchentoot:post-parameter "allow_self_approval") t)
-            :allow-stale-approvals (when (hunchentoot:post-parameter "allow_stale_approvals") t)
-            :concerns-count-as-approval (when (hunchentoot:post-parameter "concerns_count") t)
-            :block-on-request-changes (when (hunchentoot:post-parameter "block_on_request_changes") t)
-            :auto-delete-branch (when (hunchentoot:post-parameter "auto_delete_branch") t))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-settings-submit)
+    (let ((section (hunchentoot:post-parameter "section")))
+      (when (equal section "merge")
+        (update-repo-settings (getf repo :id)
+          :required-approvals (or (parse-integer
+                                   (or (hunchentoot:post-parameter "required_approvals") "1")
+                                   :junk-allowed t) 1)
+          :allow-self-approval (when (hunchentoot:post-parameter "allow_self_approval") t)
+          :allow-stale-approvals (when (hunchentoot:post-parameter "allow_stale_approvals") t)
+          :concerns-count-as-approval (when (hunchentoot:post-parameter "concerns_count") t)
+          :block-on-request-changes (when (hunchentoot:post-parameter "block_on_request_changes") t)
+          :auto-delete-branch (when (hunchentoot:post-parameter "auto_delete_branch") t))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-add-member-submit
     ("/:owner/:repo-name/settings/members" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-add-member-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-add-member-submit "Forbidden"))
-      (let* ((username (hunchentoot:post-parameter "username"))
-             (role (or (hunchentoot:post-parameter "role") "writer"))
-             (user (find-user-by-username username)))
-        (when user
-          (handler-case
-              (add-repo-member (getf repo :id) (getf user :id) :role role)
-            (error () nil))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-add-member-submit)
+    (let* ((username (hunchentoot:post-parameter "username"))
+           (role (or (hunchentoot:post-parameter "role") "writer"))
+           (user (find-user-by-username username)))
+      (when user
+        (handler-case
+            (add-repo-member (getf repo :id) (getf user :id) :role role)
+          (error () nil))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-remove-member-submit
     ("/:owner/:repo-name/settings/members/:user-id/remove" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-remove-member-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-remove-member-submit "Forbidden"))
-      (let ((uid (parse-integer user-id :junk-allowed t)))
-        (when uid (remove-repo-member (getf repo :id) uid)))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-remove-member-submit)
+    (let ((uid (parse-integer user-id :junk-allowed t)))
+      (when uid (remove-repo-member (getf repo :id) uid)))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-archive-submit
     ("/:owner/:repo-name/settings/archive" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-archive-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-archive-submit "Forbidden"))
-      (archive-repo (getf repo :id) :archived t)
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-archive-submit)
+    (archive-repo (getf repo :id) :archived t)
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-unarchive-submit
     ("/:owner/:repo-name/settings/unarchive" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-unarchive-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-unarchive-submit "Forbidden"))
-      (archive-repo (getf repo :id) :archived nil)
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-unarchive-submit)
+    (archive-repo (getf repo :id) :archived nil)
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-visibility-submit
     ("/:owner/:repo-name/settings/visibility" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-visibility-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-visibility-submit "Forbidden"))
-      (let* ((make-private (when (hunchentoot:post-parameter "private") t))
-             (was-private (getf repo :is-private)))
-        (set-repo-visibility (getf repo :id) :private make-private)
-        ;; Going private->public: re-index so the repo becomes searchable
-        ;; immediately (search visibility is enforced at query time, so no
-        ;; de-index is needed when going public->private).
-        (when (and was-private (not make-private))
-          (zoekt-index-repo owner repo-name)))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-visibility-submit)
+    (let* ((make-private (when (hunchentoot:post-parameter "private") t))
+           (was-private (getf repo :is-private)))
+      (set-repo-visibility (getf repo :id) :private make-private)
+      ;; Going private->public: re-index so the repo becomes searchable
+      ;; immediately (search visibility is enforced at query time, so no
+      ;; de-index is needed when going public->private).
+      (when (and was-private (not make-private))
+        (zoekt-index-repo owner repo-name)))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-delete-submit
     ("/:owner/:repo-name/settings/delete" :method :post) ()
@@ -2148,16 +2096,14 @@ leaking the viewer's IP or breaking HTTPS."
 
 ;; Automation runs page
 (easy-routes:defroute runs-page ("/:owner/:repo-name/runs" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from runs-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (html-response
      (view-runs :owner-name owner :repo repo
                 :runs (list-automation-runs (getf repo :id))
                 :workflow-runs (list-workflow-runs (getf repo :id))))))
 
 (easy-routes:defroute pulse-page ("/:owner/:repo-name/pulse" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from pulse-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     ;; Pulse is owner/member-only — it exposes referrers, visitor counts,
     ;; and per-contributor activity that the public doesn't need to see.
     (unless (and *current-user-id*
@@ -2203,8 +2149,7 @@ leaking the viewer's IP or breaking HTTPS."
   (and *current-user-id* (repo-member-role (getf repo :id) *current-user-id*)))
 
 (easy-routes:defroute releases-page ("/:owner/:repo-name/releases" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from releases-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((releases (list-releases (getf repo :id)))
            (assets-by-release
             (let ((h (make-hash-table)))
@@ -2219,8 +2164,7 @@ leaking the viewer's IP or breaking HTTPS."
                       :can-create (and (member-of-repo-p repo) t))))))
 
 (easy-routes:defroute new-release-page ("/:owner/:repo-name/releases/new" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from new-release-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (member-of-repo-p repo)
       (return-from new-release-page (not-found)))
     (let* ((disk-path (repo-disk-path owner repo-name))
@@ -2229,8 +2173,7 @@ leaking the viewer's IP or breaking HTTPS."
        (view-new-release :owner-name owner :repo repo :existing-tags existing-tags)))))
 
 (easy-routes:defroute create-release-submit ("/:owner/:repo-name/releases/new" :method :post) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from create-release-submit repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (member-of-repo-p repo)
       (return-from create-release-submit (not-found)))
     (let* ((tag-name (string-trim '(#\Space) (or (hunchentoot:post-parameter "tag_name") "")))
@@ -2270,8 +2213,7 @@ leaking the viewer's IP or breaking HTTPS."
       (hunchentoot:redirect (format nil "/~A/~A/releases/~A" owner repo-name tag-name)))))
 
 (easy-routes:defroute release-detail-page ("/:owner/:repo-name/releases/:tag" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from release-detail-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let ((release (find-release-by-tag (getf repo :id) tag)))
       (unless release (return-from release-detail-page (not-found)))
       (html-response
@@ -2282,8 +2224,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute delete-release-submit
     ("/:owner/:repo-name/releases/:tag/delete" :method :post) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from delete-release-submit repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (member-of-repo-p repo)
       (return-from delete-release-submit (not-found)))
     (let ((release (find-release-by-tag (getf repo :id) tag)))
@@ -2297,8 +2238,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute upload-release-asset
     ("/:owner/:repo-name/releases/:tag/upload" :method :post) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from upload-release-asset repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (member-of-repo-p repo)
       (return-from upload-release-asset (not-found)))
     (let ((release (find-release-by-tag (getf repo :id) tag)))
@@ -2339,8 +2279,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute delete-release-asset-submit
     ("/:owner/:repo-name/releases/:tag/assets/:asset-id/delete" :method :post) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from delete-release-asset-submit repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (unless (member-of-repo-p repo)
       (return-from delete-release-asset-submit (not-found)))
     (let* ((aid (parse-integer asset-id :junk-allowed t))
@@ -2352,8 +2291,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute release-asset-download
     ("/:owner/:repo-name/releases/download/:tag/:filename" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from release-asset-download repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let ((release (find-release-by-tag (getf repo :id) tag)))
       (unless release (return-from release-asset-download (not-found)))
       (let ((asset (find-release-asset-by-name (getf release :id) filename)))
@@ -2385,8 +2323,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute artifact-download-route
     ("/:owner/:repo-name/runs/w/:run-id/artifacts/:artifact-id" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from artifact-download-route repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((rid (parse-integer run-id :junk-allowed t))
            (aid (parse-integer artifact-id :junk-allowed t))
            (run (when rid (find-workflow-run rid)))
@@ -2409,8 +2346,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute workflow-run-detail-page
     ("/:owner/:repo-name/runs/w/:run-id" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from workflow-run-detail-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((rid (parse-integer run-id :junk-allowed t))
            (run (when rid (find-workflow-run rid))))
       (unless (and run (= (getf run :repo-id) (getf repo :id)))
@@ -2524,183 +2460,132 @@ leaking the viewer's IP or breaking HTTPS."
 ;; Automation definition management
 (easy-routes:defroute repo-add-automation-submit
     ("/:owner/:repo-name/settings/automations" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-add-automation-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-add-automation-submit "Forbidden"))
-      (let ((name (hunchentoot:post-parameter "name"))
-            (trigger (hunchentoot:post-parameter "trigger"))
-            (command (hunchentoot:post-parameter "command"))
-            (runner-labels (hunchentoot:post-parameter "runner_labels"))
-            (timeout (parse-integer (or (hunchentoot:post-parameter "timeout") "60")
-                                    :junk-allowed t)))
-        (when (and name command (not (uiop:emptyp name)) (not (uiop:emptyp command)))
-          (handler-case
-              (create-automation-definition
-               :repo-id (getf repo :id)
-               :name name :trigger trigger :command command
-               :runner-labels (or runner-labels "")
-               :timeout-seconds (or timeout 60))
-            (error () nil))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-add-automation-submit)
+    (let ((name (hunchentoot:post-parameter "name"))
+          (trigger (hunchentoot:post-parameter "trigger"))
+          (command (hunchentoot:post-parameter "command"))
+          (runner-labels (hunchentoot:post-parameter "runner_labels"))
+          (timeout (parse-integer (or (hunchentoot:post-parameter "timeout") "60")
+                                  :junk-allowed t)))
+      (when (and name command (not (uiop:emptyp name)) (not (uiop:emptyp command)))
+        (handler-case
+            (create-automation-definition
+             :repo-id (getf repo :id)
+             :name name :trigger trigger :command command
+             :runner-labels (or runner-labels "")
+             :timeout-seconds (or timeout 60))
+          (error () nil))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-delete-automation-submit
     ("/:owner/:repo-name/settings/automations/:auto-id/delete" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-delete-automation-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-delete-automation-submit "Forbidden"))
-      (let ((aid (parse-integer auto-id :junk-allowed t)))
-        (when aid (delete-automation-definition aid (getf repo :id))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-delete-automation-submit)
+    (let ((aid (parse-integer auto-id :junk-allowed t)))
+      (when aid (delete-automation-definition aid (getf repo :id))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 ;; Repo-scoped runner management
 (easy-routes:defroute repo-create-runner-token
     ("/:owner/:repo-name/settings/runners/token" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-create-runner-token (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-create-runner-token "Forbidden"))
-      (let ((token (create-registration-token :scope "repo" :scope-id (getf repo :id)
-                                              :created-by-id *current-user-id*)))
-        (html-response
-         (view-repo-settings :owner-name owner :repo repo
-                             :members (list-repo-members (getf repo :id))
-                             :checks (list-check-configs (getf repo :id))
-                             :mirrors (list-mirrors (getf repo :id))
-                             :webhooks (list-webhooks (getf repo :id))
-                             :automations (list-automation-definitions (getf repo :id))
-                             :runners (list-runners :scope "repo" :scope-id (getf repo :id))
-                             :secrets (list-secret-names "repo" (getf repo :id))
-                             :protected-branches (list-protected-branches (getf repo :id))
-                             :deploy-keys (list-deploy-keys (getf repo :id))
-                             :registration-token token))))))
+  (%with-repo-admin (repo owner repo-name repo-create-runner-token)
+    (let ((token (create-registration-token :scope "repo" :scope-id (getf repo :id)
+                                            :created-by-id *current-user-id*)))
+      (html-response
+       (view-repo-settings :owner-name owner :repo repo
+                           :members (list-repo-members (getf repo :id))
+                           :checks (list-check-configs (getf repo :id))
+                           :mirrors (list-mirrors (getf repo :id))
+                           :webhooks (list-webhooks (getf repo :id))
+                           :automations (list-automation-definitions (getf repo :id))
+                           :runners (list-runners :scope "repo" :scope-id (getf repo :id))
+                           :secrets (list-secret-names "repo" (getf repo :id))
+                           :protected-branches (list-protected-branches (getf repo :id))
+                           :deploy-keys (list-deploy-keys (getf repo :id))
+                           :registration-token token)))))
 
 (easy-routes:defroute repo-delete-runner
     ("/:owner/:repo-name/settings/runners/:runner-id/delete" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-delete-runner (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-delete-runner "Forbidden"))
-      (let ((rid (parse-integer runner-id :junk-allowed t)))
-        (when rid (delete-runner rid)))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-delete-runner)
+    (let ((rid (parse-integer runner-id :junk-allowed t)))
+      (when rid (delete-runner rid)))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-add-webhook-submit
     ("/:owner/:repo-name/settings/webhooks" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-add-webhook-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-add-webhook-submit "Forbidden"))
-      (let ((url (hunchentoot:post-parameter "url"))
-            (secret (hunchentoot:post-parameter "secret"))
-            (events (hunchentoot:post-parameter "events")))
-        (when (and url (not (uiop:emptyp url)))
-          (create-webhook :repo-id (getf repo :id)
-                          :url url
-                          :secret (unless (uiop:emptyp secret) secret)
-                          :events (or events "push,pull_request,issue"))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-add-webhook-submit)
+    (let ((url (hunchentoot:post-parameter "url"))
+          (secret (hunchentoot:post-parameter "secret"))
+          (events (hunchentoot:post-parameter "events")))
+      (when (and url (not (uiop:emptyp url)))
+        (create-webhook :repo-id (getf repo :id)
+                        :url url
+                        :secret (unless (uiop:emptyp secret) secret)
+                        :events (or events "push,pull_request,issue"))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-delete-webhook-submit
     ("/:owner/:repo-name/settings/webhooks/:webhook-id/delete" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-delete-webhook-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-delete-webhook-submit "Forbidden"))
-      (let ((wid (parse-integer webhook-id :junk-allowed t)))
-        (when wid (delete-webhook wid (getf repo :id))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-delete-webhook-submit)
+    (let ((wid (parse-integer webhook-id :junk-allowed t)))
+      (when wid (delete-webhook wid (getf repo :id))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-add-mirror-submit
     ("/:owner/:repo-name/settings/mirrors" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-add-mirror-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-add-mirror-submit "Forbidden"))
-      (let ((direction (hunchentoot:post-parameter "direction"))
-            (remote-url (hunchentoot:post-parameter "remote_url"))
-            (auth-token (hunchentoot:post-parameter "auth_token"))
-            (interval (parse-integer (or (hunchentoot:post-parameter "interval") "60")
-                                     :junk-allowed t)))
-        (when (and direction remote-url (not (uiop:emptyp remote-url)))
-          (let ((mirror (create-mirror :repo-id (getf repo :id)
-                                       :direction direction
-                                       :remote-url remote-url
-                                       :auth-token (unless (uiop:emptyp auth-token) auth-token)
-                                       :interval-minutes (or interval 60))))
-            ;; Immediately sync pull mirrors
-            (when (equal direction "pull")
-              (let ((token (unless (uiop:emptyp auth-token) auth-token)))
-                (multiple-value-bind (ok err)
-                    (chamber-pull-mirror owner repo-name remote-url token)
-                  (update-mirror-sync (getf mirror :id)
-                                      :error (unless ok err))))))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-add-mirror-submit)
+    (let ((direction (hunchentoot:post-parameter "direction"))
+          (remote-url (hunchentoot:post-parameter "remote_url"))
+          (auth-token (hunchentoot:post-parameter "auth_token"))
+          (interval (parse-integer (or (hunchentoot:post-parameter "interval") "60")
+                                   :junk-allowed t)))
+      (when (and direction remote-url (not (uiop:emptyp remote-url)))
+        (let ((mirror (create-mirror :repo-id (getf repo :id)
+                                     :direction direction
+                                     :remote-url remote-url
+                                     :auth-token (unless (uiop:emptyp auth-token) auth-token)
+                                     :interval-minutes (or interval 60))))
+          ;; Immediately sync pull mirrors
+          (when (equal direction "pull")
+            (let ((token (unless (uiop:emptyp auth-token) auth-token)))
+              (multiple-value-bind (ok err)
+                  (chamber-pull-mirror owner repo-name remote-url token)
+                (update-mirror-sync (getf mirror :id)
+                                    :error (unless ok err))))))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-delete-mirror-submit
     ("/:owner/:repo-name/settings/mirrors/:mirror-id/delete" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-delete-mirror-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-delete-mirror-submit "Forbidden"))
-      (let ((mid (parse-integer mirror-id :junk-allowed t)))
-        (when mid (delete-mirror mid (getf repo :id))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-delete-mirror-submit)
+    (let ((mid (parse-integer mirror-id :junk-allowed t)))
+      (when mid (delete-mirror mid (getf repo :id))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-add-check-submit
     ("/:owner/:repo-name/settings/checks" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-add-check-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-add-check-submit "Forbidden"))
-      (let ((name (hunchentoot:post-parameter "name"))
-            (command (hunchentoot:post-parameter "command"))
-            (timeout (parse-integer (or (hunchentoot:post-parameter "timeout") "60")
-                                    :junk-allowed t)))
-        (when (and name command (not (uiop:emptyp name)) (not (uiop:emptyp command)))
-          (handler-case
-              (create-check-config :repo-id (getf repo :id)
-                                   :name name :command command
-                                   :timeout-seconds (or timeout 60))
-            (error () nil))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-add-check-submit)
+    (let ((name (hunchentoot:post-parameter "name"))
+          (command (hunchentoot:post-parameter "command"))
+          (timeout (parse-integer (or (hunchentoot:post-parameter "timeout") "60")
+                                  :junk-allowed t)))
+      (when (and name command (not (uiop:emptyp name)) (not (uiop:emptyp command)))
+        (handler-case
+            (create-check-config :repo-id (getf repo :id)
+                                 :name name :command command
+                                 :timeout-seconds (or timeout 60))
+          (error () nil))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 (easy-routes:defroute repo-delete-check-submit
     ("/:owner/:repo-name/settings/checks/:check-id/delete" :method :post) ()
-  (when (require-login)
-    (let ((repo (find-repo owner repo-name)))
-      (unless repo (return-from repo-delete-check-submit (not-found)))
-      (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
-        (setf (hunchentoot:return-code*) 403)
-        (return-from repo-delete-check-submit "Forbidden"))
-      (let ((cid (parse-integer check-id :junk-allowed t)))
-        (when cid (delete-check-config cid (getf repo :id))))
-      (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name)))))
+  (%with-repo-admin (repo owner repo-name repo-delete-check-submit)
+    (let ((cid (parse-integer check-id :junk-allowed t)))
+      (when cid (delete-check-config cid (getf repo :id))))
+    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
 
 ;; Routes: Issues
 
 (easy-routes:defroute issues-page ("/:owner/:repo-name/issues" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from issues-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (label-filter (hunchentoot:get-parameter "label"))
            (issues (list-issues (getf repo :id) :status status))
@@ -2732,16 +2617,14 @@ leaking the viewer's IP or breaking HTTPS."
                       :all-labels (labels-in-repo (getf repo :id))))))))
 
 (easy-routes:defroute deps-page ("/:owner/:repo-name/deps" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from deps-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (html-response
      (view-dependencies :owner-name owner :repo repo
                         :alerts (list-dep-alerts-detailed (getf repo :id) :state "open")
                         :deps (list-repo-deps (getf repo :id))))))
 
 (easy-routes:defroute milestones-page ("/:owner/:repo-name/milestones" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from milestones-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((milestones (list-milestones (getf repo :id) :state nil))
            (counts (let ((h (make-hash-table)))
                      (dolist (m milestones)
@@ -2756,8 +2639,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute create-milestone-submit
     ("/:owner/:repo-name/milestones" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from create-milestone-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (unless (member-of-repo-p repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from create-milestone-submit "Forbidden"))
@@ -2770,8 +2652,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute milestone-close-submit
     ("/:owner/:repo-name/milestones/:id/close" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from milestone-close-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (unless (member-of-repo-p repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from milestone-close-submit "Forbidden"))
@@ -2782,8 +2663,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute milestone-delete-submit
     ("/:owner/:repo-name/milestones/:id/delete" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from milestone-delete-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (unless (member-of-repo-p repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from milestone-delete-submit "Forbidden"))
@@ -2794,8 +2674,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute new-issue-page
     ("/:owner/:repo-name/issues/new" :method :get) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from new-issue-page repo))
+    (with-visible-repo (repo owner repo-name #'not-found)
       ;; Allow ?body=… so the blob-view line menu can pre-fill a permalink
       ;; reference; otherwise fall back to the repo's issue template if present.
       (html-response (view-new-issue :owner-name owner :repo repo
@@ -2805,8 +2684,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute create-issue-submit
     ("/:owner/:repo-name/issues/new" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from create-issue-submit repo))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (let ((issue (create-issue :repo-id (getf repo :id)
                                  :author-id *current-user-id*
                                  :title (hunchentoot:post-parameter "title")
@@ -2822,8 +2700,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute issue-page
     ("/:owner/:repo-name/issues/:number" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from issue-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((num (parse-integer number :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
       (unless issue (return-from issue-page (not-found)))
@@ -2852,8 +2729,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute issue-react-submit
     ("/:owner/:repo-name/issues/:number/react" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from issue-react-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (let* ((num (parse-integer number :junk-allowed t))
              (issue (when num (find-issue (getf repo :id) num)))
              (emoji (hunchentoot:post-parameter "emoji"))
@@ -2871,8 +2747,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute issue-pin-submit
     ("/:owner/:repo-name/issues/:number/pin" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from issue-pin-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (unless (member-of-repo-p repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from issue-pin-submit "Forbidden"))
@@ -2888,8 +2763,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute issue-meta-submit
     ("/:owner/:repo-name/issues/:number/meta" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from issue-meta-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (unless (member-of-repo-p repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from issue-meta-submit "Forbidden"))
@@ -2958,8 +2832,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute pulls-page
     ("/:owner/:repo-name/pulls" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from pulls-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (pulls (list-pull-requests (getf repo :id) :status status)))
       (html-response
@@ -2969,8 +2842,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute new-pull-request-page
     ("/:owner/:repo-name/pulls/new" :method :get) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from new-pull-request-page (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (let* ((branches (chamber-get-branches owner repo-name))
              (default-branch (or (chamber-get-default-branch owner repo-name) "main")))
         (html-response
@@ -2981,8 +2853,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute create-pull-request-submit
     ("/:owner/:repo-name/pulls/new" :method :post) ()
   (when (require-login)
-    (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-      (unless repo (return-from create-pull-request-submit (not-found)))
+    (with-visible-repo (repo owner repo-name #'not-found)
       (let* ((source (hunchentoot:post-parameter "source_branch"))
              (target (hunchentoot:post-parameter "target_branch"))
              (disk-path (repo-disk-path owner repo-name))
@@ -3017,8 +2888,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute pull-request-page
     ("/:owner/:repo-name/pulls/:number" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from pull-request-page repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((num (parse-integer number :junk-allowed t))
            (pr (when num (find-pull-request (getf repo :id) num))))
       (unless pr (return-from pull-request-page (not-found)))
@@ -3103,8 +2973,7 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute pull-request-interdiff
     ("/:owner/:repo-name/pulls/:number/interdiff" :method :get) (&get from to)
   "Show the interdiff (git range-diff) between two rounds of a pull request."
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from pull-request-interdiff repo))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((num (parse-integer number :junk-allowed t))
            (pr (when num (find-pull-request (getf repo :id) num)))
            (vf (and pr from (find-changeset-version (getf pr :id)
@@ -3129,8 +2998,7 @@ leaking the viewer's IP or breaking HTTPS."
 
 (easy-routes:defroute pull-request-checks-json
     ("/:owner/:repo-name/pulls/:number/checks.json" :method :get) ()
-  (let ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found)))
-    (unless repo (return-from pull-request-checks-json (not-found)))
+  (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((num (parse-integer number :junk-allowed t))
            (pr (when num (find-pull-request (getf repo :id) num))))
       (unless pr (return-from pull-request-checks-json (not-found)))
