@@ -12,13 +12,13 @@
 SEGMENTS are inserted verbatim; use TREE-URL / BLOB-URL for ?path= links."
   (format nil "/~A/~A~{/~A~}" owner repo segments))
 
-(defun issue-url (owner repo number)
-  "Permalink to issue NUMBER in OWNER/REPO."
-  (format nil "/~A/~A/issues/~A" owner repo number))
+(defun issue-url (owner repo num)
+  "Permalink to issue NUM in OWNER/REPO."
+  (format nil "/~A/~A/issues/~A" owner repo num))
 
-(defun pr-url (owner repo number)
-  "Permalink to pull request NUMBER in OWNER/REPO."
-  (format nil "/~A/~A/pulls/~A" owner repo number))
+(defun pr-url (owner repo num)
+  "Permalink to pull request NUM in OWNER/REPO."
+  (format nil "/~A/~A/pulls/~A" owner repo num))
 
 (defun tree-url (owner repo ref path)
   "Directory-listing URL. REF and PATH are url-encoded so branch names with
