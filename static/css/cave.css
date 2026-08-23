@@ -645,6 +645,10 @@ code {
   color: var(--text-secondary);
 }
 .blob-meta .blob-size { margin-left: auto; color: var(--text-muted); }
+.blob-view-toggle .btn { border-radius: 0; margin-left: -1px; }
+.blob-view-toggle .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+.blob-view-toggle .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.blob-view-toggle .btn-active { z-index: 1; position: relative; }
 #editor-container {
   border: 1px solid var(--border);
   border-radius: 0 0 var(--radius) var(--radius);

@@ -1138,8 +1138,12 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
     (get-output-stream-string out)))
 
 (defun view-blob (&key owner-name repo ref path content is-binary file-size language
-                       branches tags default-branch)
-  "Render a file content page with Monaco editor."
+                       branches tags default-branch
+                       is-markdown (view-mode :source) rendered-html)
+  "Render a file content page.
+Markdown files render to HTML by default (VIEW-MODE :rendered, RENDERED-HTML
+supplied); VIEW-MODE :source shows the Monaco source viewer. A Raw link always
+serves the unrendered bytes."
   (let ((repo-name (getf repo :name))
         (filename (let ((slash (position #\/ path :from-end t)))
                     (if slash (subseq path (1+ slash)) path))))
@@ -1186,10 +1190,27 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                 ((> file-size 1024)
                  (format nil "~,1f KB" (/ file-size 1024.0)))
                 (t (format nil "~A bytes" file-size)))))
-       (:a.btn.btn-sm :href (format nil "/~A/~A/raw/~A?path=~A"
+       (:div.blob-view-toggle :style "margin-left:auto;display:flex;gap:0"
+        (when is-markdown
+          (if (eq view-mode :rendered)
+              (:span.btn.btn-sm.btn-active "Rendered")
+              (:a.btn.btn-sm :href (format nil "/~A/~A/blob/~A?path=~A"
+                                           owner-name repo-name ref path)
+               "Rendered")))
+        (when is-markdown
+          (if (eq view-mode :source)
+              (:span.btn.btn-sm.btn-active "Source")
+              (:a.btn.btn-sm :href (format nil "/~A/~A/blob/~A?path=~A&view=source"
+                                           owner-name repo-name ref path)
+               "Source")))
+        (:a.btn.btn-sm :href (format nil "/~A/~A/raw/~A?path=~A"
                                      owner-name repo-name ref path)
-        "Raw"))
+         "Raw")))
       (cond
+        ((and (eq view-mode :rendered) rendered-html)
+         (:div.readme-content
+          :style "background:var(--surface);border:1px solid var(--border);border-top:none;padding:var(--sp-6)"
+          (:raw rendered-html)))
         (is-binary
          (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
           (:p "Binary file — not displayed.")

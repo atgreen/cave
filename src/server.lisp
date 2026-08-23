@@ -1685,6 +1685,32 @@ leaking the viewer's IP or breaking HTTPS."
              (content (when (and (not is-binary) (<= file-size (* 2 1024 1024)))
                         (chamber-get-blob owner repo-name ref path)))
              (language (file-language path))
+             (is-markdown (and language (string= language "markdown")))
+             ;; Markdown renders to HTML by default; ?view=source shows the
+             ;; Monaco source view. Non-markdown files are always source.
+             (view-mode (if (and is-markdown
+                                  content
+                                  (not (member (hunchentoot:get-parameter "view")
+                                               '("source" "code" "raw") :test #'equal)))
+                            :rendered
+                            :source))
+             ;; Relative image src in the markdown resolves against the file's
+             ;; own directory, so the raw base points there (not the repo root).
+             (dir (let ((slash (position #\/ path :from-end t)))
+                    (if slash (subseq path 0 (1+ slash)) "")))
+             (raw-base-url (format nil "~A/~A/~A/raw/~A?path=~A"
+                                   (config-value :base-url "http://localhost:8080")
+                                   owner repo-name (or ref "HEAD") dir))
+             ;; Reuse the rendered-markdown cache, content-addressed by
+             ;; (blob-sha . raw-base-url) exactly as the README path does.
+             (rendered-html
+               (when (eq view-mode :rendered)
+                 (let* ((cache-key (cons (getf info :hash) raw-base-url))
+                        (cached (readme-cache-get cache-key)))
+                   (or cached
+                       (readme-cache-put
+                        cache-key
+                        (render-markdown content :raw-base-url raw-base-url))))))
              (default-branch (or (chamber-get-default-branch owner repo-name) "main"))
              (branches (chamber-get-branches owner repo-name))
              (tags (chamber-get-tags owner repo-name)))
@@ -1694,6 +1720,9 @@ leaking the viewer's IP or breaking HTTPS."
                     :is-binary is-binary
                     :file-size file-size
                     :language language
+                    :is-markdown is-markdown
+                    :view-mode view-mode
+                    :rendered-html rendered-html
                     :branches branches :tags tags
                     :default-branch default-branch))))))
 
