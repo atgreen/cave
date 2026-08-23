@@ -81,7 +81,10 @@
                 (:file "src/runner-service")
                 (:file "src/ssh")
                 (:file "src/server")
-                (:file "src/main"))
+                (:file "src/main-admin")
+                (:file "src/main-git")
+                (:file "src/main-runner")
+                (:file "src/main-app"))
   :build-operation "program-op"
   :build-pathname "cave-server"
   :entry-point "cave:main")
