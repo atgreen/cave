@@ -44,9 +44,22 @@ jobs:
           sudo dpkg -i /tmp/ocicl_*_amd64.deb
           ocicl setup > ~/.sbclrc
 
+      # ocicl install exits 0 even when downloads fail (transient ghcr.io
+      # throttling), which used to surface later as a baffling ASDF
+      # MISSING-DEPENDENCY. It is incremental, so retrying only refetches
+      # the systems that failed.
       - name: Fetch Lisp dependencies
         if: matrix.name == 'cave' || matrix.name == 'cave-runner'
-        run: ocicl install
+        run: |
+          for attempt in 1 2 3 4 5; do
+            out=$(ocicl install 2>&1)
+            echo "$out"
+            echo "$out" | grep -q "error downloading" || exit 0
+            echo "::warning::ocicl download errors on attempt $attempt; retrying"
+            sleep 30
+          done
+          echo "::error::ocicl install still failing after 5 attempts"
+          exit 1
 
       # Containerfile.local (used by the cave image) needs cave-server, cave
       # (the CLI), and zoekt-git-index pre-built and present in the build
