@@ -287,157 +287,151 @@ real, browsable repos."
   (let ((config-path (clingon:getopt cmd :config))
         (port-override (clingon:getopt cmd :port))
         (slynk-port (clingon:getopt cmd :slynk-port)))
-
-    ;; Load environment variables if .env exists
-    (handler-case (.env:load-env (merge-pathnames ".env"))
-      (file-error () nil)
-      (.env:malformed-entry ()
-        (format *error-output* "Malformed entry in .env~%")
-        (uiop:quit 1)))
-
-    (load-config config-path)
-    (ensure-data-dirs)
-
-    ;; Connect to database and check schema
-    (handler-case (connect-db)
-      (error (e)
-        (format *error-output*
-                "~&Failed to connect to database ~A@~A:~A~%  ~A~%~%~
-                 Make sure PostgreSQL is running and the database exists:~%  ~
-                 sudo dnf install postgresql-server postgresql~%  ~
-                 sudo postgresql-setup --initdb~%  ~
-                 sudo systemctl enable --now postgresql~%  ~
-                 sudo -u postgres createuser --createdb cave~%  ~
-                 sudo -u postgres createdb -O cave cave~%"
-                (config-value :db-name)
-                (config-value :db-host)
-                (config-value :db-port)
-                e)
-        (uiop:quit 1)))
-    (handler-case (check-schema-version)
-      (error (e)
-        (format *error-output* "~&~A~%Run: cave-server migrate --config ~A~%"
-                e config-path)
-        (uiop:quit 1)))
-
-    ;; Initialize the embedded Usher OIDC provider (migrates usher_* tables,
-    ;; loads/persists signing keys, registers the cave client).
+    (%serve-load-environment config-path)
+    (%serve-connect-db config-path)
+    ;; Embedded Usher OIDC provider (migrates usher_* tables, loads/persists
+    ;; signing keys, registers the cave client).
     (handler-case (init-usher)
       (error (e)
         (format *error-output* "~&Embedded Usher init failed: ~A~%" e)
         (uiop:quit 1)))
-
-    ;; Ensure the cave system org exists, then pre-populate the system repos:
-    ;; created if missing, seeded if empty.
-    (unless (find-org-by-name "cave")
-      (handler-case
-          (progn
-            (postmodern:query
-             (:insert-into 'cave-orgs
-              :set 'name "cave"
-                   'display-name "Cave"
-                   'description "System organization"
-              :returning '*)
-             :plist)
-            (llog:info "Created cave org"))
-        (error () nil)))
-    (ensure-system-repo "cave-themes" "Built-in and community themes for Cave"
-                        "static/seed/cave-themes/" "Seed example theme and documentation")
-    (ensure-system-repo "cave-landing" "Landing page content for this Cave instance"
-                        "static/seed/cave-landing/" "Seed default landing page")
-
-    ;; The `actions` org hosts cave-native uses: actions as real, browsable repos.
-    (unless (find-org-by-name "actions")
-      (handler-case
-          (progn
-            (postmodern:query
-             (:insert-into 'cave-orgs
-              :set 'name "actions"
-                   'display-name "Actions"
-                   'description "Cave-native uses: actions"
-              :returning '*)
-             :plist)
-            (llog:info "Created actions org"))
-        (error () nil)))
-    (ensure-action-repo "checkout" "Check out the workflow repository (cave-native)"
-                        "static/seed/actions/checkout/" "Seed actions/checkout" '("v4"))
-    (ensure-action-repo "cache" "Cache files between workflow runs (cave-native)"
-                        "static/seed/actions/cache/" "Seed actions/cache" '("v4"))
-    (ensure-action-repo "upload-artifact" "Upload a build artifact (cave-native)"
-                        "static/seed/actions/upload-artifact/" "Seed actions/upload-artifact" '("v4"))
-    (ensure-action-repo "download-artifact" "Download a build artifact (cave-native)"
-                        "static/seed/actions/download-artifact/" "Seed actions/download-artifact" '("v4"))
-
+    (%ensure-system-content)
     (let ((port (or port-override (config-value :http-port 8080))))
       (bt2:with-lock-held (*server-lock*)
-        ;; Slynk
         (when slynk-port
           (slynk:create-server :port slynk-port :interface "0.0.0.0" :dont-close t)
           (llog:info "Slynk server started" :port slynk-port))
-
-        ;; Start Chamber (git storage service)
-        (when (config-value :chamber-enabled)
-          (let ((chamber-port (config-value :chamber-port 9444)))
-            (handler-case
-                (start-chamber chamber-port)
-              (error (e)
-                (llog:warn "Chamber failed to start — using direct git"
-                           :error (princ-to-string e))))))
-
-        ;; Start multi-chamber router if configured
-        (let ((nodes (config-value :chamber-nodes)))
-          (when (and nodes (> (length nodes) 1))
-            (handler-case
-                (progn
-                  (init-chamber-router nodes)
-                  (start-chamber-health-checker))
-              (error (e)
-                (llog:warn "Chamber router failed to start"
-                           :error (princ-to-string e))))))
-
-        ;; Start HTTP
+        (%start-chamber-if-configured)
         (start-server port)
-
         ;; Refresh hooks on disk so the script matches the current binary
         ;; (carries any new query params, new event types, etc.)
         (handler-case (reinstall-all-hooks)
           (error (e)
             (llog:warn "Hook sweep failed" :error (princ-to-string e))))
-
-        ;; Start gRPC runner service
-        (let ((grpc-port (config-value :grpc-port 9443)))
-          (handler-case
-              (progn
-                (start-grpc-server grpc-port)
-                (llog:info "gRPC runner service started" :port grpc-port))
-            (error (e)
-              (llog:warn "gRPC server failed to start — runners disabled"
-                         :error (princ-to-string e)
-                         :detail (with-output-to-string (s)
-                                   (trivial-backtrace:print-backtrace-to-stream s))))))
-        ;; In-process periodic scheduler (advisory sync, mirror pulls). Built in
-        ;; so deployment stays self-contained — no host cron/systemd timers.
-        (when (config-value :scheduler-enabled t)
-          (bt2:make-thread
-           (lambda ()
-             (loop
-               ;; Tick at the finest task cadence (reap claims at 120s); each
-               ;; task is DB-claimed at its own interval, so a short tick just
-               ;; means cheap claim checks, not duplicate work.
-               (sleep 60)
-               (handler-case
-                   (postmodern:with-connection *db-spec* (run-scheduled-tasks))
-                 (error (e) (llog:warn "Scheduler tick failed"
-                                       :error (princ-to-string e))))))
-           :name "cave-scheduler")
-          (llog:info "Scheduler started"
-                     :advisory-sync-interval-hours
-                     (config-value :advisory-sync-interval-hours 24)))
-
+        (%start-runner-grpc)
+        (%start-scheduler)
         (llog:info "Cave listening" :version +version+ :port port)
-
         ;; Wait forever
         (bt2:condition-wait *shutdown-cv* *server-lock*)))))
+
+(defun %serve-load-environment (config-path)
+  "Load .env (when present) and the cave.conf at CONFIG-PATH; ensure data dirs."
+  (handler-case (.env:load-env (merge-pathnames ".env"))
+    (file-error () nil)
+    (.env:malformed-entry ()
+      (format *error-output* "Malformed entry in .env~%")
+      (uiop:quit 1)))
+  (load-config config-path)
+  (ensure-data-dirs))
+
+(defun %serve-connect-db (config-path)
+  "Connect to PostgreSQL and require an up-to-date schema; exit with advice
+on failure."
+  (handler-case (connect-db)
+    (error (e)
+      (format *error-output*
+              "~&Failed to connect to database ~A@~A:~A~%  ~A~%~%~
+               Make sure PostgreSQL is running and the database exists:~%  ~
+               sudo dnf install postgresql-server postgresql~%  ~
+               sudo postgresql-setup --initdb~%  ~
+               sudo systemctl enable --now postgresql~%  ~
+               sudo -u postgres createuser --createdb cave~%  ~
+               sudo -u postgres createdb -O cave cave~%"
+              (config-value :db-name)
+              (config-value :db-host)
+              (config-value :db-port)
+              e)
+      (uiop:quit 1)))
+  (handler-case (check-schema-version)
+    (error (e)
+      (format *error-output* "~&~A~%Run: cave-server migrate --config ~A~%"
+              e config-path)
+      (uiop:quit 1))))
+
+(defun %ensure-org (name display-name description)
+  "Create org NAME when missing; ignore races and failures."
+  (unless (find-org-by-name name)
+    (handler-case
+        (progn
+          (postmodern:query
+           (:insert-into 'cave-orgs
+            :set 'name name 'display-name display-name 'description description
+            :returning '*)
+           :plist)
+          (llog:info "Created org" :org name))
+      (error () nil))))
+
+(defun %ensure-system-content ()
+  "Pre-populate the cave system org + repos and the actions org + action repos:
+created if missing, seeded if empty."
+  (%ensure-org "cave" "Cave" "System organization")
+  (ensure-system-repo "cave-themes" "Built-in and community themes for Cave"
+                      "static/seed/cave-themes/" "Seed example theme and documentation")
+  (ensure-system-repo "cave-landing" "Landing page content for this Cave instance"
+                      "static/seed/cave-landing/" "Seed default landing page")
+  ;; The `actions` org hosts cave-native uses: actions as real, browsable repos.
+  (%ensure-org "actions" "Actions" "Cave-native uses: actions")
+  (ensure-action-repo "checkout" "Check out the workflow repository (cave-native)"
+                      "static/seed/actions/checkout/" "Seed actions/checkout" '("v4"))
+  (ensure-action-repo "cache" "Cache files between workflow runs (cave-native)"
+                      "static/seed/actions/cache/" "Seed actions/cache" '("v4"))
+  (ensure-action-repo "upload-artifact" "Upload a build artifact (cave-native)"
+                      "static/seed/actions/upload-artifact/" "Seed actions/upload-artifact" '("v4"))
+  (ensure-action-repo "download-artifact" "Download a build artifact (cave-native)"
+                      "static/seed/actions/download-artifact/" "Seed actions/download-artifact" '("v4")))
+
+(defun %start-chamber-if-configured ()
+  "Start the Chamber git-storage service and, with 2+ configured nodes, the
+multi-chamber router. Failures degrade to direct git, never abort serve."
+  (when (config-value :chamber-enabled)
+    (let ((chamber-port (config-value :chamber-port 9444)))
+      (handler-case
+          (start-chamber chamber-port)
+        (error (e)
+          (llog:warn "Chamber failed to start — using direct git"
+                     :error (princ-to-string e))))))
+  (let ((nodes (config-value :chamber-nodes)))
+    (when (and nodes (> (length nodes) 1))
+      (handler-case
+          (progn
+            (init-chamber-router nodes)
+            (start-chamber-health-checker))
+        (error (e)
+          (llog:warn "Chamber router failed to start"
+                     :error (princ-to-string e)))))))
+
+(defun %start-runner-grpc ()
+  "Start the gRPC runner service; on failure log and continue without runners."
+  (let ((grpc-port (config-value :grpc-port 9443)))
+    (handler-case
+        (progn
+          (start-grpc-server grpc-port)
+          (llog:info "gRPC runner service started" :port grpc-port))
+      (error (e)
+        (llog:warn "gRPC server failed to start — runners disabled"
+                   :error (princ-to-string e)
+                   :detail (with-output-to-string (s)
+                             (trivial-backtrace:print-backtrace-to-stream s)))))))
+
+(defun %start-scheduler ()
+  "In-process periodic scheduler (advisory sync, mirror pulls). Built in so
+deployment stays self-contained — no host cron/systemd timers."
+  (when (config-value :scheduler-enabled t)
+    (bt2:make-thread
+     (lambda ()
+       (loop
+         ;; Tick at the finest task cadence (reap claims at 120s); each
+         ;; task is DB-claimed at its own interval, so a short tick just
+         ;; means cheap claim checks, not duplicate work.
+         (sleep 60)
+         (handler-case
+             (postmodern:with-connection *db-spec* (run-scheduled-tasks))
+           (error (e) (llog:warn "Scheduler tick failed"
+                                 :error (princ-to-string e))))))
+     :name "cave-scheduler")
+    (llog:info "Scheduler started"
+               :advisory-sync-interval-hours
+               (config-value :advisory-sync-interval-hours 24))))
 
 (defun %scheduled-mirror-pull ()
   "Pull every due pull-mirror (each gated by its own interval_minutes)."

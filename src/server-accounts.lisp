@@ -612,24 +612,30 @@ leaking the viewer's IP or breaking HTTPS."
 ;; ----------------------------------------------------------------------------
 ;; Routes: User profile (public repos listing)
 
+(defun %user-profile-response (user)
+  "The rendered profile page for USER; private repos shown only to themselves."
+  (let* ((is-self (and *current-user-id* (= *current-user-id* (getf user :id))))
+         (repos (list-user-repos (getf user :id) :include-private is-self)))
+    (html-response (view-user-profile :user user :repos repos :is-self is-self))))
+
+(defun %org-page-response (org)
+  "The rendered org page; private repos shown only to members."
+  (let* ((is-member (and *current-user-id*
+                         (org-member-role (getf org :id) *current-user-id*)))
+         (repos (list-org-repos (getf org :id) :include-private is-member)))
+    (html-response (view-org :org org :repos repos :is-member is-member
+                             :is-admin (equal is-member "admin")))))
+
 (easy-routes:defroute user-profile-page ("/u/:username" :method :get) ()
   (let ((user (find-user-by-username username)))
-    (unless user (return-from user-profile-page (not-found)))
-    (let* ((is-self (and *current-user-id* (= *current-user-id* (getf user :id))))
-           (repos (list-user-repos (getf user :id) :include-private is-self)))
-      (html-response (view-user-profile :user user :repos repos :is-self is-self)))))
+    (if user (%user-profile-response user) (not-found))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Orgs (keep /o/ prefix for explicit org access)
 
 (easy-routes:defroute org-page ("/o/:org-name" :method :get) ()
   (let ((org (find-org-by-name org-name)))
-    (unless org (return-from org-page (not-found)))
-    (let* ((is-member (and *current-user-id*
-                           (org-member-role (getf org :id) *current-user-id*)))
-           (repos (list-org-repos (getf org :id) :include-private is-member)))
-      (html-response (view-org :org org :repos repos :is-member is-member
-                               :is-admin (equal is-member "admin"))))))
+    (if org (%org-page-response org) (not-found))))
 
 (easy-routes:defroute org-settings-page ("/o/:org-name/-/settings" :method :get) ()
   (when (require-login)
@@ -701,18 +707,8 @@ leaking the viewer's IP or breaking HTTPS."
 (easy-routes:defroute owner-page ("/:name" :method :get) ()
   ;; Try user first, then org
   (let ((user (find-user-by-username name)))
-    (when user
-      (let* ((is-self (and *current-user-id* (= *current-user-id* (getf user :id))))
-             (repos (list-user-repos (getf user :id) :include-private is-self)))
-        (return-from owner-page
-          (html-response (view-user-profile :user user :repos repos :is-self is-self))))))
+    (when user (return-from owner-page (%user-profile-response user))))
   (let ((org (find-org-by-name name)))
-    (when org
-      (let* ((is-member (and *current-user-id*
-                             (org-member-role (getf org :id) *current-user-id*)))
-             (repos (list-org-repos (getf org :id) :include-private is-member)))
-        (return-from owner-page
-          (html-response (view-org :org org :repos repos :is-member is-member
-                                   :is-admin (equal is-member "admin")))))))
+    (when org (return-from owner-page (%org-page-response org))))
   (not-found))
 

@@ -45,6 +45,14 @@
   (disconnect-db)
   (uiop:quit 1))
 
+(defun git-shell-succeed (stdout user-id owner-name repo-name)
+  "Print USER-ID then the repo disk path (the cave-shell.sh contract) and exit."
+  (disconnect-db)
+  (format stdout "~D~%~A~%"
+          user-id (namestring (repo-disk-path owner-name repo-name)))
+  (finish-output stdout)
+  (uiop:quit 0))
+
 (defun handle-git-shell (cmd)
   "Authenticate an SSH git operation. Prints the on-disk repo path to stdout.
    All log output goes to stderr so it doesn't corrupt the path."
@@ -67,57 +75,48 @@
 
     (let ((ssh-cmd (uiop:getenv "SSH_ORIGINAL_COMMAND")))
       (unless ssh-cmd (git-shell-fail "interactive shell access is not supported"))
-
       (multiple-value-bind (git-command repo-path) (parse-ssh-command ssh-cmd)
         (unless git-command (git-shell-fail "invalid git command"))
-
         (multiple-value-bind (owner-name repo-name) (parse-repo-from-path repo-path)
           (unless (and owner-name repo-name) (git-shell-fail "invalid repository path"))
+          (let ((is-push (equal git-command "git-receive-pack")))
+            (if (and (stringp key-id) (uiop:string-prefix-p "d" key-id))
+                (git-shell-auth-deploy-key key-id owner-name repo-name is-push saved-stdout)
+                (git-shell-auth-user-key key-id owner-name repo-name is-push saved-stdout))))))))
 
-          (if (and (stringp key-id) (uiop:string-prefix-p "d" key-id))
-              ;; --- Deploy key: scoped to one repo; clone always, push iff RW ---
-              (let* ((deploy-id (parse-integer (subseq key-id 1) :junk-allowed t))
-                     (dk (and deploy-id (find-deploy-key-by-id deploy-id)))
-                     (repo (find-repo owner-name repo-name))
-                     (is-push (equal git-command "git-receive-pack")))
-                (unless dk (git-shell-fail "invalid key"))
-                (unless repo (git-shell-fail "repository not found"))
-                (unless (eql (getf dk :repo-id) (getf repo :id))
-                  (git-shell-fail "repository not found"))
-                (when (and is-push (not (getf dk :read-write)))
-                  (git-shell-fail "permission denied (read-only deploy key)"))
-                (unless is-push (log-event "git.clone" :repo-id (getf repo :id)))
-                (disconnect-db)
-                (format saved-stdout "~D~%~A~%"
-                        0 (namestring (repo-disk-path owner-name repo-name)))
-                (finish-output saved-stdout)
-                (uiop:quit 0))
-              ;; --- User key (the common path) ---
-              (let* ((kid (parse-integer (princ-to-string key-id) :junk-allowed t))
-                     (key-record (and kid (find-ssh-key-by-id kid))))
-                (unless key-record (git-shell-fail "invalid key"))
-                (let* ((user-id (getf key-record :user-id))
-                       (user (find-user-by-id user-id)))
-                  (unless (and user (getf user :is-active))
-                    (git-shell-fail "account disabled"))
-                  (let ((repo (find-repo owner-name repo-name)))
-                    (unless repo (git-shell-fail "repository not found"))
-                    (let ((role (repo-member-role (getf repo :id) user-id))
-                          (is-push (equal git-command "git-receive-pack")))
-                      (when (and (getf repo :is-private) (not role))
-                        (git-shell-fail "repository not found"))
-                      (when (and is-push (not role))
-                        (git-shell-fail "permission denied"))
-                      (unless is-push
-                        (log-event "git.clone"
-                                   :user-id user-id
-                                   :repo-id (getf repo :id)))
-                      (disconnect-db)
-                      (format saved-stdout "~D~%~A~%"
-                              user-id
-                              (namestring (repo-disk-path owner-name repo-name)))
-                      (finish-output saved-stdout)
-                      (uiop:quit 0)))))))))))
+(defun git-shell-auth-deploy-key (key-id owner-name repo-name is-push stdout)
+  "Deploy key (d<id>): scoped to one repo; clone always, push iff read-write."
+  (let* ((deploy-id (parse-integer (subseq key-id 1) :junk-allowed t))
+         (dk (and deploy-id (find-deploy-key-by-id deploy-id)))
+         (repo (find-repo owner-name repo-name)))
+    (unless dk (git-shell-fail "invalid key"))
+    (unless repo (git-shell-fail "repository not found"))
+    (unless (eql (getf dk :repo-id) (getf repo :id))
+      (git-shell-fail "repository not found"))
+    (when (and is-push (not (getf dk :read-write)))
+      (git-shell-fail "permission denied (read-only deploy key)"))
+    (unless is-push (log-event "git.clone" :repo-id (getf repo :id)))
+    (git-shell-succeed stdout 0 owner-name repo-name)))
+
+(defun git-shell-auth-user-key (key-id owner-name repo-name is-push stdout)
+  "User key (the common path): visibility gates clones, membership gates pushes."
+  (let* ((kid (parse-integer (princ-to-string key-id) :junk-allowed t))
+         (key-record (and kid (find-ssh-key-by-id kid))))
+    (unless key-record (git-shell-fail "invalid key"))
+    (let* ((user-id (getf key-record :user-id))
+           (user (find-user-by-id user-id)))
+      (unless (and user (getf user :is-active))
+        (git-shell-fail "account disabled"))
+      (let* ((repo (find-repo owner-name repo-name))
+             (role (when repo (repo-member-role (getf repo :id) user-id))))
+        (unless repo (git-shell-fail "repository not found"))
+        (when (and (getf repo :is-private) (not role))
+          (git-shell-fail "repository not found"))
+        (when (and is-push (not role))
+          (git-shell-fail "permission denied"))
+        (unless is-push
+          (log-event "git.clone" :user-id user-id :repo-id (getf repo :id)))
+        (git-shell-succeed stdout user-id owner-name repo-name)))))
 
 ;;; ========================== AUTHORIZED KEYS ==========================
 
