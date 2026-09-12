@@ -414,45 +414,13 @@
           (:td (if (getf u :is-admin) "yes" "no"))
           (:td (if (getf u :is-active) "yes" "no"))
           (:td (or (getf u :approval-status) "approved"))
-          (:td (princ-to-string (getf u :created-at)))))))
+          (:td (princ-to-string (getf u :created-at))))))))
 
     (:section
      (:h2 "Runners")
-     (if runners
-         (:table.data-table
-          (:thead (:tr (:th "Name") (:th "Scope") (:th "Labels") (:th "Status") (:th "Last seen") (:th "")))
-          (:tbody
-           (dolist (r runners)
-             (:tr
-              (:td (getf r :name))
-              (:td (:span.badge (getf r :scope)))
-              (:td (let ((l (getf r :labels)))
-                     (if (and l (not (uiop:emptyp l)) (not (eq l :null))) l "")))
-              (:td (:span.badge
-                    :style (cond ((equal (getf r :status) "online")
-                                   "border-color:var(--green);color:var(--green)")
-                                  ((equal (getf r :status) "disabled")
-                                   "border-color:var(--red);color:var(--red)")
-                                  (t ""))
-                    (getf r :status)))
-              (:td :style "color:var(--text-muted);font-size:.75rem"
-               (let ((ls (getf r :last-seen-at)))
-                 (if (and ls (not (eq ls :null))) (princ-to-string ls) "never")))
-              (:td
-               (:form :method "post" :style "display:inline"
-                :action (format nil "/-/admin/runners/~A/delete" (getf r :id))
-                (:button.btn.btn-sm :type "submit" "Delete")))))))
-         (:p.empty "No runners registered."))
-     (when registration-token
-       (:div.alert :style "border:1px solid var(--accent);padding:.75rem;margin:1rem 0"
-        (:strong "Registration token created.") " Use this to register a runner:" (:br)
-        (:code :style "word-break:break-all" (getf registration-token :token))
-        (:p :style "margin-top:.5rem;color:var(--text-muted);font-size:.85rem"
-         "Run: " (:code (format nil "cave-server runner --url grpc://localhost:~A --token ~A"
-                                (config-value :grpc-port 9443)
-                                (getf registration-token :token))))))
-     (:form :method "post" :action "/-/admin/runners/token"
-      (:button.btn.btn-primary :type "submit" "Generate registration token"))))))
+     (render-runner-management runners registration-token
+                               "/-/admin/runners/token" "/-/admin/runners"
+                               :show-scope t))))
 
 (defun view-change-password (&key error success)
   "Render the self-service change-password page (behind sudo)."

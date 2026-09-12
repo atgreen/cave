@@ -457,16 +457,20 @@
 
 
 
-(defun render-runner-management (runners registration-token token-action delete-action-prefix)
-  "Render runner list, registration token display, and token generation form."
+(defun render-runner-management (runners registration-token token-action delete-action-prefix
+                                 &key show-scope)
+  "Render runner list, registration token display, and token generation form.
+SHOW-SCOPE adds the scope column (instance vs repo) for the admin panel."
   (spinneret:with-html
     (if runners
         (:table.data-table
-         (:thead (:tr (:th "Name") (:th "Labels") (:th "Status") (:th "Last seen") (:th "")))
+         (:thead (:tr (:th "Name") (when show-scope (:th "Scope"))
+                      (:th "Labels") (:th "Status") (:th "Last seen") (:th "")))
          (:tbody
           (dolist (r runners)
             (:tr
              (:td (getf r :name))
+             (when show-scope (:td (:span.badge (getf r :scope))))
              (:td (let ((l (getf r :labels)))
                     (if (and l (not (uiop:emptyp l)) (not (eq l :null))) l "")))
              (:td (:span.badge

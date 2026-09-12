@@ -60,6 +60,7 @@
                 (:file "src/model-repos")
                 (:file "src/model-issues")
                 (:file "src/model-activity")
+                (:file "src/markup")
                 (:file "src/git")
                 (:file "src/chamber")
                 (:file "src/chamber-router")
