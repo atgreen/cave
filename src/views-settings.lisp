@@ -9,7 +9,6 @@
       (render-repo-tabs owner-name repo-name :settings :repo repo)
       (:h1 "Repository settings")
 
-      ;; Protected branches
       (:section
        (:h2 "Protected branches")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-2)"
@@ -36,7 +35,6 @@
          " Require signed commits")
         (:button.btn.btn-primary :type "submit" "Protect branch")))
 
-      ;; Deploy keys
       (:section
        (:h2 "Deploy keys")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-2)"
@@ -87,7 +85,6 @@
          (:input :type "password" :id "secret_value" :name "value" :required t))
         (:button.btn.btn-primary :type "submit" "Add secret")))
 
-      ;; Merge policy
       (:section
        (:h2 "Merge policy")
        (:form :method "post" :action (repo-url owner-name repo-name "settings")
@@ -124,7 +121,6 @@
           " Auto-delete source branch after merge"))
         (:button.btn.btn-primary :type "submit" "Save merge policy")))
 
-      ;; Members
       (:section
        (:h2 "Members")
        (if members
@@ -152,7 +148,6 @@
            (:option :value "admin" "Admin")))
          (:button.btn.btn-primary :type "submit" "Add member"))))
 
-      ;; Automations
       (:section
        (:h2 "Automations")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
@@ -233,7 +228,6 @@
                  :min "5" :max "600" :style "width:5em"))
         (:button.btn.btn-primary :type "submit" "Add check")))
 
-      ;; Webhooks
       (:section
        (:h2 "Webhooks")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
@@ -273,7 +267,6 @@
                  :value "push,pull_request,issue"))
         (:button.btn.btn-primary :type "submit" "Add webhook")))
 
-      ;; Mirrors
       (:section
        (:h2 "Mirrors")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
@@ -315,7 +308,6 @@
                  :min "5" :max "1440" :style "width:5em"))
         (:button.btn.btn-primary :type "submit" "Add mirror")))
 
-      ;; Runners
       (:section
        (:h2 "Runners")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
@@ -324,7 +316,6 @@
                                  (format nil "/~A/~A/settings/runners/token" owner-name repo-name)
                                  (format nil "/~A/~A/settings/runners" owner-name repo-name)))
 
-      ;; Danger zone
       (:section
        (:h2 :style "color:var(--red)" "Danger zone")
        (:div :style "border:1px solid var(--red);border-radius:var(--radius);padding:var(--sp-4)"
@@ -699,7 +690,6 @@ export CAVE_TOKEN=<your-api-token>
                     :placeholder "-----BEGIN PGP PUBLIC KEY BLOCK-----"))
         (:button.btn :type "submit" "Add key")))
 
-      ;; Runners
       (:section
        (:h2 "Runners")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"

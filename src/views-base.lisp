@@ -1,11 +1,11 @@
-;;; views.lisp — HTML views using Spinneret
+;;; views-base.lisp — shared view helpers, page chrome, and dashboard views
 ;;;
 ;;; SPDX-License-Identifier: MIT
 
 (in-package #:cave)
 
-;;; All HTML generation lives here. Each page is a function that returns
-;;; an HTML string. No template files, no compilation step, no stale state.
+;;; Each page is a function that returns an HTML string via Spinneret.
+;;; No template files, no compilation step, no stale state.
 
 (defun identicon-data-uri (seed)
   "Deterministic GitHub-style identicon (5x5 mirrored grid) for SEED, as an
@@ -168,10 +168,8 @@ explicitly chosen another theme."
                     (:raw " / "))
                   (:strong crumb))))))
 
-;;; ========================== AUTH PAGES ==========================
-;;; Login is handled by the embedded Usher OIDC provider — no local login form needed.
-
 ;;; ========================== DASHBOARD ==========================
+;;; (Login pages live in the embedded Usher OIDC provider — no local login form.)
 
 (defun format-relative-time (ts)
   "Format a timestamp as 'N units ago'. TS may be a universal-time integer or NIL."

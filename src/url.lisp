@@ -3,9 +3,9 @@
 ;;;; Internal URL construction helpers.
 ;;;;
 ;;;; One place to build in-app links so path shape and query-string encoding
-;;;; stay consistent across views, notifications, and API responses. Before
-;;;; this existed, every call site hand-rolled (format nil "/~A/~A...") and a
-;;;; few forgot to url-encode the ?path= value (broken on spaces/#/?).
+;;;; stay consistent across views, notifications, and API responses. Deeper
+;;;; paths (e.g. settings/protect/…) stay as format strings at their call
+;;;; sites; a handful of raw ?path= links remain unencoded (cave-ab9).
 
 (defun repo-url (owner repo &rest segments)
   "Site path for a repo: (repo-url \"o\" \"r\" \"settings\") => \"/o/r/settings\".

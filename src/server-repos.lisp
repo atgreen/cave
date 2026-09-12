@@ -85,7 +85,7 @@
                                    (mapcar (lambda (c) (getf c :hash)) recent-commits))
                       :file-tree file-tree))))))
 
-;; Fork
+;; Watch + fork
 (easy-routes:defroute repo-watch-submit
     ("/:owner/:repo-name/watch" :method :post) ()
   (when (require-login)

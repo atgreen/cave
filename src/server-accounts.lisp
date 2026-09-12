@@ -221,7 +221,7 @@ editing the landing copy is a git push — no redeploy."
                             :hero-html (ignore-errors (compute-landing-hero))))))
 
 ;; ----------------------------------------------------------------------------
-;; Routes: Org creation
+;; Routes: Camo image proxy + Explore
 
 (defun update-repo-primary-language (owner repo-name repo-id ref)
   "Compute and store REPO-ID's primary language (largest by bytes at REF)."
@@ -276,6 +276,9 @@ leaking the viewer's IP or breaking HTTPS."
                                (trending-public-repos :days 7 :limit 6))
                    :users (list-users)
                    :orgs (list-orgs)))))
+
+;; ----------------------------------------------------------------------------
+;; Routes: Org creation
 
 (easy-routes:defroute new-org-page ("/-/new-org" :method :get) ()
   (when (require-login)

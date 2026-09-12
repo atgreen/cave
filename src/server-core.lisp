@@ -1,4 +1,4 @@
-;;; server.lisp — HTTP server, routing, and request handling
+;;; server-core.lisp — acceptor, request dispatch, and shared route helpers
 ;;;
 ;;; SPDX-License-Identifier: MIT
 

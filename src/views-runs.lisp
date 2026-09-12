@@ -1,6 +1,6 @@
 (in-package #:cave)
 
-;;; ========================== AUTOMATION RUNS ==========================
+;;; ============ RUNS, PULSE CHARTS, RELEASES, RUNNERS ============
 
 (defun render-status-badge (status)
   "Render a status badge with appropriate color."

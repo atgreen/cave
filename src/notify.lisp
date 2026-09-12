@@ -1,4 +1,4 @@
-;;; notify.lisp — Email notifications
+;;; notify.lisp — email/webhook notifications and automation scheduling
 ;;;
 ;;; SPDX-License-Identifier: MIT
 
