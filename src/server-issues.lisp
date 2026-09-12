@@ -52,13 +52,13 @@
                      h)))
       (html-response
        (view-milestones :owner-name owner :repo repo :milestones milestones
-                        :counts counts :can-edit (and (member-of-repo-p repo) t))))))
+                        :counts counts :can-edit (and (current-user-repo-role repo) t))))))
 
 (easy-routes:defroute create-milestone-submit
     ("/:owner/:repo-name/milestones" :method :post) ()
   (when (require-login)
     (with-visible-repo (repo owner repo-name #'not-found)
-      (unless (member-of-repo-p repo)
+      (unless (current-user-repo-role repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from create-milestone-submit "Forbidden"))
       (let ((title (string-trim " " (or (hunchentoot:post-parameter "title") ""))))
@@ -71,7 +71,7 @@
     ("/:owner/:repo-name/milestones/:id/close" :method :post) ()
   (when (require-login)
     (with-visible-repo (repo owner repo-name #'not-found)
-      (unless (member-of-repo-p repo)
+      (unless (current-user-repo-role repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from milestone-close-submit "Forbidden"))
       (let ((mid (parse-integer id :junk-allowed t)))
@@ -82,7 +82,7 @@
     ("/:owner/:repo-name/milestones/:id/delete" :method :post) ()
   (when (require-login)
     (with-visible-repo (repo owner repo-name #'not-found)
-      (unless (member-of-repo-p repo)
+      (unless (current-user-repo-role repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from milestone-delete-submit "Forbidden"))
       (let ((mid (parse-integer id :junk-allowed t)))
@@ -142,7 +142,7 @@
                      :reactions (list-reactions "issue" (getf issue :id) *current-user-id*)
                      :comment-reactions comment-reactions
                      :pinned (let ((p (getf issue :pin-order))) (and p (not (eq p :null))))
-                     :can-edit (and (member-of-repo-p repo) t)))))))
+                     :can-edit (and (current-user-repo-role repo) t)))))))
 
 (easy-routes:defroute issue-react-submit
     ("/:owner/:repo-name/issues/:number/react" :method :post) ()
@@ -166,7 +166,7 @@
     ("/:owner/:repo-name/issues/:number/pin" :method :post) ()
   (when (require-login)
     (with-visible-repo (repo owner repo-name #'not-found)
-      (unless (member-of-repo-p repo)
+      (unless (current-user-repo-role repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from issue-pin-submit "Forbidden"))
       (let* ((num (parse-integer number :junk-allowed t))
@@ -182,7 +182,7 @@
     ("/:owner/:repo-name/issues/:number/meta" :method :post) ()
   (when (require-login)
     (with-visible-repo (repo owner repo-name #'not-found)
-      (unless (member-of-repo-p repo)
+      (unless (current-user-repo-role repo)
         (setf (hunchentoot:return-code*) 403)
         (return-from issue-meta-submit "Forbidden"))
       (let* ((num (parse-integer number :junk-allowed t))
@@ -368,7 +368,7 @@
              (checks-rollup (second checks-mv))
              (can-close (and *current-user-id*
                              (or (eql (getf pr :author-id) *current-user-id*)
-                                 (member-of-repo-p repo))))
+                                 (current-user-repo-role repo))))
              (code-owners (ignore-errors (pr-code-owners owner repo-name pr)))
              (versions (list-changeset-versions (getf pr :id)))
              (comments-json (if comment-hts
@@ -531,7 +531,7 @@ auto-merge. Allowed for the PR author or any repo member."
            (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
       (unless (and repo pr) (return-from pull-request-state-submit (not-found)))
       (unless (or (eql (getf pr :author-id) *current-user-id*)
-                  (member-of-repo-p repo))
+                  (current-user-repo-role repo))
         (setf (hunchentoot:return-code*) 403)
         (return-from pull-request-state-submit "Forbidden"))
       (let ((action (hunchentoot:post-parameter "action"))

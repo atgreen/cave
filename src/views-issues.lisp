@@ -21,10 +21,9 @@ distinct color without a stored color column."
                          comment-counts authors)
   "Render the issues list — a triage surface: status glyph, title, colored
 labels, and a metadata line (number, author, age, comment count)."
-  (let ((org-name owner-name)
-        (repo-name (getf repo :name)))
-    (page (:title (format nil "Issues — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :issues :repo repo)
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Issues — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :issues :repo repo)
       (:div.issues-header
        (:div.issue-filters
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "open"))
@@ -33,10 +32,10 @@ labels, and a metadata line (number, author, age, comment count)."
          :href "?status=closed" "Closed"))
        (:div :style "display:flex;gap:var(--sp-2)"
         (when *current-user*
-          (:a.btn.btn-sm :href (format nil "/~A/~A/milestones" org-name repo-name)
+          (:a.btn.btn-sm :href (format nil "/~A/~A/milestones" owner-name repo-name)
            "Milestones"))
         (when *current-user*
-          (:a.btn.btn-primary :href (format nil "/~A/~A/issues/new" org-name repo-name)
+          (:a.btn.btn-primary :href (format nil "/~A/~A/issues/new" owner-name repo-name)
            "New issue"))))
       ;; Label filter bar
       (when all-labels
@@ -69,7 +68,7 @@ labels, and a metadata line (number, author, age, comment count)."
                  (:div.issue-titleline
                   (when pinned (:span.issue-pin "📌"))
                   (:a.issue-title
-                   :href (issue-url org-name repo-name num)
+                   :href (issue-url owner-name repo-name num)
                    (getf iss :title))
                   (dolist (l labels)
                     (:a.issue-label
@@ -175,12 +174,11 @@ labels, and a metadata line (number, author, age, comment count)."
 
 (defun view-new-issue (&key owner-name repo body)
   "Render the new issue form."
-  (let ((org-name owner-name)
-        (repo-name (getf repo :name)))
+  (let ((repo-name (getf repo :name)))
     (page (:title "New issue — Cave")
-      (render-repo-tabs org-name repo-name :issues :repo repo)
+      (render-repo-tabs owner-name repo-name :issues :repo repo)
       (:h1 "New issue")
-      (:form :method "post" :action (format nil "/~A/~A/issues/new" org-name repo-name)
+      (:form :method "post" :action (format nil "/~A/~A/issues/new" owner-name repo-name)
        (:div.field
         (:label :for "title" "Title")
         (:input :type "text" :id "title" :name "title" :required t :autofocus t))
@@ -214,17 +212,16 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
                         labels assignees milestone milestones can-edit
                         reactions comment-reactions pinned)
   "Render an issue detail page."
-  (let ((org-name owner-name)
-        (repo-name (getf repo :name))
+  (let ((repo-name (getf repo :name))
         (issue-num (getf issue :number)))
     (page (:title (format nil "#~A ~A — Cave" issue-num (getf issue :title)))
-      (render-repo-tabs org-name repo-name :issues :repo repo)
+      (render-repo-tabs owner-name repo-name :issues :repo repo)
       (:div.issue-header
        (:h1 (format nil "~@[📌 ~]#~A ~A" pinned issue-num (getf issue :title)))
        (:span.badge (getf issue :status))
        (when can-edit
          (:form :method "post" :style "display:inline;margin-left:.5rem"
-          :action (format nil "/~A/~A/issues/~A/pin" org-name repo-name issue-num)
+          :action (format nil "/~A/~A/issues/~A/pin" owner-name repo-name issue-num)
           (:button.btn.btn-sm :type "submit" (if pinned "Unpin" "Pin")))))
       (:div.issue-meta
        (render-avatar (getf author :email) :size 16)
@@ -247,7 +244,7 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
          (:summary :style "cursor:pointer;font-size:.85rem;color:var(--text-muted)"
           "Edit labels / assignees / milestone")
          (:form :method "post" :style "margin-top:.5rem"
-          :action (format nil "/~A/~A/issues/~A/meta" org-name repo-name issue-num)
+          :action (format nil "/~A/~A/issues/~A/meta" owner-name repo-name issue-num)
           (:div.field
            (:label :for "labels" "Labels (comma-separated)")
            (:input :type "text" :id "labels" :name "labels"
@@ -270,7 +267,7 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
       (let ((ib (getf issue :body)))
         (when (and ib (not (eq ib :null)))
           (:div.issue-body (:raw (render-markdown ib)))))
-      (render-reactions reactions org-name repo-name issue-num)
+      (render-reactions reactions owner-name repo-name issue-num)
 
       ;; Comments
       (:section
@@ -285,7 +282,7 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
               (:div.comment-body (:raw (render-markdown (getf c :body))))
               (render-reactions (and comment-reactions
                                      (gethash (getf c :id) comment-reactions))
-                                org-name repo-name issue-num
+                                owner-name repo-name issue-num
                                 :comment-id (getf c :id))))
            (:p.empty "No comments yet.")))
 
@@ -293,7 +290,7 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
       (when *current-user*
         (:section
          (:form :method "post"
-          :action (format nil "/~A/~A/issues/~A/comment" org-name repo-name issue-num)
+          :action (format nil "/~A/~A/issues/~A/comment" owner-name repo-name issue-num)
           (:div.field
            (:label :for "comment_body" "Add a comment")
            (:textarea :id "comment_body" :name "body" :rows "4"))
@@ -311,10 +308,9 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
 
 (defun view-pull-requests (&key owner-name repo pulls current-status)
   "Render the pull requests list."
-  (let ((org-name owner-name)
-        (repo-name (getf repo :name)))
-    (page (:title (format nil "Pull requests — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :pulls :repo repo)
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Pull requests — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :pulls :repo repo)
       (:div.issues-header
        (:div.issue-filters
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "open"))
@@ -324,7 +320,7 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
         (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal current-status "closed"))
          :href "?status=closed" "Closed"))
        (when *current-user*
-         (:a.btn.btn-primary :href (format nil "/~A/~A/pulls/new" org-name repo-name)
+         (:a.btn.btn-primary :href (format nil "/~A/~A/pulls/new" owner-name repo-name)
           "New pull request")))
       (if pulls
           (:ul.issues
@@ -345,7 +341,7 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
                 (:div.issue-main
                  (:div.issue-titleline
                   (:a.issue-title
-                   :href (pr-url org-name repo-name num)
+                   :href (pr-url owner-name repo-name num)
                    (format nil "~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
                   (:span.badge state))
                  (:div.issue-meta
@@ -492,11 +488,10 @@ for in-progress checks, polling a JSON endpoint while anything runs."
                              checks checks-rollup source-missing can-close code-owners
                              versions)
   "Render a pull request detail page."
-  (let ((org-name owner-name)
-        (repo-name (getf repo :name))
+  (let ((repo-name (getf repo :name))
         (cs-num (getf pr :number)))
     (page (:title (format nil "#~A ~A — Cave" cs-num (getf pr :source-branch)))
-      (render-repo-tabs org-name repo-name :pulls :repo repo)
+      (render-repo-tabs owner-name repo-name :pulls :repo repo)
 
       (:div.issue-header
        (:h1 (format nil "#~A ~A" cs-num (getf pr :source-branch)))
@@ -528,7 +523,7 @@ for in-progress checks, polling a JSON endpoint while anything runs."
           (:div :style "display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem 0;align-items:center"
            ;; Close / reopen
            (:form :method "post" :style "display:inline"
-            :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+            :action (format nil "/~A/~A/pulls/~A/state" owner-name repo-name cs-num)
             (if open-p
                 (:button.btn.btn-sm :type "submit" :name "action" :value "close"
                  :style "border-color:var(--red,#b04a4a);color:var(--red,#b04a4a)"
@@ -538,7 +533,7 @@ for in-progress checks, polling a JSON endpoint while anything runs."
            ;; Draft / ready toggle (open PRs only)
            (when open-p
              (:form :method "post" :style "display:inline"
-              :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+              :action (format nil "/~A/~A/pulls/~A/state" owner-name repo-name cs-num)
               (if (getf pr :is-draft)
                   (:button.btn.btn-sm :type "submit" :name "action" :value "ready"
                    "Mark ready for review")
@@ -548,13 +543,13 @@ for in-progress checks, polling a JSON endpoint while anything runs."
            (when (and open-p (not (getf pr :is-draft)))
              (if (and am (not (eq am :null)))
                  (:form :method "post" :style "display:inline"
-                  :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+                  :action (format nil "/~A/~A/pulls/~A/state" owner-name repo-name cs-num)
                   (:span :style "color:var(--text-muted);font-size:.85rem;margin-right:.35rem"
                    (format nil "Auto-merge armed (~A)" am))
                   (:button.btn.btn-sm :type "submit" :name "action" :value "disable-auto-merge"
                    "Cancel auto-merge"))
                  (:form :method "post" :style "display:inline"
-                  :action (format nil "/~A/~A/pulls/~A/state" org-name repo-name cs-num)
+                  :action (format nil "/~A/~A/pulls/~A/state" owner-name repo-name cs-num)
                   (:input :type "hidden" :name "action" :value "auto-merge")
                   (:button.btn.btn-sm :type "submit" :name "strategy" :value "merge"
                    "Enable auto-merge")))))))
@@ -574,7 +569,7 @@ for in-progress checks, polling a JSON endpoint while anything runs."
          (:ol.stack-list
           (dolist (item stack-items)
             (:li :class (when (= (getf item :number) cs-num) "stack-current")
-             (:a :href (pr-url org-name repo-name
+             (:a :href (pr-url owner-name repo-name
                                 (getf item :number))
               (format nil "#~A ~A" (getf item :number) (getf item :source-branch)))
              (:span.badge
@@ -691,13 +686,13 @@ function caveShowCommentForm(td) {
                     (when rest
                       (:a :style "margin-left:.5rem;font-size:.85rem"
                        :href (format nil "/~A/~A/pulls/~A/interdiff?from=~A&to=~A"
-                                     org-name repo-name cs-num
+                                     owner-name repo-name cs-num
                                      (getf (first rest) :version) (getf v :version))
                        (format nil "interdiff vs round ~A" (getf (first rest) :version)))))))))
 
       ;; Live CI checks panel (commit statuses + cave workflow jobs)
       (when (and checks-rollup (plusp (getf checks-rollup :total)))
-        (render-checks-panel org-name repo-name cs-num checks checks-rollup))
+        (render-checks-panel owner-name repo-name cs-num checks checks-rollup))
 
       ;; Merge eligibility
       (when (and eligibility
@@ -713,7 +708,7 @@ function caveShowCommentForm(td) {
                      (getf rule :description)))))
          (when can-merge
            (:form :method "post"
-            :action (format nil "/~A/~A/pulls/~A/merge" org-name repo-name cs-num)
+            :action (format nil "/~A/~A/pulls/~A/merge" owner-name repo-name cs-num)
             (:div :style "display:flex;gap:var(--sp-2)"
              (:button.btn.btn-primary :type "submit" :name "strategy" :value "merge"
               "Merge")
@@ -728,7 +723,7 @@ function caveShowCommentForm(td) {
          (when conflict-files
            (let ((source (getf pr :source-branch))
                  (target (getf pr :target-branch))
-                 (ssh-url (ssh-clone-url org-name repo-name)))
+                 (ssh-url (ssh-clone-url owner-name repo-name)))
              (:div.merge-conflicts
               (:h3 (format nil "Conflicts with ~A" target))
               (:p "These files conflict and must be resolved before this pull request can be merged:")
@@ -741,7 +736,7 @@ function caveShowCommentForm(td) {
                 (:details.merge-manual
                  (:summary "Mark as manually merged")
                  (:form :method "post"
-                  :action (format nil "/~A/~A/pulls/~A/merge" org-name repo-name cs-num)
+                  :action (format nil "/~A/~A/pulls/~A/merge" owner-name repo-name cs-num)
                   (:p :style "margin:var(--sp-2) 0;color:var(--fg-muted)"
                    (format nil "If you already merged ~A into ~A another way, paste the resulting commit on ~A to close this out:"
                            source target target))
@@ -756,7 +751,7 @@ function caveShowCommentForm(td) {
            (:details.merge-override
             (:summary "⚠ Admin override — merge anyway")
             (:form :method "post"
-             :action (format nil "/~A/~A/pulls/~A/merge" org-name repo-name cs-num)
+             :action (format nil "/~A/~A/pulls/~A/merge" owner-name repo-name cs-num)
              (:input :type "hidden" :name "override" :value "t")
              (:p :style "margin:var(--sp-2) 0;color:var(--fg-muted)"
               "This pull request does not meet all merge requirements. As a repo admin you can override the checks and merge anyway.")
@@ -792,7 +787,7 @@ function caveShowCommentForm(td) {
                     (if (equal (getf c :status) "open")
                         (:form :method "post" :style "display:inline"
                          :action (format nil "/~A/~A/concerns/~A/resolve"
-                                         org-name repo-name (getf c :id))
+                                         owner-name repo-name (getf c :id))
                          (:button.btn.btn-sm :type "submit" "Resolve"))
                         (:span.badge "resolved"))))))))
            (:p.empty "No reviews yet.")))
@@ -804,7 +799,7 @@ function caveShowCommentForm(td) {
         (:section
          (:h2 "Submit review")
          (:form :method "post"
-          :action (format nil "/~A/~A/pulls/~A/review" org-name repo-name cs-num)
+          :action (format nil "/~A/~A/pulls/~A/review" owner-name repo-name cs-num)
           (:div.field
            (:label :for "review_body" "Comment")
            (:textarea :id "review_body" :name "body" :rows "4"))

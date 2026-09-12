@@ -25,9 +25,6 @@
                             s)))))
     (if (zerop (length clean)) "asset" clean)))
 
-(defun member-of-repo-p (repo)
-  (and *current-user-id* (repo-member-role (getf repo :id) *current-user-id*)))
-
 (easy-routes:defroute releases-page ("/:owner/:repo-name/releases" :method :get) ()
   (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((releases (list-releases (getf repo :id)))
@@ -41,11 +38,11 @@
        (view-releases :owner-name owner :repo repo
                       :releases releases
                       :assets-by-release assets-by-release
-                      :can-create (and (member-of-repo-p repo) t))))))
+                      :can-create (and (current-user-repo-role repo) t))))))
 
 (easy-routes:defroute new-release-page ("/:owner/:repo-name/releases/new" :method :get) ()
   (with-visible-repo (repo owner repo-name #'not-found)
-    (unless (member-of-repo-p repo)
+    (unless (current-user-repo-role repo)
       (return-from new-release-page (not-found)))
     (let* ((disk-path (repo-disk-path owner repo-name))
            (existing-tags (git-tags disk-path)))
@@ -54,7 +51,7 @@
 
 (easy-routes:defroute create-release-submit ("/:owner/:repo-name/releases/new" :method :post) ()
   (with-visible-repo (repo owner repo-name #'not-found)
-    (unless (member-of-repo-p repo)
+    (unless (current-user-repo-role repo)
       (return-from create-release-submit (not-found)))
     (let* ((tag-name (string-trim '(#\Space) (or (hunchentoot:post-parameter "tag_name") "")))
            (release-name (hunchentoot:post-parameter "name"))
@@ -100,12 +97,12 @@
        (view-release :owner-name owner :repo repo
                      :release release
                      :assets (list-release-assets (getf release :id))
-                     :can-edit (and (member-of-repo-p repo) t))))))
+                     :can-edit (and (current-user-repo-role repo) t))))))
 
 (easy-routes:defroute delete-release-submit
     ("/:owner/:repo-name/releases/:tag/delete" :method :post) ()
   (with-visible-repo (repo owner repo-name #'not-found)
-    (unless (member-of-repo-p repo)
+    (unless (current-user-repo-role repo)
       (return-from delete-release-submit (not-found)))
     (let ((release (find-release-by-tag (getf repo :id) tag)))
       (when release
@@ -119,7 +116,7 @@
 (easy-routes:defroute upload-release-asset
     ("/:owner/:repo-name/releases/:tag/upload" :method :post) ()
   (with-visible-repo (repo owner repo-name #'not-found)
-    (unless (member-of-repo-p repo)
+    (unless (current-user-repo-role repo)
       (return-from upload-release-asset (not-found)))
     (let ((release (find-release-by-tag (getf repo :id) tag)))
       (unless release (return-from upload-release-asset (not-found)))
@@ -160,7 +157,7 @@
 (easy-routes:defroute delete-release-asset-submit
     ("/:owner/:repo-name/releases/:tag/assets/:asset-id/delete" :method :post) ()
   (with-visible-repo (repo owner repo-name #'not-found)
-    (unless (member-of-repo-p repo)
+    (unless (current-user-repo-role repo)
       (return-from delete-release-asset-submit (not-found)))
     (let* ((aid (parse-integer asset-id :junk-allowed t))
            (asset (when aid (find-release-asset-by-id aid))))

@@ -231,6 +231,11 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
             (return-from repo-member-role "admin"))))))
   nil)
 
+(defun current-user-repo-role (repo)
+  "The logged-in user's role in REPO (a plist), or NIL when anonymous or not
+a member. Truthy exactly when the current user has any membership."
+  (and *current-user-id* (repo-member-role (getf repo :id) *current-user-id*)))
+
 (defun repo-reviewer-p (repo-id user-id)
   "True when USER-ID currently has a repo role allowed to submit reviews."
   (member (repo-member-role repo-id user-id)
@@ -367,7 +372,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
     limit)
    :plists))
 
-(defun update-run-status-for-runner (run-id runner-id status)
+(defun update-automation-run-status-for-runner (run-id runner-id status)
   "Update an automation run only if it is assigned to RUNNER-ID."
   (cond
     ((equal status "running")
@@ -392,7 +397,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
        :returning '*)
       :plist))))
 
-(defun append-run-log-for-runner (run-id runner-id chunk)
+(defun append-automation-run-log-for-runner (run-id runner-id chunk)
   "Append a log chunk only if the automation run is assigned to RUNNER-ID."
   (postmodern:query
    (:update 'cave-automation-runs
@@ -401,7 +406,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
     :returning '*)
    :plist))
 
-(defun fetch-queued-run (runner-id runner-labels runner-scope runner-scope-id)
+(defun fetch-queued-automation-run (runner-id runner-labels runner-scope runner-scope-id)
   "Atomically fetch and assign a queued run to a runner.
    Respects one-task-per-runner policy. Returns run plist or NIL."
   ;; Check if runner already has an active task
@@ -410,7 +415,7 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
                   :where (:and (:= 'runner-id runner-id)
                                (:in 'status (:set "assigned" "running"))))
                  :single)))
-    (when active (return-from fetch-queued-run nil)))
+    (when active (return-from fetch-queued-automation-run nil)))
   ;; Fetch oldest queued run matching runner scope
   ;; instance runners: any run; org runners: repos in their org; repo runners: their repo only
   (let ((run (cond
@@ -1142,7 +1147,7 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
          (:insert-into 'cave-user-themes
           :set 'user-id user-id 'name name 'definition definition)))))
 
-(defun get-user-theme-css (user-id theme-name)
+(defun user-theme-css (user-id theme-name)
   "Get a custom theme's CSS definition. Returns string or NIL."
   (postmodern:query
    (:select 'definition :from 'cave-user-themes

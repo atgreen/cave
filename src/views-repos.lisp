@@ -42,8 +42,7 @@
       :href (format nil "/~A/~A/releases" owner-name repo-name) "Releases")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :security))
       :href (format nil "/~A/~A/deps" owner-name repo-name) "Security")
-     (when (and repo *current-user-id*
-                (repo-member-role (getf repo :id) *current-user-id*))
+     (when (and repo (current-user-repo-role repo))
        (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
         :href (format nil "/~A/~A/pulse" owner-name repo-name) "Pulse"))
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
@@ -197,11 +196,10 @@
 (defun view-repo (&key owner-name repo empty default-branch current-ref
                        branches tags readme-html readme-filename)
   "Render the repo overview page (README + clone URL)."
-  (let* ((org-name owner-name)
-         (repo-name (getf repo :name))
+  (let* ((repo-name (getf repo :name))
          (current-ref (or current-ref default-branch)))
-    (page (:title (format nil "~A/~A — Cave" org-name repo-name))
-      (render-repo-tabs org-name repo-name :overview :repo repo
+    (page (:title (format nil "~A/~A — Cave" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :overview :repo repo
                         :ref current-ref :default-branch default-branch)
       (when (getf repo :description) (:p (getf repo :description)))
       ;; Branch/tag switcher — picking a ref re-renders the README at that ref
@@ -209,14 +207,12 @@
       (unless empty
         (:div.repo-info-bar
          (:div.repo-info-left
-          (render-ref-switcher org-name repo-name current-ref branches tags
-                               :can-write (and *current-user-id*
-                                               (repo-member-role (getf repo :id)
-                                                                 *current-user-id*))
+          (render-ref-switcher owner-name repo-name current-ref branches tags
+                               :can-write (current-user-repo-role repo)
                                :href-fn (lambda (r)
                                           (if (equal r default-branch)
-                                              (repo-url org-name repo-name)
-                                              (format nil "/~A/~A?ref=~A" org-name repo-name
+                                              (repo-url owner-name repo-name)
+                                              (format nil "/~A/~A?ref=~A" owner-name repo-name
                                                       (hunchentoot:url-encode r)))))
           ;; Match the Code tab's bar: don't leave this container empty.
           (:span.repo-info-stat
@@ -225,19 +221,19 @@
             (:span.repo-info-stat
              (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))))
       ;; Clone widget — SSH/HTTPS toggle with copy button
-      (render-clone-widget org-name repo-name)
+      (render-clone-widget owner-name repo-name)
       ;; Watch / unwatch toggle — subscribe to in-app notifications
       (when *current-user*
         (:form :method "post" :style "display:inline-block;margin-bottom:var(--sp-4);margin-right:var(--sp-2)"
-         :action (format nil "/~A/~A/watch" org-name repo-name)
+         :action (format nil "/~A/~A/watch" owner-name repo-name)
          (:button.btn :type "submit"
           (if (watching-repo-p (getf repo :id) *current-user-id*)
               "Unwatch" "Watch"))))
       ;; Fork button (don't show on own repos)
       (when (and *current-user*
-                 (not (equal (getf *current-user* :username) org-name)))
+                 (not (equal (getf *current-user* :username) owner-name)))
         (:form :method "post" :style "margin-bottom:var(--sp-4)"
-         :action (format nil "/~A/~A/fork" org-name repo-name)
+         :action (format nil "/~A/~A/fork" owner-name repo-name)
          (:button.btn :type "submit"
           (format nil "Fork to ~A/~A" (getf *current-user* :username) repo-name))))
 
@@ -246,7 +242,7 @@
            (:p.empty "This repository is empty. Push some code to get started:")
            (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);font-size:.85rem;overflow-x:auto"
             (format nil "git remote add origin ~A~%git push -u origin main"
-                    (ssh-clone-url org-name repo-name))))
+                    (ssh-clone-url owner-name repo-name))))
           ;; README
           (when readme-html
             (:section
@@ -334,25 +330,22 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                        commit-count recent-commits file-tree signatures last-commits
                        language-stats)
   "Render the repo code/file browser page."
-  (let* ((org-name owner-name)
-         (repo-name (getf repo :name))
+  (let* ((repo-name (getf repo :name))
          (current-ref (or current-ref default-branch)))
-    (page (:title (format nil "Code — ~A/~A" org-name repo-name))
-      (render-repo-tabs org-name repo-name :code :repo repo
+    (page (:title (format nil "Code — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :code :repo repo
                         :ref current-ref :default-branch default-branch)
-      (render-clone-widget org-name repo-name)
+      (render-clone-widget owner-name repo-name)
 
       ;; Branch/tag bar + last commit
       (:div.repo-info-bar
        (:div.repo-info-left
-        (render-ref-switcher org-name repo-name current-ref branches tags
-                             :can-write (and *current-user-id*
-                                             (repo-member-role (getf repo :id)
-                                                               *current-user-id*))
+        (render-ref-switcher owner-name repo-name current-ref branches tags
+                             :can-write (current-user-repo-role repo)
                              :href-fn (lambda (r)
                                         (if (equal r default-branch)
-                                            (format nil "/~A/~A/code" org-name repo-name)
-                                            (format nil "/~A/~A/code?ref=~A" org-name repo-name
+                                            (format nil "/~A/~A/code" owner-name repo-name)
+                                            (format nil "/~A/~A/code?ref=~A" owner-name repo-name
                                                     (hunchentoot:url-encode r)))))
         (:span.repo-info-stat
          (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
@@ -368,14 +361,14 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
       (when recent-commits
         (let ((last (first recent-commits)))
           (:div.repo-last-commit
-           (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name
+           (:a :href (format nil "/~A/~A/commit/~A" owner-name repo-name
                               (getf last :hash))
             (:code.repo-last-hash (getf last :short-hash)))
            (:span.repo-last-msg (getf last :subject))
            (:span.repo-last-author (getf last :author)))))
       ;; File tree
       (when file-tree
-        (render-file-tree file-tree org-name repo-name current-ref nil
+        (render-file-tree file-tree owner-name repo-name current-ref nil
                           :last-commits last-commits))
 
       ;; Recent commits
@@ -386,7 +379,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
           (dolist (c recent-commits)
             (let ((sig (when signatures (gethash (getf c :hash) signatures))))
               (:li
-               (:a :href (format nil "/~A/~A/commit/~A" org-name repo-name (getf c :hash))
+               (:a :href (format nil "/~A/~A/commit/~A" owner-name repo-name (getf c :hash))
                 (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
                (:span (getf c :subject))
                (render-verified-badge sig)
@@ -421,9 +414,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
       (:div.repo-info-bar
        (:div.repo-info-left
         (render-ref-switcher owner-name repo-name ref branches tags
-                             :can-write (and *current-user-id*
-                                             (repo-member-role (getf repo :id)
-                                                               *current-user-id*)))))
+                             :can-write (current-user-repo-role repo))))
       (if file-tree
           (render-file-tree file-tree owner-name repo-name ref path
                             :last-commits last-commits)
@@ -468,9 +459,7 @@ serves the unrendered bytes."
         (:div.repo-info-bar
          (:div.repo-info-left
           (render-ref-switcher owner-name repo-name ref branches tags
-                               :can-write (and *current-user-id*
-                                               (repo-member-role (getf repo :id)
-                                                                 *current-user-id*))
+                               :can-write (current-user-repo-role repo)
                                :href-fn (lambda (r)
                                           (blob-url owner-name repo-name r path))))))
       (render-breadcrumbs

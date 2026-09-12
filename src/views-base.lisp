@@ -67,8 +67,8 @@ explicitly chosen another theme."
         (:link :rel "stylesheet" :href "/static/css/cave.css")
         ;; Inject custom theme CSS if active
         (when *current-user*
-          (let ((theme-css (get-user-theme-css *current-user-id*
-                                               (getf *current-user* :theme))))
+          (let ((theme-css (user-theme-css *current-user-id*
+                                           (getf *current-user* :theme))))
             (when theme-css
               (:style (:raw theme-css))))))
        (:body

@@ -137,8 +137,8 @@ keys), so isolation only avoids transient read-during-rebuild flakiness."
              :input in :output nil :error-output nil :ignore-error-status t)))
         dir))))
 
-(defun verify-commits (repo disk-path shas)
-  "Verify the signatures of SHAS in REPO (DISK-PATH is its bare repo) and upsert
+(defun verify-commits (repo-id disk-path shas)
+  "Verify the signatures of SHAS in repo REPO-ID (DISK-PATH is its bare repo) and upsert
 the results into cave_commit_signatures. The SSH allowed-signers file and the
 GPG keyring are built once for the whole batch. Shared by the push hook and the
 `reverify` command."
@@ -149,7 +149,7 @@ GPG keyring are built once for the whole batch. Shared by the push hook and the
                            (setf (gethash (getf k :fingerprint) h) (getf k :user-id)))
                          h))
             ;; GPG keyring + fingerprint→user map, built once for this push.
-            (gpg-home (make-gpg-keyring (getf repo :id)))
+            (gpg-home (make-gpg-keyring repo-id))
             (gpgkey->user (let ((h (make-hash-table :test 'equal)))
                             (dolist (k (all-gpg-keys-with-user))
                               (setf (gethash (getf k :key-id) h) (getf k :user-id)))
@@ -160,12 +160,12 @@ GPG keyring are built once for the whole batch. Shared by the push hook and the
                    (git-commit-signature-info disk-path sha)
                  (cond
                    ((not signed)
-                    (record-commit-signature :repo-id (getf repo :id)
+                    (record-commit-signature :repo-id repo-id
                                              :commit-sha sha :verified nil :scheme nil))
                    ((eq scheme :ssh)
                     (let* ((verified (git-verify-commit disk-path sha signers))
                            (fp (git-commit-signature-key disk-path sha)))
-                      (record-commit-signature :repo-id (getf repo :id)
+                      (record-commit-signature :repo-id repo-id
                                                :commit-sha sha :verified verified
                                                :scheme "ssh" :fingerprint fp
                                                :signer-user-id (gethash fp key->user))))
@@ -175,7 +175,7 @@ GPG keyring are built once for the whole batch. Shared by the push hook and the
                                           (git-verify-commit-gpg disk-path sha gpg-home)))
                            (fp (and verified
                                     (git-commit-gpg-fingerprint disk-path sha gpg-home))))
-                      (record-commit-signature :repo-id (getf repo :id)
+                      (record-commit-signature :repo-id repo-id
                                                :commit-sha sha :verified verified
                                                :scheme "gpg" :fingerprint fp
                                                :signer-user-id (and fp (gethash fp gpgkey->user))))))))
@@ -202,7 +202,7 @@ the results. Skips deletes and zero-sha boundaries."
                                               nil)))))
                          range)))
          (shas (remove-duplicates shas :test #'equal)))
-    (verify-commits repo disk-path shas)))
+    (verify-commits (getf repo :id) disk-path shas)))
 
 (defun reverify-all-signatures ()
   "Re-run verification for every commit that already has a signature row,
@@ -214,7 +214,7 @@ number of commits re-verified."
                         (repo-disk-path (getf r :owner) (getf r :name))))
             (shas (repo-recorded-shas (getf r :id))))
         (when (and disk-path (probe-file disk-path) shas)
-          (verify-commits (list :id (getf r :id)) disk-path shas)
+          (verify-commits (getf r :id) disk-path shas)
           (incf n (length shas)))))
     n))
 

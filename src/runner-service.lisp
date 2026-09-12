@@ -81,7 +81,7 @@
                       (:select '* :from 'cave-runners :where (:= 'id runner-id))
                       :plist))
              (run (when runner
-                    (fetch-queued-run runner-id
+                    (fetch-queued-automation-run runner-id
                                      (getf runner :labels)
                                      (getf runner :scope)
                                      (let ((sid (getf runner :scope-id)))
@@ -113,7 +113,7 @@
   "Append log chunk to a running task."
   (let ((runner (require-runner-from-ctx ctx)))
     (postmodern:with-connection *db-spec*
-      (unless (append-run-log-for-runner (slot-value request 'cave::run-id)
+      (unless (append-automation-run-log-for-runner (slot-value request 'cave::run-id)
                                          (getf runner :id)
                                          (slot-value request 'cave::chunk))
         (error "runner is not assigned to this task"))))
@@ -132,7 +132,7 @@
       (if (plusp run-id)
           ;; Simple automation run
           (progn
-            (unless (update-run-status-for-runner run-id runner-id status)
+            (unless (update-automation-run-status-for-runner run-id runner-id status)
               (error "runner is not assigned to this task"))
             (when (and terminal (getf runner :ephemeral))
               (delete-runner (getf runner :id))
@@ -391,7 +391,7 @@ RUNNER_*/file-protocol vars)."
                              (unless (eq sid :null) sid))))
             ;; Try simple automation first
             (let ((run (when runner-rec
-                         (fetch-queued-run runner-id (getf runner-rec :labels)
+                         (fetch-queued-automation-run runner-id (getf runner-rec :labels)
                                            scope scope-id))))
               (cond
                 (run

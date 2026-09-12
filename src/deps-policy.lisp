@@ -66,7 +66,7 @@
          (org-id (getf repo :org-id))
          (org-repo (and org-id (not (eq org-id :null))))
          (cap (if org-repo
-                  (let ((p (get-org-dep-policy org-id)))
+                  (let ((p (org-dep-policy org-id)))
                     (if p (getf p :automerge-ceiling "none") "none"))
                   "major"))                          ; user repos: no org cap
          (request (or explicit (if org-repo cap "none"))))

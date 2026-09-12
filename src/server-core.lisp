@@ -216,8 +216,7 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 (defun repo-visible-p (repo)
   "Check if the current user can see REPO. Public repos are always visible."
   (or (not (getf repo :is-private))
-      (and *current-user-id*
-           (repo-member-role (getf repo :id) *current-user-id*))))
+      (current-user-repo-role repo)))
 
 (defmacro with-visible-repo ((var owner repo-name responder) &body body)
   "Bind VAR to the repo if visible, otherwise return the responder's error response."

@@ -214,7 +214,7 @@
              (is-binary (getf info :is-binary))
              (content (when (and (not is-binary) (<= file-size (* 2 1024 1024)))
                         (chamber-get-blob owner repo-name ref path)))
-             (language (file-language path))
+             (language (monaco-language-id path))
              (is-markdown (and language (string= language "markdown")))
              ;; Markdown renders to HTML by default; ?view=source shows the
              ;; Monaco source view. Non-markdown files are always source.

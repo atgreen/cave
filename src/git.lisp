@@ -1239,7 +1239,7 @@ camo fetch 502s and the image breaks."
       (when (codeowners-match-p (car rule) path)
         (setf owners (cdr rule))))))
 
-(defun file-language (filename)
+(defun monaco-language-id (filename)
   "Map a filename to a Monaco editor language identifier."
   (let ((ext (pathname-type (pathname filename)))
         (base (pathname-name (pathname filename))))

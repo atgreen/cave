@@ -1015,7 +1015,7 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
   (let* ((repo (find-repo-by-id repo-id))
          (org-id (and repo (let ((o (getf repo :org-id))) (unless (eq o :null) o)))))
     (if org-id
-        (let ((p (get-org-dep-policy org-id)))
+        (let ((p (org-dep-policy org-id)))
           (if p
               (let ((v (getf p :auto-fix-security)))
                 (if (eq v :null) t v))
@@ -1029,7 +1029,7 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
    "SELECT * FROM cave_issues WHERE repo_id = $1 AND body LIKE $2 LIMIT 1"
    repo-id (format nil "%~A%" marker) :plist))
 
-(defun get-org-dep-policy (org-id)
+(defun org-dep-policy (org-id)
   "The org's dependency policy row, or NIL."
   (postmodern:query
    (:select '* :from 'cave-org-dep-policy :where (:= 'org-id org-id))

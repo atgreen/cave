@@ -217,7 +217,7 @@
            (pr (when num (find-pull-request (getf repo :id) num))))
       (unless pr (return-from api-update-pull (json-error "not found" :status 404)))
       (unless (or (eql (getf pr :author-id) *current-user-id*)
-                  (member-of-repo-p repo))
+                  (current-user-repo-role repo))
         (return-from api-update-pull (json-error "forbidden" :status 403)))
       (let* ((body-text (hunchentoot:raw-post-data :force-text t))
              (json (com.inuoe.jzon:parse body-text))
