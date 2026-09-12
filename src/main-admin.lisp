@@ -176,9 +176,11 @@
   (let ((disk-path (repo-disk-path owner name)))
     (and (probe-file disk-path) (null (git-branches disk-path)))))
 
-(defun seed-system-repo (owner name seed-subdir commit-msg)
+(defun seed-system-repo (owner name seed-subdir commit-msg &key tags)
   "Push the files under SEED-SUBDIR (relative to app-root, so they're found both
-in dev and in the shipped image) into OWNER/NAME's main branch as one commit."
+in dev and in the shipped image) into OWNER/NAME's main branch as one commit.
+Each tag in TAGS (e.g. (\"v4\")) is then forced to the seeded commit — action
+repos are referenced owner/repo@<tag>."
   (let* ((seed-dir (merge-pathnames seed-subdir (app-root)))
          (disk-path (repo-disk-path owner name))
          (tmpdir (format nil "/tmp/cave-seed-~A"
@@ -201,11 +203,18 @@ in dev and in the shipped image) into OWNER/NAME's main branch as one commit."
                                 :output :string :error-output :string)
               (uiop:run-program (list "git" "-C" tmpdir "push" "origin" "HEAD:main")
                                 :output :string :error-output :string)
+              ;; Tags (e.g. the floating major v4) so uses: owner/repo@v4 resolves.
+              (dolist (tag tags)
+                (uiop:run-program (list "git" "-C" tmpdir "tag" "-f" tag)
+                                  :ignore-error-status t :output :string :error-output :string)
+                (uiop:run-program (list "git" "-C" tmpdir "push" "-f" "origin"
+                                        (format nil "refs/tags/~A" tag))
+                                  :ignore-error-status t :output :string :error-output :string))
               ;; Make sure the bare repo's default branch points at main.
               (uiop:run-program (list "git" "-C" (namestring disk-path)
                                       "symbolic-ref" "HEAD" "refs/heads/main")
                                 :ignore-error-status t)
-              (llog:info "Seeded system repo" :repo (format nil "~A/~A" owner name)))
+              (llog:info "Seeded system repo" :repo (format nil "~A/~A" owner name) :tags tags))
           (error (e)
             (llog:warn "Failed to seed system repo"
                        :repo (format nil "~A/~A" owner name)
@@ -234,48 +243,6 @@ empty system repo gets populated at startup."
       (when (and (find-repo "cave" name) (system-repo-empty-p "cave" name))
         (seed-system-repo "cave" name seed-subdir commit-msg)))))
 
-(defun seed-action-repo (owner name seed-subdir commit-msg tags)
-  "Like SEED-SYSTEM-REPO, but also creates each tag in TAGS (e.g. (\"v4\"))
-pointing at the seeded commit — actions are referenced owner/repo@<tag>."
-  (let* ((seed-dir (merge-pathnames seed-subdir (app-root)))
-         (disk-path (repo-disk-path owner name))
-         (tmpdir (format nil "/tmp/cave-seed-~A"
-                         (ironclad:byte-array-to-hex-string (ironclad:random-data 4)))))
-    (if (not (probe-file seed-dir))
-        (llog:warn "Action repo seed dir missing" :dir (namestring seed-dir))
-        (handler-case
-            (progn
-              (uiop:run-program (list "git" "clone" (namestring disk-path) tmpdir)
-                                :output :string :error-output :string)
-              (uiop:run-program (list "git" "-C" tmpdir "symbolic-ref" "HEAD" "refs/heads/main")
-                                :ignore-error-status t)
-              (uiop:run-program (format nil "cp -r ~A* ~A/" (namestring seed-dir) tmpdir)
-                                :output :string :error-output :string :force-shell t)
-              (uiop:run-program (list "git" "-C" tmpdir "add" "-A")
-                                :output :string :error-output :string)
-              (uiop:run-program (list "git" "-C" tmpdir
-                                      "-c" "user.name=Cave" "-c" "user.email=cave@localhost"
-                                      "commit" "-m" commit-msg)
-                                :output :string :error-output :string)
-              (uiop:run-program (list "git" "-C" tmpdir "push" "origin" "HEAD:main")
-                                :output :string :error-output :string)
-              ;; Tags (e.g. the floating major v4) so uses: owner/repo@v4 resolves.
-              (dolist (tag tags)
-                (uiop:run-program (list "git" "-C" tmpdir "tag" "-f" tag)
-                                  :ignore-error-status t :output :string :error-output :string)
-                (uiop:run-program (list "git" "-C" tmpdir "push" "-f" "origin"
-                                        (format nil "refs/tags/~A" tag))
-                                  :ignore-error-status t :output :string :error-output :string))
-              (uiop:run-program (list "git" "-C" (namestring disk-path)
-                                      "symbolic-ref" "HEAD" "refs/heads/main")
-                                :ignore-error-status t)
-              (llog:info "Seeded action repo" :repo (format nil "~A/~A" owner name) :tags tags))
-          (error (e)
-            (llog:warn "Failed to seed action repo"
-                       :repo (format nil "~A/~A" owner name)
-                       :error (princ-to-string e)))))
-    (uiop:run-program (list "rm" "-rf" tmpdir) :ignore-error-status t)))
-
 (defun ensure-action-repo (name description seed-subdir commit-msg tags)
   "Ensure actions/NAME exists (DB row + bare repo) and is seeded+tagged from
 SEED-SUBDIR when empty. The `actions` org hosts cave-native uses: actions as
@@ -296,7 +263,7 @@ real, browsable repos."
             (llog:warn "Failed to create action repo"
                        :repo name :error (princ-to-string e)))))
       (when (and (find-repo "actions" name) (system-repo-empty-p "actions" name))
-        (seed-action-repo "actions" name seed-subdir commit-msg tags)))))
+        (seed-system-repo "actions" name seed-subdir commit-msg :tags tags)))))
 
 ;;; --- SERVE subcommand ---
 

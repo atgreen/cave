@@ -40,27 +40,20 @@
         (let ((repo (create-repo :owner-id *current-user-id*
                                  :name name
                                  :description (unless (eq description 'null) description)
-                                 :is-private (and is-private (not (eq is-private 'null))))))
+                                 :is-private (and is-private (not (eq is-private 'null)))))
+              (token (unless (or (null auth-token)
+                                 (eq auth-token 'null)
+                                 (uiop:emptyp auth-token))
+                       auth-token)))
           (cond
             ((equal mode "import")
-             (import-repo-from-url username name url
-                                   :auth-token (unless (or (null auth-token)
-                                                            (eq auth-token 'null)
-                                                            (uiop:emptyp auth-token))
-                                                 auth-token)))
+             (import-repo-from-url username name url :auth-token token))
             ((equal mode "mirror")
-             (import-repo-from-url username name url
-                                   :auth-token (unless (or (null auth-token)
-                                                            (eq auth-token 'null)
-                                                            (uiop:emptyp auth-token))
-                                                 auth-token))
+             (import-repo-from-url username name url :auth-token token)
              (create-mirror :repo-id (getf repo :id)
                             :direction "pull"
                             :remote-url url
-                            :auth-token (unless (or (null auth-token)
-                                                     (eq auth-token 'null)
-                                                     (uiop:emptyp auth-token))
-                                          auth-token)
+                            :auth-token token
                             :interval-minutes interval))
             (t (init-bare-repo username name)))
           (log-event "repo.created" :user-id *current-user-id*

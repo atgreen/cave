@@ -136,6 +136,17 @@ nulllit = 'null'
         ((or (hash-table-p v) (%gha-array-p v)) (%to-json v))
         (t (princ-to-string v))))
 
+(defun %string-replace-all (string old new)
+  "Replace every occurrence of OLD with NEW in STRING."
+  (if (or (null old) (zerop (length old)))
+      string
+      (with-output-to-string (out)
+        (loop with olen = (length old)
+              for start = 0 then (+ pos olen)
+              for pos = (search old string :start2 start)
+              do (write-string string out :start start :end (or pos (length string)))
+              while pos do (write-string new out)))))
+
 (defun %gha-unquote (raw)
   "Turn a 'single-quoted' literal token into its string value ('' -> ')."
   (let ((inner (subseq raw 1 (1- (length raw)))))

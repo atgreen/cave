@@ -89,17 +89,17 @@
         base)))
 
 (defun base-hostname ()
-  "Extract just the hostname from :base-url (strip scheme and port)."
+  "Extract just the hostname from :base-url (strip scheme, path, and port)."
   (let* ((url (config-value :base-url "localhost"))
-         ;; Strip scheme
          (no-scheme (if (search "://" url)
                         (subseq url (+ 3 (search "://" url)))
                         url))
-         ;; Strip port
-         (colon-pos (position #\: no-scheme)))
+         (no-path (let ((slash (position #\/ no-scheme)))
+                    (if slash (subseq no-scheme 0 slash) no-scheme)))
+         (colon-pos (position #\: no-path)))
     (if colon-pos
-        (subseq no-scheme 0 colon-pos)
-        no-scheme)))
+        (subseq no-path 0 colon-pos)
+        no-path)))
 
 (defun oidc-redirect-uri ()
   "Return the OIDC redirect URI, derived from :base-url."
@@ -149,16 +149,7 @@
 :runner-public-url (e.g. grpcs://runner.cave.example.com behind Caddy), then
 the base-url's host on the configured :grpc-port, falling back to localhost."
   (or (config-value :runner-public-url)
-      (let* ((base (config-value :base-url))
-             (host (when (and base (search "://" base))
-                     (let* ((after (subseq base (+ (search "://" base) 3)))
-                            (slash (position #\/ after))
-                            (hostport (if slash (subseq after 0 slash) after))
-                            (colon (position #\: hostport)))
-                       (if colon (subseq hostport 0 colon) hostport)))))
-        (format nil "grpc://~A:~A"
-                (or host "localhost")
-                (config-value :grpc-port 9443)))))
+      (format nil "grpc://~A:~A" (base-hostname) (config-value :grpc-port 9443))))
 
 (defun cli-download-path ()
   "Return the local cave-CLI binary pathname when available for download."

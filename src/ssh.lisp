@@ -121,41 +121,42 @@
 
 ;;; ========================== AUTHORIZED KEYS ==========================
 
-(defun authorized-keys-line (key-record config-path shell-path)
-  "Generate an authorized_keys line for a single SSH key record."
+(defun authorized-keys-line (key-id public-key config-path shell-path)
+  "authorized_keys line forcing cave-shell as the login command. KEY-ID is the
+ssh-key row id, or d<id> for a deploy key — git-shell routes d-prefixed ids to
+the deploy-key (repo-scoped) auth path."
   (format nil "command=\"~A ~A ~A ~A\",~
                no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ~A"
-          shell-path config-path (getf key-record :id)
-          (config-value :http-port 8080) (getf key-record :public-key)))
-
-(defun deploy-authorized-keys-line (dk config-path shell-path)
-  "authorized_keys line for a deploy key. The key-id is `d<id>` so git-shell
-routes it to the deploy-key (repo-scoped) auth path."
-  (format nil "command=\"~A ~A d~A ~A\",~
-               no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ~A"
-          shell-path config-path (getf dk :id)
-          (config-value :http-port 8080) (getf dk :public-key)))
+          shell-path config-path key-id
+          (config-value :http-port 8080) public-key))
 
 (defun generate-authorized-keys (config-path shell-path)
-  "Generate authorized_keys content from all active user SSH keys + deploy keys."
-  (with-output-to-string (s)
-    (format s "# Managed by Cave — do not edit manually~%")
-    (dolist (key (all-active-ssh-keys))
-      (format s "~A~%" (authorized-keys-line key config-path shell-path)))
-    (dolist (dk (all-deploy-keys-with-repo))
-      (format s "~A~%" (deploy-authorized-keys-line dk config-path shell-path)))))
+  "authorized_keys content from all active user SSH keys + deploy keys.
+Returns (VALUES content user-key-count)."
+  (let ((keys (all-active-ssh-keys)))
+    (values
+     (with-output-to-string (s)
+       (format s "# Managed by Cave — do not edit manually~%")
+       (dolist (key keys)
+         (format s "~A~%" (authorized-keys-line (getf key :id) (getf key :public-key)
+                                                config-path shell-path)))
+       (dolist (dk (all-deploy-keys-with-repo))
+         (format s "~A~%" (authorized-keys-line (format nil "d~A" (getf dk :id))
+                                                (getf dk :public-key)
+                                                config-path shell-path))))
+     (length keys))))
 
 (defun write-authorized-keys (path config-path shell-path)
   "Write the authorized_keys file at PATH."
-  (let ((content (generate-authorized-keys config-path shell-path)))
+  (multiple-value-bind (content key-count)
+      (generate-authorized-keys config-path shell-path)
     (ensure-directories-exist path)
     (with-open-file (s path :direction :output :if-exists :supersede
                             :if-does-not-exist :create)
       (write-string content s))
     (uiop:run-program (list "chmod" "600" (namestring path))
                        :ignore-error-status t)
-    (llog:info "Updated authorized_keys" :path path
-               :key-count (length (all-active-ssh-keys)))))
+    (llog:info "Updated authorized_keys" :path path :key-count key-count)))
 
 (defun sync-authorized-keys ()
   "Regenerate authorized_keys if configured. Safe to call anytime."

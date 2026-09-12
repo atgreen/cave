@@ -146,10 +146,9 @@
                 (unless (update-job-status-for-runner job-id runner-id job-status)
                   (error "runner is not assigned to this workflow job"))
                 ;; Persist resolved job-level outputs before unblocking dependents.
-                (let ((outs (handler-case (slot-value request 'cave::outputs-json)
-                              (error () ""))))
-                  (when (and (stringp outs) (plusp (length outs)))
-                    (set-job-outputs job-id outs)))
+                ;; (set-job-outputs ignores a blank or non-string value.)
+                (set-job-outputs job-id (handler-case (slot-value request 'cave::outputs-json)
+                                          (error () "")))
                 (let ((job (postmodern:query
                             (:select '* :from 'cave-workflow-jobs :where (:= 'id job-id))
                             :plist)))

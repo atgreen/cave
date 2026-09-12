@@ -265,53 +265,52 @@ number of commits re-verified."
                        (when (>= (length parts) 3)
                          (push (list :old (first parts) :new (second parts)
                                      :ref (third parts))
-                               rs)))))))
+                               rs))))))
+           (disk-path (repo-disk-path owner repo-name)))
       (progn
         (when refs
           (touch-repo-pushed-at (getf repo :id)))
         ;; Log a rich git.push event per ref + schedule automations
-        (let ((disk-path (repo-disk-path owner repo-name)))
-          (dolist (r refs)
-            (log-event "git.push"
-                       :user-id actor
-                       :repo-id (getf repo :id)
-                       :metadata (build-push-metadata disk-path
-                                                      (getf r :ref)
-                                                      (getf r :old)
-                                                      (getf r :new)))
-            (schedule-automations (getf repo :id) "post_receive"
-                                  :commit-sha (getf r :new)
-                                  :ref (getf r :ref))
-            ;; `git push -o skip-ci` suppresses workflow scheduling.
-            (unless skip-ci
-              (handler-case
-                  (parse-and-schedule-workflows (getf repo :id) "post_receive"
-                                                :commit-sha (getf r :new)
-                                                :ref (getf r :ref))
-                (error (e)
-                  (llog:error "Workflow scheduling failed" :error (princ-to-string e)))))
-            ;; Keep any open PR's head_commit in sync with its source branch tip,
-            ;; so merge checks (and approval staleness) evaluate the actual head.
-            ;; The version bump in update-pull-request-head re-stales prior
-            ;; approvals — correct, since new commits changed the PR.
-            (let* ((ref (getf r :ref))
-                   (new (getf r :new))
-                   (branch (when (and (>= (length ref) 11)
-                                      (string= ref "refs/heads/" :end1 11))
-                             (subseq ref 11))))
-              (when (and branch new
-                         (not (every (lambda (c) (char= c #\0)) new)))
-                (let ((open-pr (find-pull-request-by-branch (getf repo :id) branch)))
-                  (when (and open-pr (not (equal (getf open-pr :head-commit) new)))
-                    (update-pull-request-head (getf open-pr :id) new)
-                    ;; Snapshot the new round for interdiff.
-                    (let ((fresh (find-pull-request-by-id (getf open-pr :id))))
-                      (when fresh
-                        (record-changeset-version
-                         (getf fresh :id) (getf fresh :version) new
-                         (git-merge-base disk-path (getf fresh :target-branch) new))))))))))
+        (dolist (r refs)
+          (log-event "git.push"
+                     :user-id actor
+                     :repo-id (getf repo :id)
+                     :metadata (build-push-metadata disk-path
+                                                    (getf r :ref)
+                                                    (getf r :old)
+                                                    (getf r :new)))
+          (schedule-automations (getf repo :id) "post_receive"
+                                :commit-sha (getf r :new)
+                                :ref (getf r :ref))
+          ;; `git push -o skip-ci` suppresses workflow scheduling.
+          (unless skip-ci
+            (handler-case
+                (parse-and-schedule-workflows (getf repo :id) "post_receive"
+                                              :commit-sha (getf r :new)
+                                              :ref (getf r :ref))
+              (error (e)
+                (llog:error "Workflow scheduling failed" :error (princ-to-string e)))))
+          ;; Keep any open PR's head_commit in sync with its source branch tip,
+          ;; so merge checks (and approval staleness) evaluate the actual head.
+          ;; The version bump in update-pull-request-head re-stales prior
+          ;; approvals — correct, since new commits changed the PR.
+          (let* ((ref (getf r :ref))
+                 (new (getf r :new))
+                 (branch (when (and (>= (length ref) 11)
+                                    (string= ref "refs/heads/" :end1 11))
+                           (subseq ref 11))))
+            (when (and branch new (not (zero-sha-p new)))
+              (let ((open-pr (find-pull-request-by-branch (getf repo :id) branch)))
+                (when (and open-pr (not (equal (getf open-pr :head-commit) new)))
+                  (update-pull-request-head (getf open-pr :id) new)
+                  ;; Snapshot the new round for interdiff.
+                  (let ((fresh (find-pull-request-by-id (getf open-pr :id))))
+                    (when fresh
+                      (record-changeset-version
+                       (getf fresh :id) (getf fresh :version) new
+                       (git-merge-base disk-path (getf fresh :target-branch) new)))))))))
         ;; Verify any signed commits in the pushed range, cache results
-        (handler-case (verify-pushed-commits repo (repo-disk-path owner repo-name) refs)
+        (handler-case (verify-pushed-commits repo disk-path refs)
           (error (e)
             (llog:warn "Signature verification failed" :error (princ-to-string e))))
         ;; Invalidate Chamber cache for this repo
@@ -354,7 +353,6 @@ number of commits re-verified."
     ;; plus `git push -o verbose-ci` CI feedback.
     (let ((default-branch (or (chamber-get-default-branch owner repo-name) "main"))
           (base (config-value :base-url ""))
-          (disk (repo-disk-path owner repo-name))
           (lines nil))
       (dolist (r refs)
         (let* ((ref (getf r :ref))
@@ -362,16 +360,15 @@ number of commits re-verified."
                (branch (when (and (>= (length ref) 11)
                                   (string= ref "refs/heads/" :end1 11))
                          (subseq ref 11))))
-          (when (and branch new
-                     (not (every (lambda (c) (char= c #\0)) new))
+          (when (and branch new (not (zero-sha-p new))
                      (not (equal branch default-branch))
                      (not (find-pull-request-by-branch (getf repo :id) branch)))
             (push (format nil "Open a pull request for '~A': ~A/~A/~A/pulls/new"
                           branch base owner repo-name)
                   lines))
           ;; verbose-ci: report which workflows would run for this ref.
-          (when (and verbose-ci new (not (every (lambda (c) (char= c #\0)) new)))
-            (let ((wf (ignore-errors (workflow-files-at disk new))))
+          (when (and verbose-ci new (not (zero-sha-p new)))
+            (let ((wf (ignore-errors (workflow-files-at disk-path new))))
               (cond
                 (skip-ci (push "CI: skipped (push -o skip-ci)" lines))
                 ((null wf) (push "CI: no .cave/workflows found for this commit" lines))

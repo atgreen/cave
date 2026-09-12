@@ -403,17 +403,6 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
 
 ;;; --- RUNNER subcommand ---
 
-(defun %string-replace-all (string old new)
-  "Replace every occurrence of OLD with NEW in STRING."
-  (if (or (null old) (zerop (length old)))
-      string
-      (with-output-to-string (out)
-        (loop with olen = (length old)
-              for start = 0 then (+ pos olen)
-              for pos = (search old string :start2 start)
-              do (write-string string out :start start :end (or pos (length string)))
-              while pos do (write-string new out)))))
-
 (defun %mask-secrets (text values)
   "Replace each secret VALUE in TEXT with *** so secrets never reach the log UI."
   (let ((result text))

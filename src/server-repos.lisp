@@ -444,21 +444,18 @@
             (let ((repo (create-repo :org-id (getf org :id)
                                      :name name
                                      :description description
-                                     :is-private (when is-private t))))
+                                     :is-private (when is-private t)))
+                  (token (when (and auth-token (not (uiop:emptyp auth-token)))
+                           auth-token)))
               (cond
                 ((string= mode "import")
-                 (import-repo-from-url org-name name url
-                                       :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
-                                                     auth-token)))
+                 (import-repo-from-url org-name name url :auth-token token))
                 ((string= mode "mirror")
-                 (import-repo-from-url org-name name url
-                                       :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
-                                                     auth-token))
+                 (import-repo-from-url org-name name url :auth-token token)
                  (create-mirror :repo-id (getf repo :id)
                                 :direction "pull"
                                 :remote-url url
-                                :auth-token (when (and auth-token (not (uiop:emptyp auth-token)))
-                                              auth-token)
+                                :auth-token token
                                 :interval-minutes (or interval 60)))
                 (t (init-bare-repo org-name name)))
               (log-event "repo.created" :user-id *current-user-id*
