@@ -158,7 +158,9 @@ explicitly chosen another theme."
 ;;; --- Breadcrumb helper ---
 
 (defun render-breadcrumbs (crumbs)
-  "Render breadcrumb navigation. CRUMBS is a list of (url text) pairs, last is just text."
+  "Render breadcrumb navigation. CRUMBS is a list of (url text) pairs; the last
+crumb renders as plain text (a bare string, or the text of a pair — view-tree's
+last crumb is a pair when ?path= is empty)."
   (spinneret:with-html
     (:nav.breadcrumb
      (loop for (crumb . rest) on crumbs
@@ -166,7 +168,7 @@ explicitly chosen another theme."
                   (progn
                     (:a :href (first crumb) (second crumb))
                     (:raw " / "))
-                  (:strong crumb))))))
+                  (:strong (if (listp crumb) (second crumb) crumb)))))))
 
 ;;; ========================== DASHBOARD ==========================
 ;;; (Login pages live in the embedded Usher OIDC provider — no local login form.)
