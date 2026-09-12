@@ -159,10 +159,7 @@
             host port (if tls-p " (TLS)" "") name runner-labels ephemeral)
 
     (labels
-        ((make-auth-metadata (auth-token)
-           (ag-grpc:alist-to-metadata `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
-
-         (execute-task (channel auth-token task)
+        ((execute-task (channel auth-token task)
            "Execute a task — dispatch between simple automation and workflow job."
            (let ((job-id (handler-case (slot-value task 'cave::job-id) (error () 0))))
              (if (and job-id (plusp job-id))

@@ -217,6 +217,7 @@ editing the landing copy is a git push — no redeploy."
                        :events (list-recent-events :limit 20)))
       (html-response
        (view-public-landing :repos (search-public-repos :limit 50)
+                            :repo-count (count-public-repos)
                             :events (list-recent-public-events :limit 20)
                             :hero-html (ignore-errors (compute-landing-hero))))))
 

@@ -130,7 +130,13 @@
 ;;; --- Helpers ---
 
 (defun chamber-repo-path (owner repo-name)
-  "Resolve owner/repo-name to on-disk bare repo path."
+  "Resolve owner/repo-name to on-disk bare repo path. OWNER and REPO-NAME are
+validated as single path components (same rule as REPO-DISK-PATH) so a crafted
+RPC request can never escape the repo storage root; an invalid name signals,
+which ag-grpc surfaces as an INTERNAL status and chamber-or's direct-git
+fallback then rejects with its own validation."
+  (ensure-valid-resource-name owner)
+  (ensure-valid-resource-name repo-name)
   (merge-pathnames (format nil "~A/~A.git/" owner repo-name) (repos-dir)))
 
 (defun make-cache-key (op owner repo-name &rest args)

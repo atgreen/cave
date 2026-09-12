@@ -176,20 +176,25 @@ Reads stdin once (it can't be re-read); callers derive shas from the result."
 
 (defun %unsigned-commits (bare-path old new)
   "SHAs among the pushed commits (OLD..NEW, or just NEW for a new branch) whose
-commit object carries no signature."
-  (let* ((zero (every (lambda (c) (char= c #\0)) old))
+commit object carries no signature. Returns (VALUES shas ok); OK is NIL when
+rev-list itself failed, so enforcement can fail closed instead of treating an
+error as 'all signed'."
+  (let* ((zero (zero-sha-p old))
          (range (if zero new (format nil "~A..~A" old new))))
     (multiple-value-bind (out _e code)
-        (uiop:run-program (list "git" "-C" (namestring bare-path) "rev-list"
-                                (if zero "--max-count=50" "") range)
+        (uiop:run-program (append (list "git" "-C" (namestring bare-path) "rev-list")
+                                  (when zero (list "--max-count=50"))
+                                  (list range))
                           :output '(:string :stripped t) :error-output nil
                           :ignore-error-status t)
       (declare (ignore _e))
-      (when (zerop code)
-        (loop for sha in (remove-if #'uiop:emptyp
-                                    (uiop:split-string out :separator '(#\Newline)))
-              unless (cave::git-commit-signature-info bare-path sha)
-                collect sha)))))
+      (if (zerop code)
+          (values (loop for sha in (remove-if #'uiop:emptyp
+                                              (uiop:split-string out :separator '(#\Newline)))
+                        unless (cave::git-commit-signature-info bare-path sha)
+                          collect sha)
+                  t)
+          (values nil nil)))))
 
 (defun %enforce-protected-branches (repo refs bare-path pusher-id)
   "Return a rejection reason string if any REF update violates a branch
@@ -210,7 +215,11 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
                                       branch)))
                      ;; Require signed commits on the protected branch.
                      ((and (getf prot :require-signed-commits) (not deleting))
-                      (let ((unsigned (%unsigned-commits bare-path old new)))
+                      (multiple-value-bind (unsigned ok)
+                          (%unsigned-commits bare-path old new)
+                        (unless ok
+                          (return (format nil "branch '~A' requires signed commits — could not verify the pushed commits"
+                                          branch)))
                         (when unsigned
                           (return (format nil "branch '~A' requires signed commits — ~A unsigned commit~:P pushed"
                                           branch (length unsigned))))))))))))
@@ -402,6 +411,11 @@ protection rule, else NIL. Direct-push protection is bypassed by repo admins."
             (uiop:quit 1)))))))
 
 ;;; --- RUNNER subcommand ---
+
+(defun make-auth-metadata (auth-token)
+  "gRPC metadata carrying the runner's bearer token."
+  (ag-grpc:alist-to-metadata
+   `(("authorization" . ,(format nil "Bearer ~A" auth-token)))))
 
 (defun %mask-secrets (text values)
   "Replace each secret VALUE in TEXT with *** so secrets never reach the log UI."

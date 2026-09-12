@@ -54,8 +54,8 @@
    :options (list
              (make-config-option)
              (clingon:make-option :string
-              :long-name "repo" :key :repo :required t
-              :description "Repo path as owner/cave-themes"))
+              :long-name "owner" :key :owner :required t
+              :description "Owner of the cave-themes repo to sync from"))
    :handler #'handle-sync-themes))
 
 (defparameter *theme-color-keys*
@@ -129,15 +129,13 @@
 
 (defun handle-sync-themes (cmd)
   (let ((config-path (clingon:getopt cmd :config))
-        (repo-path (clingon:getopt cmd :repo)))
+        (owner (clingon:getopt cmd :owner)))
     (load-config config-path)
     (handler-case (connect-db)
       (error (e)
         (format *error-output* "~&cave: cannot connect to database: ~A~%" e)
         (uiop:quit 1)))
-    (let* ((parts (uiop:split-string repo-path :separator '(#\/)))
-           (owner (first parts))
-           (user (find-user-by-username owner))
+    (let* ((user (find-user-by-username owner))
            (disk-path (repo-disk-path owner "cave-themes")))
       (when (and user (probe-file disk-path))
         ;; List all .toml files in the repo root

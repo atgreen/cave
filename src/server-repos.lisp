@@ -118,25 +118,10 @@
                                     (namestring source-path)
                                     (namestring dest-path))
                                :output :string :error-output :string)
-            ;; Install hooks
-            (let ((pre-hook (merge-pathnames "hooks/pre-receive" dest-path)))
-              (with-open-file (out pre-hook :direction :output :if-exists :supersede)
-                (format out "#!/bin/bash~%exec cave-server run-checks --config /etc/cave.conf --repo ~A/~A~%"
-                        username repo-name))
-              (uiop:run-program (list "chmod" "+x" (namestring pre-hook))
-                                 :ignore-error-status t))
-            (let ((post-hook (merge-pathnames "hooks/post-receive" dest-path)))
-              (with-open-file (out post-hook :direction :output :if-exists :supersede)
-                (format out "#!/bin/bash~%cave-server sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
-                        username repo-name)
-                (when (string= repo-name "cave-themes")
-                  (format out "cave-server sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
-                          username)))
-              (uiop:run-program (list "chmod" "+x" (namestring post-hook))
-                                 :ignore-error-status t))
-            ;; Fix ownership
-            (uiop:run-program (list "chown" "-R" "cave:cave" (namestring dest-path))
-                               :output :string :error-output :string :ignore-error-status t))
+            ;; Same hooks (and chown) as any other repo — the inline copy this
+            ;; replaced had drifted and skipped the post-receive callback (no
+            ;; push events, workflows, or signature verification on forks).
+            (install-repo-hooks dest-path username repo-name))
           (log-event "repo.forked" :user-id *current-user-id*
                                    :repo-id (getf repo :id)
                                    :metadata (format nil "{\"source\": \"~A/~A\"}" owner repo-name))
@@ -206,8 +191,7 @@
         (let ((tree (chamber-get-tree owner repo-name :ref ref :path path)))
           (if tree
               (progn
-                (hunchentoot:redirect
-                 (format nil "/~A/~A/tree/~A?path=~A" owner repo-name ref path))
+                (hunchentoot:redirect (tree-url owner repo-name ref path))
                 (return-from blob-page nil))
               (return-from blob-page (not-found)))))
       (let* ((file-size (getf info :size))
@@ -230,7 +214,9 @@
                     (if slash (subseq path 0 (1+ slash)) "")))
              (raw-base-url (format nil "~A/~A/~A/raw/~A?path=~A"
                                    (config-value :base-url "http://localhost:8080")
-                                   owner repo-name (or ref "HEAD") dir))
+                                   owner repo-name
+                                   (hunchentoot:url-encode (or ref "HEAD"))
+                                   (hunchentoot:url-encode dir)))
              ;; Reuse the rendered-markdown cache, content-addressed by
              ;; (blob-sha . raw-base-url) exactly as the README path does.
              (rendered-html

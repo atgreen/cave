@@ -5,7 +5,7 @@
 ;;;; One place to build in-app links so path shape and query-string encoding
 ;;;; stay consistent across views, notifications, and API responses. Deeper
 ;;;; paths (e.g. settings/protect/…) stay as format strings at their call
-;;;; sites; a handful of raw ?path= links remain unencoded (cave-ab9).
+;;;; sites.
 
 (defun repo-url (owner repo &rest segments)
   "Site path for a repo: (repo-url \"o\" \"r\" \"settings\") => \"/o/r/settings\".
@@ -29,4 +29,9 @@ slashes and paths with spaces/# survive the round-trip."
 (defun blob-url (owner repo ref path)
   "File-view URL. REF and PATH are url-encoded (see TREE-URL)."
   (format nil "/~A/~A/blob/~A?path=~A"
+          owner repo (hunchentoot:url-encode ref) (hunchentoot:url-encode path)))
+
+(defun raw-url (owner repo ref path)
+  "Raw-file URL. REF and PATH are url-encoded (see TREE-URL)."
+  (format nil "/~A/~A/raw/~A?path=~A"
           owner repo (hunchentoot:url-encode ref) (hunchentoot:url-encode path)))

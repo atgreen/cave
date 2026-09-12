@@ -529,7 +529,7 @@ Returns the merged PR on success."
       (format out "cave-server sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
               owner repo-name)
       (when (string= repo-name "cave-themes")
-        (format out "cave-server sync-themes --config /etc/cave.conf --repo ~A/cave-themes &~%"
+        (format out "cave-server sync-themes --config /etc/cave.conf --owner ~A &~%"
                 owner)))
     (uiop:run-program (list "chmod" "+x" (namestring hook-path))
                        :ignore-error-status t))

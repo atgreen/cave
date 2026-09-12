@@ -498,11 +498,10 @@ serves the unrendered bytes."
         (when is-markdown
           (if (eq view-mode :source)
               (:span.btn.btn-sm.btn-active "Source")
-              (:a.btn.btn-sm :href (format nil "/~A/~A/blob/~A?path=~A&view=source"
-                                           owner-name repo-name ref path)
+              (:a.btn.btn-sm :href (format nil "~A&view=source"
+                                           (blob-url owner-name repo-name ref path))
                "Source")))
-        (:a.btn.btn-sm :href (format nil "/~A/~A/raw/~A?path=~A"
-                                     owner-name repo-name ref path)
+        (:a.btn.btn-sm :href (raw-url owner-name repo-name ref path)
          "Raw")))
       (cond
         ((and (eq view-mode :rendered) rendered-html)
@@ -512,14 +511,12 @@ serves the unrendered bytes."
         (is-binary
          (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
           (:p "Binary file — not displayed.")
-          (:a.btn :href (format nil "/~A/~A/raw/~A?path=~A"
-                                 owner-name repo-name ref path)
+          (:a.btn :href (raw-url owner-name repo-name ref path)
            "Download")))
         ((and file-size (> file-size (* 1024 1024)))
          (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
           (:p "File too large for preview.")
-          (:a.btn :href (format nil "/~A/~A/raw/~A?path=~A"
-                                 owner-name repo-name ref path)
+          (:a.btn :href (raw-url owner-name repo-name ref path)
            "Download")))
         (t
          (:div#editor-container :style "height:600px")

@@ -941,13 +941,21 @@ OWNER is the org name, or the username for a personal repo. Used by `reverify`."
     :returning '*)
    :plist))
 
-(defun set-dep-fix-attempt-state (id state &key pr-id detail)
-  "Update a fix attempt's state (and optionally its PR / detail)."
+(defun set-dep-fix-attempt-state (id state &key (pr-id nil pr-id-p) (detail nil detail-p))
+  "Update a fix attempt's state. PR-ID and DETAIL are written only when
+   supplied, so a caller setting one never wipes the other."
   (postmodern:execute
    (:update 'cave-dep-fix-attempts
-    :set 'state state 'pr-id (or pr-id :null) 'detail (or detail :null)
-         'updated-at (:now)
-    :where (:= 'id id))))
+    :set 'state state 'updated-at (:now)
+    :where (:= 'id id)))
+  (when pr-id-p
+    (postmodern:execute
+     (:update 'cave-dep-fix-attempts
+      :set 'pr-id (or pr-id :null) :where (:= 'id id))))
+  (when detail-p
+    (postmodern:execute
+     (:update 'cave-dep-fix-attempts
+      :set 'detail (or detail :null) :where (:= 'id id)))))
 
 (defun dep-fix-attempt-for-alert (alert-id)
   "The fix attempt for ALERT-ID, or NIL."

@@ -397,7 +397,7 @@ a language filter, and a people/organizations directory."
                     (:span.desc d))))))
             (:p.empty "No organizations.")))))))
 
-(defun view-public-landing (&key repos events hero-html)
+(defun view-public-landing (&key repos repo-count events hero-html)
   "Anonymous landing page. The hero/intro is rendered from the cave/cave-landing
 repo's index.md (HERO-HTML) when present, so the copy is editable via git with no
 redeploy; otherwise a built-in default is shown. Cave always appends the live
@@ -454,7 +454,8 @@ data: featured repositories, recent activity, and instance stats."
             (:p.empty "No activity yet."))))
       ;; Stats footer
       (:p :style "text-align:center;color:var(--text-muted);font-size:.85rem;margin-top:var(--sp-4)"
-       (format nil "~D public repositor~:@P · running Cave ~A" (length repos) +version+)))))
+       (format nil "~D public repositor~:@P · running Cave ~A"
+               (or repo-count (length repos)) +version+)))))
 
 (defun view-dashboard (&key orgs repos username events)
   "Render the dashboard."
