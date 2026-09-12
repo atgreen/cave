@@ -93,7 +93,7 @@
        (format nil "`~A` = `~A` — expected a CSS color (#hex, rgb(), rgba())" key value)))
     ((equal key "font-url")
      (unless (valid-url-p value)
-       (format nil "`font-url` = `~A` — expected a URL starting with https://" key value)))
+       (format nil "`font-url` = `~A` — expected a URL starting with https://" value)))
     ((member key *theme-font-keys* :test #'equal)
      (when (uiop:emptyp value)
        (format nil "`~A` is empty — expected a font family string" key)))
