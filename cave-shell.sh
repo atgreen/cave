@@ -19,7 +19,7 @@ fi
 
 # Parse the git command and repo path
 read -r GIT_CMD REPO_PATH <<< "$SSH_ORIGINAL_COMMAND"
-REPO_PATH=$(echo "$REPO_PATH" | tr -d "'\"" | sed 's/\.git$//; s|^/||')
+REPO_PATH=$(echo "$REPO_PATH" | tr -d "'\"" | sed 's/\.git$//; s|^/*||')
 
 case "$GIT_CMD" in
     git-upload-pack|git-receive-pack) ;;
@@ -53,16 +53,26 @@ export CAVE_PUSH_USER_ID="$USER_ID"
 # For pushes, bracket with Chamber write lock acquire/release.
 # For fetches, exec directly — reads don't need write locks.
 if [ "$GIT_CMD" = "git-receive-pack" ]; then
-    PUSH_TOKEN=$(curl -sf -X POST "http://localhost:${HTTP_PORT}/-/internal/push/acquire/${REPO_PATH}")
-    if [ $? -ne 0 ] || [ -z "$PUSH_TOKEN" ]; then
+    # -w appends the HTTP status on its own line; the acquire endpoint
+    # answers 200 + token, or 503 when another push holds the lock.
+    RESPONSE=$(curl -s -w '\n%{http_code}' -X POST \
+        "http://localhost:${HTTP_PORT}/-/internal/push/acquire/${REPO_PATH}") || RESPONSE=""
+    HTTP_CODE="${RESPONSE##*$'\n'}"
+    PUSH_TOKEN="${RESPONSE%$'\n'*}"
+    if [ "$HTTP_CODE" = "503" ]; then
         echo "cave: server busy, try again" >&2
         exit 1
     fi
-    # Run (not exec) so we can release the lock after git exits
-    $GIT_CMD "$DISK_PATH"
-    EXIT_CODE=$?
+    if [ "$HTTP_CODE" != "200" ] || [ -z "$PUSH_TOKEN" ]; then
+        echo "cave: push rejected (HTTP ${HTTP_CODE:-no response}) for '${REPO_PATH}'" >&2
+        exit 1
+    fi
+    # Run (not exec) so we can release the lock after git exits; tolerate a
+    # git failure here or set -e would skip the release and leak the lock.
+    EXIT_CODE=0
+    $GIT_CMD "$DISK_PATH" || EXIT_CODE=$?
     curl -sf -X POST -d "$PUSH_TOKEN" \
-         "http://localhost:${HTTP_PORT}/-/internal/push/release/${REPO_PATH}" >/dev/null 2>&1
+         "http://localhost:${HTTP_PORT}/-/internal/push/release/${REPO_PATH}" >/dev/null 2>&1 || true
     exit $EXIT_CODE
 else
     exec $GIT_CMD "$DISK_PATH"
