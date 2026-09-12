@@ -89,8 +89,10 @@
         base)))
 
 (defun base-hostname ()
-  "Extract just the hostname from :base-url (strip scheme, path, and port)."
-  (let* ((url (config-value :base-url "localhost"))
+  "Extract just the hostname from :base-url (strip scheme, path, and port).
+Falls back to localhost when :base-url is absent or blank."
+  (let* ((url (let ((b (config-value :base-url)))
+                (if (uiop:emptyp b) "localhost" b)))
          (no-scheme (if (search "://" url)
                         (subseq url (+ 3 (search "://" url)))
                         url))
