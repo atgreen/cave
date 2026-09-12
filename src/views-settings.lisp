@@ -119,6 +119,16 @@
           (:input :type "checkbox" :name "auto_delete_branch" :value "1"
            :checked (getf repo :auto-delete-branch))
           " Auto-delete source branch after merge"))
+        (:div.field
+         (:label
+          (:input :type "checkbox" :name "required_checks_pass" :value "1"
+           :checked (getf repo :required-checks-pass))
+          " Require checks to pass (commit statuses + cave workflows on the head commit)"))
+        (:div.field
+         (:label
+          (:input :type "checkbox" :name "require_zero_unresolved_concerns" :value "1"
+           :checked (getf repo :require-zero-unresolved-concerns))
+          " Require all review concerns resolved"))
         (:button.btn.btn-primary :type "submit" "Save merge policy")))
 
       (:section

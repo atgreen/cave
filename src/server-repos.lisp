@@ -537,7 +537,10 @@
           :allow-stale-approvals (when (hunchentoot:post-parameter "allow_stale_approvals") t)
           :concerns-count-as-approval (when (hunchentoot:post-parameter "concerns_count") t)
           :block-on-request-changes (when (hunchentoot:post-parameter "block_on_request_changes") t)
-          :auto-delete-branch (when (hunchentoot:post-parameter "auto_delete_branch") t))))
+          :auto-delete-branch (when (hunchentoot:post-parameter "auto_delete_branch") t)
+          :required-checks-pass (when (hunchentoot:post-parameter "required_checks_pass") t)
+          :require-zero-unresolved-concerns
+          (when (hunchentoot:post-parameter "require_zero_unresolved_concerns") t))))
     (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-add-member-submit

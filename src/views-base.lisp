@@ -304,6 +304,7 @@ No-op for a blank or :null NAME."
     (:li
      (:a :href (repo-url (getf r :owner-name) (getf r :name))
       (format nil "~A/~A" (getf r :owner-name) (getf r :name)))
+     (when (getf r :is-mirror) (:span.badge "mirror"))
      (let ((d (getf r :description)))
        (when (and d (not (eq d :null)) (plusp (length d)))
          (:span.desc d)))
@@ -476,6 +477,8 @@ data: featured repositories, recent activity, and instance stats."
                 (getf repo :name))
                (when (getf repo :is-private)
                  (:span.badge "private"))
+               (when (getf repo :is-mirror)
+                 (:span.badge "mirror"))
                (when (getf repo :description)
                  (:span.desc (getf repo :description)))
                (when (format-relative-time pushed)
@@ -585,6 +588,7 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
               (:a :href (repo-url username (getf repo :name))
                (getf repo :name))
               (when (getf repo :is-private) (:span.badge "private"))
+              (when (getf repo :is-mirror) (:span.badge "mirror"))
               (when (getf repo :description) (:span.desc (getf repo :description))))))
           (:p.empty "No repositories.")))))
 
@@ -631,6 +635,8 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
                (getf repo :name))
               (when (getf repo :is-private)
                 (:span.badge "private"))
+              (when (getf repo :is-mirror)
+                (:span.badge "mirror"))
               (when (getf repo :description)
                 (:span.desc (getf repo :description))))))
           (:p.empty "No repositories yet.")))))

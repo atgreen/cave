@@ -24,10 +24,15 @@
     repo))
 
 (defun find-repo (owner-name repo-name)
-  "Find a repo by owner (org or user) name and repo name."
+  "Find a repo by owner (org or user) name and repo name. The row carries a
+computed :is-mirror (repo is a pull-mirror) so views can badge mirrors."
   ;; Try org first
   (let ((result (postmodern:query
                  (:select 'cave-repos.*
+                          (:as (:exists (:select 1 :from 'cave-repo-mirrors
+                                         :where (:and (:= 'cave-repo-mirrors.repo-id 'cave-repos.id)
+                                                      (:= 'cave-repo-mirrors.direction "pull"))))
+                               'is-mirror)
                   :from 'cave-repos
                   :inner-join 'cave-orgs
                   :on (:= 'cave-repos.org-id 'cave-orgs.id)
@@ -38,6 +43,10 @@
   ;; Try user
   (postmodern:query
    (:select 'cave-repos.*
+            (:as (:exists (:select 1 :from 'cave-repo-mirrors
+                           :where (:and (:= 'cave-repo-mirrors.repo-id 'cave-repos.id)
+                                        (:= 'cave-repo-mirrors.direction "pull"))))
+                 'is-mirror)
     :from 'cave-repos
     :inner-join 'cave-users
     :on (:= 'cave-repos.owner-id 'cave-users.id)
@@ -66,16 +75,26 @@
        :single)))
 
 (defun list-org-repos (org-id &key include-private)
-  "List repos in an org."
+  "List repos in an org. Rows carry a computed :is-mirror (see FIND-REPO)."
   (if include-private
       (postmodern:query
        (:order-by
-        (:select '* :from 'cave-repos :where (:= 'org-id org-id))
+        (:select 'cave-repos.*
+                 (:as (:exists (:select 1 :from 'cave-repo-mirrors
+                                :where (:and (:= 'cave-repo-mirrors.repo-id 'cave-repos.id)
+                                             (:= 'cave-repo-mirrors.direction "pull"))))
+                      'is-mirror)
+         :from 'cave-repos :where (:= 'org-id org-id))
         'name)
        :plists)
       (postmodern:query
        (:order-by
-        (:select '* :from 'cave-repos
+        (:select 'cave-repos.*
+                 (:as (:exists (:select 1 :from 'cave-repo-mirrors
+                                :where (:and (:= 'cave-repo-mirrors.repo-id 'cave-repos.id)
+                                             (:= 'cave-repo-mirrors.direction "pull"))))
+                      'is-mirror)
+         :from 'cave-repos
          :where (:and (:= 'org-id org-id) (:= 'is-private nil)))
         'name)
        :plists)))
@@ -89,7 +108,9 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
                       (t "COALESCE(r.last_pushed_at, r.updated_at) DESC")))
          (qq (and query (plusp (length (string-trim " " query))) (string-trim " " query)))
          (like (and qq (format nil "%~A%" qq)))
-         (base "SELECT r.*, COALESCE(o.name, u.username) AS owner_name
+         (base "SELECT r.*, COALESCE(o.name, u.username) AS owner_name,
+                       EXISTS(SELECT 1 FROM cave_repo_mirrors m
+                               WHERE m.repo_id = r.id AND m.direction = 'pull') AS is_mirror
                 FROM cave_repos r
                 LEFT JOIN cave_orgs o ON o.id = r.org_id
                 LEFT JOIN cave_users u ON u.id = r.owner_id
@@ -193,16 +214,27 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
    :plists))
 
 (defun list-user-repos (user-id &key include-private)
-  "List repos owned by a user, most recently changed first."
+  "List repos owned by a user, most recently changed first. Rows carry a
+computed :is-mirror (see FIND-REPO)."
   (if include-private
       (postmodern:query
        (:order-by
-        (:select '* :from 'cave-repos :where (:= 'owner-id user-id))
+        (:select 'cave-repos.*
+                 (:as (:exists (:select 1 :from 'cave-repo-mirrors
+                                :where (:and (:= 'cave-repo-mirrors.repo-id 'cave-repos.id)
+                                             (:= 'cave-repo-mirrors.direction "pull"))))
+                      'is-mirror)
+         :from 'cave-repos :where (:= 'owner-id user-id))
         (:desc (:coalesce 'last-pushed-at 'updated-at)))
        :plists)
       (postmodern:query
        (:order-by
-        (:select '* :from 'cave-repos
+        (:select 'cave-repos.*
+                 (:as (:exists (:select 1 :from 'cave-repo-mirrors
+                                :where (:and (:= 'cave-repo-mirrors.repo-id 'cave-repos.id)
+                                             (:= 'cave-repo-mirrors.direction "pull"))))
+                      'is-mirror)
+         :from 'cave-repos
          :where (:and (:= 'owner-id user-id) (:= 'is-private nil)))
         (:desc (:coalesce 'last-pushed-at 'updated-at)))
        :plists)))
@@ -293,7 +325,9 @@ a member. Truthy exactly when the current user has any membership."
 
 (defun update-repo-settings (repo-id &key required-approvals allow-self-approval
                                           allow-stale-approvals concerns-count-as-approval
-                                          block-on-request-changes auto-delete-branch)
+                                          block-on-request-changes auto-delete-branch
+                                          required-checks-pass
+                                          require-zero-unresolved-concerns)
   "Update merge policy settings for a repo."
   (postmodern:execute
    (:update 'cave-repos
@@ -303,6 +337,8 @@ a member. Truthy exactly when the current user has any membership."
          'concerns-count-as-approval concerns-count-as-approval
          'block-on-request-changes block-on-request-changes
          'auto-delete-branch auto-delete-branch
+         'required-checks-pass required-checks-pass
+         'require-zero-unresolved-concerns require-zero-unresolved-concerns
          'updated-at (:now)
     :where (:= 'id repo-id))))
 

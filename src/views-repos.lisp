@@ -22,6 +22,7 @@
      (list (list (format nil "/~A" owner-name) owner-name)
            repo-name))
     (when (and repo (getf repo :is-private)) (:span.badge "private"))
+    (when (and repo (getf repo :is-mirror)) (:span.badge "mirror"))
     (when (and repo (getf repo :is-archived)) (:span.badge "archived"))
     (:nav.repo-tabs
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :overview))

@@ -816,16 +816,23 @@ by repo secrets. Returns an alist (name . value)."
     (when (getf pr :is-draft)
       (push (list :description "Pull request is a draft" :pass nil) rules))
 
-    ;; Rule 1b: No merge conflicts with the target branch. Detected in-memory
-    ;; with git merge-tree (no worktree) so the PR page can warn — and the merge
-    ;; button can block — BEFORE a merge is attempted. The conflicting file list
-    ;; rides along on the rule so the view can render it.
+    ;; Rules 2 + 1b share the bare-repo path: the target branch must exist,
+    ;; and merging it must not conflict. Conflicts are detected in-memory with
+    ;; git merge-tree (no worktree) so the PR page can warn — and the merge
+    ;; button can block — BEFORE a merge is attempted. The conflicting file
+    ;; list rides along on the rule so the view can render it.
     (let* ((source (getf pr :source-branch))
            (target (getf pr :target-branch))
            (disk (when (and (not (getf pr :is-merged)) (not (getf pr :is-closed)))
                    (ignore-errors (repo-disk-path (repo-owner-name repo)
                                                   (getf repo :name))))))
       (when disk
+        (let ((target-exists (and (member target (git-branches disk) :test #'equal) t)))
+          (push (list :description (if target-exists
+                                       "Target branch exists"
+                                       (format nil "Target branch '~A' not found" target))
+                      :pass target-exists)
+                rules))
         (multiple-value-bind (conflict-p files)
             (git-merge-conflicts disk target source)
           (push (list :kind :conflicts
@@ -836,16 +843,6 @@ by repo secrets. Returns an alist (name . value)."
                       :pass (not conflict-p)
                       :conflict-files files)
                 rules))))
-
-    ;; Rule 2: Target branch exists (simplified — always true for now)
-    (push (list :description "Target branch exists"
-                :pass t)
-          rules)
-
-    ;; Rule 3: No concurrent lock (simplified)
-    (push (list :description "No concurrent merge in progress"
-                :pass t)
-          rules)
 
     ;; Rule 4: Required approvals
     (let* ((allow-stale (getf repo :allow-stale-approvals))
