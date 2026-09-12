@@ -412,6 +412,7 @@ section { margin-bottom: var(--sp-8); }
 .repo-last-hash { color: var(--link); font-size: .75rem; }
 .repo-last-msg { color: var(--text); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .repo-last-author { color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+.repo-last-time { color: var(--text-muted); white-space: nowrap; font-size: .8rem; }
 
 /* --- Repo actions --- */
 .repo-actions { margin-bottom: var(--sp-6); display: flex; gap: var(--sp-2); }

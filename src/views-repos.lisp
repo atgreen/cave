@@ -366,7 +366,10 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                               (getf last :hash))
             (:code.repo-last-hash (getf last :short-hash)))
            (:span.repo-last-msg (getf last :subject))
-           (:span.repo-last-author (getf last :author)))))
+           (:span.repo-last-author (getf last :author))
+           (let ((rel (commit-relative-time last)))
+             (when rel
+               (:span.repo-last-time :title (getf last :date) rel))))))
       ;; File tree
       (when file-tree
         (render-file-tree file-tree owner-name repo-name current-ref nil
@@ -385,7 +388,9 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                (:span (getf c :subject))
                (render-verified-badge sig)
                (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
-                (getf c :author)))))))))))
+                :title (getf c :date)
+                (format nil "~A~@[ · ~A~]" (getf c :author)
+                        (commit-relative-time c))))))))))))
 
 ;;; ========================== TREE & BLOB PAGES ==========================
 
@@ -693,7 +698,8 @@ document.addEventListener('DOMContentLoaded', function() {
       (:div.commit-meta
        (:strong (getf commit :author))
        (:span :style "margin-left:var(--sp-2);color:var(--text-muted)"
-        (getf commit :date))
+        (format nil "~A~@[ (~A)~]" (getf commit :date)
+                (commit-relative-time commit)))
        (:code :style "margin-left:auto" (getf commit :hash)))
       ;; Trailer chips — Co-Authored-By / Signed-off-by etc.
       (when trailers

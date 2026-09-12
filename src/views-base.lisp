@@ -189,6 +189,29 @@ last crumb is a pair when ?path= is empty)."
          (let ((mo (floor delta (* 86400 30)))) (format nil "~D month~:P ago" mo)))
         (t (let ((y (floor delta (* 86400 365)))) (format nil "~D year~:P ago" y)))))))
 
+(defun parse-git-date (date)
+  "Universal-time for a git %ai date like \"2026-09-12 15:33:15 -0400\", or NIL."
+  (when (and (stringp date) (>= (length date) 25))
+    (ignore-errors
+      (let* ((y  (parse-integer date :start 0 :end 4))
+             (mo (parse-integer date :start 5 :end 7))
+             (d  (parse-integer date :start 8 :end 10))
+             (h  (parse-integer date :start 11 :end 13))
+             (mi (parse-integer date :start 14 :end 16))
+             (s  (parse-integer date :start 17 :end 19))
+             (oh (parse-integer date :start 21 :end 23))
+             (om (parse-integer date :start 23 :end 25))
+             (east (if (char= (char date 20) #\-) -1 1))
+             ;; encode-universal-time counts time zones in hours west of GMT
+             (tz (- (* east (+ oh (/ om 60))))))
+        (encode-universal-time s mi h d mo y tz)))))
+
+(defun commit-relative-time (commit)
+  "Relative age (\"2 days ago\") for a commit plist. Uses the :time
+   universal-time when present, else parses the :date string."
+  (format-relative-time (or (getf commit :time)
+                            (parse-git-date (getf commit :date)))))
+
 (defun event-metadata (event)
   "Parse the JSON metadata column into a hash table, or NIL."
   (let ((md (getf event :metadata)))
