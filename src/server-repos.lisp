@@ -71,7 +71,7 @@
            (language-stats (unless empty (chamber-language-stats owner repo-name ref)))
            (recent-commits (unless empty (chamber-get-log owner repo-name :limit 10 :branch ref))))
       (if empty
-          (hunchentoot:redirect (format nil "/~A/~A" owner repo-name))
+          (hunchentoot:redirect (repo-url owner repo-name))
           (html-response
            (view-code :owner-name owner :repo repo
                       :branches branches :tags tags
@@ -93,7 +93,7 @@
       (if (watching-repo-p (getf repo :id) *current-user-id*)
           (unwatch-repo (getf repo :id) *current-user-id*)
           (watch-repo (getf repo :id) *current-user-id*))
-      (hunchentoot:redirect (format nil "/~A/~A" owner repo-name)))))
+      (hunchentoot:redirect (repo-url owner repo-name)))))
 
 (easy-routes:defroute fork-repo-submit
     ("/:owner/:repo-name/fork" :method :post) ()
@@ -104,7 +104,7 @@
              (existing (find-repo username repo-name)))
         (when existing
           ;; Already forked
-          (hunchentoot:redirect (format nil "/~A/~A" username repo-name))
+          (hunchentoot:redirect (repo-url username repo-name))
           (return-from fork-repo-submit nil))
         ;; Create the repo record
         (let ((repo (create-repo :owner-id *current-user-id*
@@ -140,7 +140,7 @@
           (log-event "repo.forked" :user-id *current-user-id*
                                    :repo-id (getf repo :id)
                                    :metadata (format nil "{\"source\": \"~A/~A\"}" owner repo-name))
-          (hunchentoot:redirect (format nil "/~A/~A" username repo-name)))))))
+          (hunchentoot:redirect (repo-url username repo-name)))))))
 
 ;; Tree (directory) browsing
 (defun %valid-git-ref-name-p (name)
@@ -461,7 +461,7 @@
               (log-event "repo.created" :user-id *current-user-id*
                                         :repo-id (getf repo :id)
                                         :metadata (format nil "{\"mode\": \"~A\"}" mode))
-              (hunchentoot:redirect (format nil "/~A/~A" org-name name)))
+              (hunchentoot:redirect (repo-url org-name name)))
           (error (e)
             (html-response (view-new-repo :org org :error (format nil "~A" e)))))))))
 
@@ -490,13 +490,13 @@
           (value (or (hunchentoot:post-parameter "value") "")))
       (when (and (plusp (length name)) (plusp (length value)))
         (set-secret "repo" (getf repo :id) name value)))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-secret-delete-submit
     ("/:owner/:repo-name/settings/secrets/:name/delete" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-secret-delete-submit)
     (delete-secret "repo" (getf repo :id) name)
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-protect-add-submit
     ("/:owner/:repo-name/settings/protect" :method :post) ()
@@ -507,14 +507,14 @@
          (getf repo :id) pattern
          :block-direct-push (equal (hunchentoot:post-parameter "block_direct_push") "1")
          :require-signed-commits (equal (hunchentoot:post-parameter "require_signed_commits") "1"))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-protect-delete-submit
     ("/:owner/:repo-name/settings/protect/:id/delete" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-protect-delete-submit)
     (let ((pid (parse-integer id :junk-allowed t)))
       (when pid (delete-protected-branch pid (getf repo :id))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-deploy-key-add-submit
     ("/:owner/:repo-name/settings/deploy-keys" :method :post) ()
@@ -529,14 +529,14 @@
                               :read-write (equal (hunchentoot:post-parameter "read_write") "1"))
               (sync-authorized-keys))
           (error () nil))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-deploy-key-delete-submit
     ("/:owner/:repo-name/settings/deploy-keys/:id/delete" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-deploy-key-delete-submit)
     (let ((kid (parse-integer id :junk-allowed t)))
       (when kid (delete-deploy-key kid (getf repo :id)) (sync-authorized-keys)))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-settings-submit
     ("/:owner/:repo-name/settings" :method :post) ()
@@ -552,7 +552,7 @@
           :concerns-count-as-approval (when (hunchentoot:post-parameter "concerns_count") t)
           :block-on-request-changes (when (hunchentoot:post-parameter "block_on_request_changes") t)
           :auto-delete-branch (when (hunchentoot:post-parameter "auto_delete_branch") t))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-add-member-submit
     ("/:owner/:repo-name/settings/members" :method :post) ()
@@ -564,26 +564,26 @@
         (handler-case
             (add-repo-member (getf repo :id) (getf user :id) :role role)
           (error () nil))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-remove-member-submit
     ("/:owner/:repo-name/settings/members/:user-id/remove" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-remove-member-submit)
     (let ((uid (parse-integer user-id :junk-allowed t)))
       (when uid (remove-repo-member (getf repo :id) uid)))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-archive-submit
     ("/:owner/:repo-name/settings/archive" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-archive-submit)
     (archive-repo (getf repo :id) :archived t)
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-unarchive-submit
     ("/:owner/:repo-name/settings/unarchive" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-unarchive-submit)
     (archive-repo (getf repo :id) :archived nil)
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-visibility-submit
     ("/:owner/:repo-name/settings/visibility" :method :post) ()
@@ -596,11 +596,11 @@
       ;; de-index is needed when going public->private).
       (when (and was-private (not make-private))
         (zoekt-index-repo owner repo-name)))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-delete-submit
     ("/:owner/:repo-name/settings/delete" :method :post) ()
-  (when (require-sudo (format nil "/~A/~A/settings" owner repo-name))
+  (when (require-sudo (repo-url owner repo-name "settings"))
     (let ((repo (find-repo owner repo-name)))
       (unless repo (return-from repo-delete-submit (not-found)))
       (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")

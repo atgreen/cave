@@ -355,14 +355,14 @@
              :runner-labels (or runner-labels "")
              :timeout-seconds (or timeout 60))
           (error () nil))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-delete-automation-submit
     ("/:owner/:repo-name/settings/automations/:auto-id/delete" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-delete-automation-submit)
     (let ((aid (parse-integer auto-id :junk-allowed t)))
       (when aid (delete-automation-definition aid (getf repo :id))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 ;; Repo-scoped runner management
 (easy-routes:defroute repo-create-runner-token
@@ -388,7 +388,7 @@
   (%with-repo-admin (repo owner repo-name repo-delete-runner)
     (let ((rid (parse-integer runner-id :junk-allowed t)))
       (when rid (delete-runner rid)))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-add-webhook-submit
     ("/:owner/:repo-name/settings/webhooks" :method :post) ()
@@ -401,14 +401,14 @@
                         :url url
                         :secret (unless (uiop:emptyp secret) secret)
                         :events (or events "push,pull_request,issue"))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-delete-webhook-submit
     ("/:owner/:repo-name/settings/webhooks/:webhook-id/delete" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-delete-webhook-submit)
     (let ((wid (parse-integer webhook-id :junk-allowed t)))
       (when wid (delete-webhook wid (getf repo :id))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-add-mirror-submit
     ("/:owner/:repo-name/settings/mirrors" :method :post) ()
@@ -431,14 +431,14 @@
                   (chamber-pull-mirror owner repo-name remote-url token)
                 (update-mirror-sync (getf mirror :id)
                                     :error (unless ok err))))))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-delete-mirror-submit
     ("/:owner/:repo-name/settings/mirrors/:mirror-id/delete" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-delete-mirror-submit)
     (let ((mid (parse-integer mirror-id :junk-allowed t)))
       (when mid (delete-mirror mid (getf repo :id))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-add-check-submit
     ("/:owner/:repo-name/settings/checks" :method :post) ()
@@ -453,12 +453,12 @@
                                  :name name :command command
                                  :timeout-seconds (or timeout 60))
           (error () nil))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 
 (easy-routes:defroute repo-delete-check-submit
     ("/:owner/:repo-name/settings/checks/:check-id/delete" :method :post) ()
   (%with-repo-admin (repo owner repo-name repo-delete-check-submit)
     (let ((cid (parse-integer check-id :junk-allowed t)))
       (when cid (delete-check-config cid (getf repo :id))))
-    (hunchentoot:redirect (format nil "/~A/~A/settings" owner repo-name))))
+    (hunchentoot:redirect (repo-url owner repo-name "settings"))))
 

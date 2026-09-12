@@ -302,7 +302,7 @@ No-op for a blank or :null NAME."
   "Render one repo list <li> with owner/name, description, language, and META."
   (spinneret:with-html
     (:li
-     (:a :href (format nil "/~A/~A" (getf r :owner-name) (getf r :name))
+     (:a :href (repo-url (getf r :owner-name) (getf r :name))
       (format nil "~A/~A" (getf r :owner-name) (getf r :name)))
      (let ((d (getf r :description)))
        (when (and d (not (eq d :null)) (plusp (length d)))
@@ -436,7 +436,7 @@ data: featured repositories, recent activity, and instance stats."
                (let ((owner (getf repo :owner-name))
                      (desc (getf repo :description)))
                  (:li
-                  (:a :href (format nil "/~A/~A" owner (getf repo :name))
+                  (:a :href (repo-url owner (getf repo :name))
                    (format nil "~A/~A" owner (getf repo :name)))
                   (when (and desc (not (eq desc :null)) (plusp (length desc)))
                     (:span.desc desc))))))
@@ -471,7 +471,7 @@ data: featured repositories, recent activity, and instance stats."
             (let ((pushed (or (getf repo :last-pushed-at)
                               (getf repo :updated-at))))
               (:li
-               (:a :href (format nil "/~A/~A" username (getf repo :name))
+               (:a :href (repo-url username (getf repo :name))
                 (getf repo :name))
                (when (getf repo :is-private)
                  (:span.badge "private"))
@@ -581,7 +581,7 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
           (:ul.repo-list
            (dolist (repo repos)
              (:li
-              (:a :href (format nil "/~A/~A" username (getf repo :name))
+              (:a :href (repo-url username (getf repo :name))
                (getf repo :name))
               (when (getf repo :is-private) (:span.badge "private"))
               (when (getf repo :description) (:span.desc (getf repo :description))))))
@@ -626,7 +626,7 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
           (:ul.repo-list
            (dolist (repo repos)
              (:li
-              (:a :href (format nil "/~A/~A" org-name (getf repo :name))
+              (:a :href (repo-url org-name (getf repo :name))
                (getf repo :name))
               (when (getf repo :is-private)
                 (:span.badge "private"))

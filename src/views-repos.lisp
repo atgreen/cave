@@ -47,7 +47,7 @@
        (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :pulse))
         :href (format nil "/~A/~A/pulse" owner-name repo-name) "Pulse"))
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :settings))
-      :href (format nil "/~A/~A/settings" owner-name repo-name) "Settings")))))
+      :href (repo-url owner-name repo-name "settings") "Settings")))))
 
 (defparameter *folder-svg*
   "<svg class=\"ficon\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1Z\"/></svg>")
@@ -215,7 +215,7 @@
                                                                  *current-user-id*))
                                :href-fn (lambda (r)
                                           (if (equal r default-branch)
-                                              (format nil "/~A/~A" org-name repo-name)
+                                              (repo-url org-name repo-name)
                                               (format nil "/~A/~A?ref=~A" org-name repo-name
                                                       (hunchentoot:url-encode r)))))
           ;; Match the Code tab's bar: don't leave this container empty.
@@ -404,7 +404,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                         :ref ref :default-branch default-branch)
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
-                     (list (format nil "/~A/~A" owner-name repo-name) repo-name))
+                     (list (repo-url owner-name repo-name) repo-name))
                (when (and path (not (uiop:emptyp path)))
                  (let ((parts (uiop:split-string path :separator '(#\/)))
                        (crumbs nil)
@@ -475,7 +475,7 @@ serves the unrendered bytes."
                                           (blob-url owner-name repo-name r path))))))
       (render-breadcrumbs
        (append (list (list (format nil "/~A" owner-name) owner-name)
-                     (list (format nil "/~A/~A" owner-name repo-name) repo-name))
+                     (list (repo-url owner-name repo-name) repo-name))
                ;; Every intermediate path segment is a directory, so use /tree/.
                ;; The final segment is the file itself and is rendered text-only
                ;; (no link), so its URL doesn't matter.
@@ -659,7 +659,7 @@ require(['vs/editor/editor.main'], function() {
                   (json-for-script content)
                   (json-for-script content)
                   (json-for-script (or language "plaintext"))
-                  (format nil "/~A/~A" owner-name repo-name)))))))))
+                  (repo-url owner-name repo-name)))))))))
 
 ;;; ========================== COMMIT PAGE ==========================
 
@@ -689,7 +689,7 @@ document.addEventListener('DOMContentLoaded', function() {
       (render-repo-tabs owner-name repo-name :code :repo repo)
       (render-breadcrumbs
        (list (list (format nil "/~A" owner-name) owner-name)
-             (list (format nil "/~A/~A" owner-name repo-name) repo-name)
+             (list (repo-url owner-name repo-name) repo-name)
              (getf commit :short-hash)))
       (:div.commit-header
        (:h1.commit-subject

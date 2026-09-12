@@ -69,7 +69,7 @@ labels, and a metadata line (number, author, age, comment count)."
                  (:div.issue-titleline
                   (when pinned (:span.issue-pin "📌"))
                   (:a.issue-title
-                   :href (format nil "/~A/~A/issues/~A" org-name repo-name num)
+                   :href (issue-url org-name repo-name num)
                    (getf iss :title))
                   (dolist (l labels)
                     (:a.issue-label
@@ -345,7 +345,7 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
                 (:div.issue-main
                  (:div.issue-titleline
                   (:a.issue-title
-                   :href (format nil "/~A/~A/pulls/~A" org-name repo-name num)
+                   :href (pr-url org-name repo-name num)
                    (format nil "~A → ~A" (getf cs :source-branch) (getf cs :target-branch)))
                   (:span.badge state))
                  (:div.issue-meta
@@ -479,7 +479,7 @@ for in-progress checks, polling a JSON endpoint while anything runs."
       (render-repo-tabs owner-name repo-name :pulls :repo repo)
       (:h1 (format nil "PR #~A — interdiff: round ~A → round ~A"
                    (getf pr :number) from-version to-version))
-      (:p (:a :href (format nil "/~A/~A/pulls/~A" owner-name repo-name (getf pr :number))
+      (:p (:a :href (pr-url owner-name repo-name (getf pr :number))
            "← back to pull request"))
       (if (and text (plusp (length text)))
           (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);overflow-x:auto;font-size:.85rem;white-space:pre"
@@ -574,7 +574,7 @@ for in-progress checks, polling a JSON endpoint while anything runs."
          (:ol.stack-list
           (dolist (item stack-items)
             (:li :class (when (= (getf item :number) cs-num) "stack-current")
-             (:a :href (format nil "/~A/~A/pulls/~A" org-name repo-name
+             (:a :href (pr-url org-name repo-name
                                 (getf item :number))
               (format nil "#~A ~A" (getf item :number) (getf item :source-branch)))
              (:span.badge

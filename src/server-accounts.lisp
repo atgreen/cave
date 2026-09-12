@@ -186,7 +186,7 @@ read from .cave/CODEOWNERS (or a fallback) at the default branch. NIL if none."
             :subject (format nil "You're a code owner on PR #~A: ~A → ~A"
                              (getf pr :number) (getf pr :source-branch)
                              (getf pr :target-branch))
-            :link (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number)))))))))
+            :link (pr-url owner repo-name (getf pr :number)))))))))
 
 (defun compute-landing-hero ()
   "Render the landing hero from cave/cave-landing:index.md, or NIL when that repo
@@ -602,7 +602,7 @@ leaking the viewer's IP or breaking HTTPS."
             (log-event "repo.created" :user-id *current-user-id*
                                       :repo-id (getf repo :id)
                                       :metadata (format nil "{\"mode\": \"~A\"}" mode))
-            (hunchentoot:redirect (format nil "/~A/~A" username name)))
+            (hunchentoot:redirect (repo-url username name)))
         (error (e)
           (html-response (view-new-personal-repo :error (format nil "~A" e))))))))
 

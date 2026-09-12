@@ -90,7 +90,7 @@
       ;; Merge policy
       (:section
        (:h2 "Merge policy")
-       (:form :method "post" :action (format nil "/~A/~A/settings" owner-name repo-name)
+       (:form :method "post" :action (repo-url owner-name repo-name "settings")
         (:input :type "hidden" :name "section" :value "merge")
         (:div.field
          (:label :for "required_approvals" "Required approvals")

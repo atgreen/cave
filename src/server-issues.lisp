@@ -114,7 +114,7 @@
         (notify-issue-created repo owner repo-name issue)
         (fire-webhooks (getf repo :id) "issue" (make-webhook-payload "issue.created" :owner owner :repo repo-name :number (getf issue :number) :title (getf issue :title)))
         (hunchentoot:redirect
-         (format nil "/~A/~A/issues/~A" owner repo-name (getf issue :number)))))))
+         (issue-url owner repo-name (getf issue :number)))))))
 
 (easy-routes:defroute issue-page
     ("/:owner/:repo-name/issues/:number" :method :get) ()
@@ -160,7 +160,7 @@
               (toggle-reaction "issue_comment" comment-id *current-user-id* emoji)
               (toggle-reaction "issue" (getf issue :id) *current-user-id* emoji)))
         (hunchentoot:redirect
-         (format nil "/~A/~A/issues/~A" owner repo-name num))))))
+         (issue-url owner repo-name num))))))
 
 (easy-routes:defroute issue-pin-submit
     ("/:owner/:repo-name/issues/:number/pin" :method :post) ()
@@ -176,7 +176,7 @@
             (unpin-issue (getf issue :id))
             (pin-issue (getf issue :id) (getf repo :id)))
         (hunchentoot:redirect
-         (format nil "/~A/~A/issues/~A" owner repo-name num))))))
+         (issue-url owner repo-name num))))))
 
 (easy-routes:defroute issue-meta-submit
     ("/:owner/:repo-name/issues/:number/meta" :method :post) ()
@@ -206,7 +206,7 @@
                                   :junk-allowed t)))
           (set-issue-milestone (getf issue :id) mid))
         (hunchentoot:redirect
-         (format nil "/~A/~A/issues/~A" owner repo-name num))))))
+         (issue-url owner repo-name num))))))
 
 (easy-routes:defroute issue-comment-submit
     ("/:owner/:repo-name/issues/:number/comment" :method :post) ()
@@ -243,7 +243,7 @@
             (notify-issue-comment repo owner repo-name issue comment-text)
             (fire-webhooks (getf repo :id) "issue" (make-webhook-payload "issue.comment" :owner owner :repo repo-name :number (getf issue :number))))))
       (hunchentoot:redirect
-       (format nil "/~A/~A/issues/~A" owner repo-name number)))))
+       (issue-url owner repo-name number)))))
 
 ;; ----------------------------------------------------------------------------
 ;; Routes: Pull requests
@@ -302,7 +302,7 @@
          (notify-code-owners owner repo-name repo pr
                              (pr-code-owners owner repo-name pr)))
         (hunchentoot:redirect
-         (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number)))))))
+         (pr-url owner repo-name (getf pr :number)))))))
 
 (easy-routes:defroute pull-request-page
     ("/:owner/:repo-name/pulls/:number" :method :get) ()
@@ -465,7 +465,7 @@
                                :side side
                                :body body)))
       (hunchentoot:redirect
-       (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
+       (pr-url owner repo-name number)))))
 
 (easy-routes:defroute submit-review
     ("/:owner/:repo-name/pulls/:number/review" :method :post) ()
@@ -502,7 +502,7 @@
           ;; An approval may make an auto-merge-armed PR eligible.
           (try-auto-merge owner repo-name (getf pr :id))
           (hunchentoot:redirect
-           (format nil "/~A/~A/pulls/~A" owner repo-name number)))))))
+           (pr-url owner repo-name number)))))))
 
 (easy-routes:defroute resolve-concern-submit
     ("/:owner/:repo-name/concerns/:concern-id/resolve" :method :post) ()
@@ -518,8 +518,8 @@
       (let ((pr (when concern (find-pull-request-by-id (getf concern :changeset-id)))))
         (hunchentoot:redirect
          (if pr
-             (format nil "/~A/~A/pulls/~A" owner repo-name (getf pr :number))
-             (format nil "/~A/~A" owner repo-name)))))))
+             (pr-url owner repo-name (getf pr :number))
+             (repo-url owner repo-name)))))))
 
 (easy-routes:defroute pull-request-state-submit
     ("/:owner/:repo-name/pulls/:number/state" :method :post) ()
@@ -558,7 +558,7 @@ auto-merge. Allowed for the PR author or any repo member."
              (try-auto-merge owner repo-name (getf pr :id))))
           ((equal action "disable-auto-merge")
            (set-pull-request-auto-merge (getf pr :id) nil *current-user-id*))))
-      (hunchentoot:redirect (format nil "/~A/~A/pulls/~A" owner repo-name num)))))
+      (hunchentoot:redirect (pr-url owner repo-name num)))))
 
 (defun sync-repo-push-mirrors (owner repo-name repo-id)
   "Push REPO to all its enabled push mirrors, in a background thread.
@@ -695,7 +695,7 @@ any trigger (review submitted, status reported); a no-op otherwise."
                                                  :owner owner :repo repo-name
                                                  :number (getf pr :number)))
             (return-from merge-pull-request-submit
-              (hunchentoot:redirect (format nil "/~A/~A/pulls/~A" owner repo-name number))))))
+              (hunchentoot:redirect (pr-url owner repo-name number))))))
       ;; Admins (the only role that reaches here) may bypass the eligibility
       ;; gate by posting override=t — used by the "merge anyway" UI. Audit-log
       ;; any override so a bypassed check is traceable.
@@ -724,5 +724,5 @@ any trigger (review submitted, status reported); a no-op otherwise."
             (setf (hunchentoot:return-code*) 409)
             (return-from merge-pull-request-submit msg))))
       (hunchentoot:redirect
-       (format nil "/~A/~A/pulls/~A" owner repo-name number)))))
+       (pr-url owner repo-name number)))))
 
