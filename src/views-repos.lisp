@@ -441,89 +441,8 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
                (incf i))))
     (get-output-stream-string out)))
 
-(defun view-blob (&key owner-name repo ref path content is-binary file-size language
-                       branches tags default-branch
-                       is-markdown (view-mode :source) rendered-html)
-  "Render a file content page.
-Markdown files render to HTML by default (VIEW-MODE :rendered, RENDERED-HTML
-supplied); VIEW-MODE :source shows the Monaco source viewer. A Raw link always
-serves the unrendered bytes."
-  (let ((repo-name (getf repo :name))
-        (filename (let ((slash (position #\/ path :from-end t)))
-                    (if slash (subseq path (1+ slash)) path))))
-    (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
-      (render-repo-tabs owner-name repo-name :code :repo repo
-                        :ref ref :default-branch default-branch)
-      ;; Branch/tag switcher — switching keeps the current file path, so you can
-      ;; view the same file across refs (as GitHub/GitLab/Gitea do).
-      (when (or branches tags)
-        (:div.repo-info-bar
-         (:div.repo-info-left
-          (render-ref-switcher owner-name repo-name ref branches tags
-                               :can-write (current-user-repo-role repo)
-                               :href-fn (lambda (r)
-                                          (blob-url owner-name repo-name r path))))))
-      (render-breadcrumbs
-       (append (list (list (format nil "/~A" owner-name) owner-name)
-                     (list (repo-url owner-name repo-name) repo-name))
-               ;; Every intermediate path segment is a directory, so use /tree/.
-               ;; The final segment is the file itself and is rendered text-only
-               ;; (no link), so its URL doesn't matter.
-               (let ((parts (uiop:split-string path :separator '(#\/)))
-                     (crumbs nil)
-                     (built ""))
-                 (dolist (part parts)
-                   (setf built (if (uiop:emptyp built) part (format nil "~A/~A" built part)))
-                   (push (list (tree-url owner-name repo-name ref built)
-                               part)
-                         crumbs))
-                 (let ((reversed (nreverse crumbs)))
-                   (append (butlast reversed)
-                           (list (second (car (last reversed)))))))))
-      (:div.blob-meta
-       (:span filename)
-       (:span.badge language)
-       (when file-size
-         (:span.blob-size
-          (cond ((> file-size (* 1024 1024))
-                 (format nil "~,1f MB" (/ file-size (* 1024.0 1024.0))))
-                ((> file-size 1024)
-                 (format nil "~,1f KB" (/ file-size 1024.0)))
-                (t (format nil "~A bytes" file-size)))))
-       (:div.blob-view-toggle :style "margin-left:auto;display:flex;gap:0"
-        (when is-markdown
-          (if (eq view-mode :rendered)
-              (:span.btn.btn-sm.btn-active "Rendered")
-              (:a.btn.btn-sm :href (blob-url owner-name repo-name ref path)
-               "Rendered")))
-        (when is-markdown
-          (if (eq view-mode :source)
-              (:span.btn.btn-sm.btn-active "Source")
-              (:a.btn.btn-sm :href (format nil "~A&view=source"
-                                           (blob-url owner-name repo-name ref path))
-               "Source")))
-        (:a.btn.btn-sm :href (raw-url owner-name repo-name ref path)
-         "Raw")))
-      (cond
-        ((and (eq view-mode :rendered) rendered-html)
-         (:div.readme-content
-          :style "background:var(--surface);border:1px solid var(--border);border-top:none;padding:var(--sp-6)"
-          (:raw rendered-html)))
-        (is-binary
-         (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
-          (:p "Binary file — not displayed.")
-          (:a.btn :href (raw-url owner-name repo-name ref path)
-           "Download")))
-        ((and file-size (> file-size (* 1024 1024)))
-         (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
-          (:p "File too large for preview.")
-          (:a.btn :href (raw-url owner-name repo-name ref path)
-           "Download")))
-        (t
-         (:div#editor-container :style "height:600px")
-         (:script :src "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.min.js" "")
-         (:script
-          (:raw (format nil "
+(defparameter +blob-editor-js+
+  "
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs' } });
 require(['vs/editor/editor.main'], function() {
   var s = document.createElement('script');
@@ -643,10 +562,97 @@ require(['vs/editor/editor.main'], function() {
   }
   }
 });"
-                  (json-for-script content)
-                  (json-for-script content)
-                  (json-for-script (or language "plaintext"))
-                  (repo-url owner-name repo-name)))))))))
+  "Monaco source-view bootstrap. Format args: content JSON (twice — line
+count + editor value), language-id JSON, and the repo base URL for the
+permalink/issue-reference line menu.")
+
+(defun view-blob (&key owner-name repo ref path content is-binary file-size language
+                       branches tags default-branch
+                       is-markdown (view-mode :source) rendered-html)
+  "Render a file content page.
+Markdown files render to HTML by default (VIEW-MODE :rendered, RENDERED-HTML
+supplied); VIEW-MODE :source shows the Monaco source viewer. A Raw link always
+serves the unrendered bytes."
+  (let ((repo-name (getf repo :name))
+        (filename (let ((slash (position #\/ path :from-end t)))
+                    (if slash (subseq path (1+ slash)) path))))
+    (page (:title (format nil "~A — ~A/~A" path owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :code :repo repo
+                        :ref ref :default-branch default-branch)
+      ;; Branch/tag switcher — switching keeps the current file path, so you can
+      ;; view the same file across refs (as GitHub/GitLab/Gitea do).
+      (when (or branches tags)
+        (:div.repo-info-bar
+         (:div.repo-info-left
+          (render-ref-switcher owner-name repo-name ref branches tags
+                               :can-write (current-user-repo-role repo)
+                               :href-fn (lambda (r)
+                                          (blob-url owner-name repo-name r path))))))
+      (render-breadcrumbs
+       (append (list (list (format nil "/~A" owner-name) owner-name)
+                     (list (repo-url owner-name repo-name) repo-name))
+               ;; Every intermediate path segment is a directory, so use /tree/.
+               ;; The final segment is the file itself and is rendered text-only
+               ;; (no link), so its URL doesn't matter.
+               (let ((parts (uiop:split-string path :separator '(#\/)))
+                     (crumbs nil)
+                     (built ""))
+                 (dolist (part parts)
+                   (setf built (if (uiop:emptyp built) part (format nil "~A/~A" built part)))
+                   (push (list (tree-url owner-name repo-name ref built)
+                               part)
+                         crumbs))
+                 (let ((reversed (nreverse crumbs)))
+                   (append (butlast reversed)
+                           (list (second (car (last reversed)))))))))
+      (:div.blob-meta
+       (:span filename)
+       (:span.badge language)
+       (when file-size
+         (:span.blob-size
+          (cond ((> file-size (* 1024 1024))
+                 (format nil "~,1f MB" (/ file-size (* 1024.0 1024.0))))
+                ((> file-size 1024)
+                 (format nil "~,1f KB" (/ file-size 1024.0)))
+                (t (format nil "~A bytes" file-size)))))
+       (:div.blob-view-toggle :style "margin-left:auto;display:flex;gap:0"
+        (when is-markdown
+          (if (eq view-mode :rendered)
+              (:span.btn.btn-sm.btn-active "Rendered")
+              (:a.btn.btn-sm :href (blob-url owner-name repo-name ref path)
+               "Rendered")))
+        (when is-markdown
+          (if (eq view-mode :source)
+              (:span.btn.btn-sm.btn-active "Source")
+              (:a.btn.btn-sm :href (format nil "~A&view=source"
+                                           (blob-url owner-name repo-name ref path))
+               "Source")))
+        (:a.btn.btn-sm :href (raw-url owner-name repo-name ref path)
+         "Raw")))
+      (cond
+        ((and (eq view-mode :rendered) rendered-html)
+         (:div.readme-content
+          :style "background:var(--surface);border:1px solid var(--border);border-top:none;padding:var(--sp-6)"
+          (:raw rendered-html)))
+        (is-binary
+         (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
+          (:p "Binary file — not displayed.")
+          (:a.btn :href (raw-url owner-name repo-name ref path)
+           "Download")))
+        ((and file-size (> file-size (* 1024 1024)))
+         (:div :style "padding:var(--sp-6);background:var(--surface);border:1px solid var(--border);border-top:none;text-align:center;color:var(--text-muted)"
+          (:p "File too large for preview.")
+          (:a.btn :href (raw-url owner-name repo-name ref path)
+           "Download")))
+        (t
+         (:div#editor-container :style "height:600px")
+         (:script :src "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.min.js" "")
+         (:script
+          (:raw (format nil +blob-editor-js+
+                        (json-for-script content)
+                        (json-for-script content)
+                        (json-for-script (or language "plaintext"))
+                        (repo-url owner-name repo-name)))))))))
 
 ;;; ========================== COMMIT PAGE ==========================
 

@@ -353,6 +353,51 @@ RUNNER_*/file-protocol vars)."
         (error "runner is not assigned to this workflow step"))))
   (make-instance 'cave::append-step-log-response :ok t))
 
+(defun %watch-stream-dead-p (ctx stream)
+  "True when the watching runner is gone. context-check-cancelled catches a
+graceful cancel/deadline; an abruptly killed runner (the common
+systemd-restart case) only surfaces as a closed HTTP/2 connection, which the
+per-connection reader thread marks on EOF. Without this check the handler
+thread would spin forever heartbeating a dead runner, leaving it falsely
+'online' so cleanup-offline-runners never reaps it and the scheduler may
+assign it jobs."
+  (or (ag-grpc:context-check-cancelled ctx)
+      (let ((conn (ignore-errors (ag-grpc::server-stream-connection stream))))
+        (and conn (member (ag-http2:connection-state conn)
+                          '(:closing :closed))))))
+
+(defun %dispatch-one-task (stream runner-id)
+  "Poll once for a claimable task — simple automation first, then workflow
+job — and stream it to the runner. Returns :sent, :none, or :dead-stream;
+on a dead stream the task is requeued (never wedged 'assigned') and the RPC
+should end so the runner reconnects."
+  (let* ((runner-rec (postmodern:query
+                      (:select '* :from 'cave-runners :where (:= 'id runner-id))
+                      :plist))
+         (scope (getf runner-rec :scope))
+         (scope-id (let ((sid (getf runner-rec :scope-id)))
+                     (unless (eq sid :null) sid)))
+         (run (when runner-rec
+                (fetch-queued-automation-run runner-id (getf runner-rec :labels)
+                                             scope scope-id))))
+    (if run
+        (handler-case
+            (progn (ag-grpc:stream-send stream (make-automation-task-event run))
+                   :sent)
+          (error ()
+            (requeue-automation-run (getf run :id))
+            :dead-stream))
+        (let ((job (fetch-queued-workflow-job runner-id (getf runner-rec :labels)
+                                              scope scope-id)))
+          (if job
+              (handler-case
+                  (progn (ag-grpc:stream-send stream (make-workflow-task-event job))
+                         :sent)
+                (error ()
+                  (requeue-workflow-job (getf job :id))
+                  :dead-stream))
+              :none)))))
+
 (defun handle-watch-tasks (request ctx stream)
   "Server-streaming: push tasks to runner as they become available.
    Checks both simple automations and workflow jobs."
@@ -363,66 +408,30 @@ RUNNER_*/file-protocol vars)."
           (runner-labels (handler-case (slot-value request 'cave::runner-labels)
                            (error () ""))))
       (handler-case
-        (postmodern:with-connection *db-spec*
-          (update-runner-heartbeat runner-id :labels runner-labels))
+          (postmodern:with-connection *db-spec*
+            (update-runner-heartbeat runner-id :labels runner-labels))
         (error () nil))
       (unwind-protect
-       (loop
-        ;; Stop when the client is gone — otherwise this handler thread spins
-        ;; forever heartbeating a dead runner, leaving it falsely "online" so
-        ;; cleanup-offline-runners never reaps it and the scheduler may assign
-        ;; it jobs. context-check-cancelled catches a graceful cancel/deadline;
-        ;; an abruptly killed runner (the common systemd-restart case) only
-        ;; surfaces as a closed HTTP/2 connection, which the per-connection
-        ;; reader thread marks on EOF.
-        (when (or (ag-grpc:context-check-cancelled ctx)
-                  (let ((conn (ignore-errors (ag-grpc::server-stream-connection stream))))
-                    (and conn (member (ag-http2:connection-state conn)
-                                      '(:closing :closed)))))
-          (return))
+           (loop
+             (when (%watch-stream-dead-p ctx stream)
+               (return))
+             (handler-case
+                 (postmodern:with-connection *db-spec*
+                   (update-runner-heartbeat runner-id)
+                   (when (eq (%dispatch-one-task stream runner-id) :dead-stream)
+                     (return)))
+               (error (e)
+                 (llog:error "WatchTasks loop error" :runner-id runner-id
+                             :error (princ-to-string e))))
+             (sleep 3))
+        ;; Cleanup on disconnect
         (handler-case
-        (postmodern:with-connection *db-spec*
-          (update-runner-heartbeat runner-id)
-          (let* ((runner-rec (postmodern:query
-                              (:select '* :from 'cave-runners :where (:= 'id runner-id))
-                              :plist))
-                 (scope (getf runner-rec :scope))
-                 (scope-id (let ((sid (getf runner-rec :scope-id)))
-                             (unless (eq sid :null) sid))))
-            ;; Try simple automation first
-            (let ((run (when runner-rec
-                         (fetch-queued-automation-run runner-id (getf runner-rec :labels)
-                                           scope scope-id))))
-              (cond
-                (run
-                 ;; If delivery fails (dead stream), requeue so the task isn't
-                 ;; wedged 'assigned', and end this RPC so the runner reconnects.
-                 (handler-case
-                     (ag-grpc:stream-send stream (make-automation-task-event run))
-                   (error ()
-                     (requeue-automation-run (getf run :id))
-                     (return))))
-                ;; Try workflow job
-                (t
-                 (let ((job (fetch-queued-workflow-job runner-id (getf runner-rec :labels) scope scope-id)))
-                   (when job
-                     (handler-case
-                         (ag-grpc:stream-send stream (make-workflow-task-event job))
-                       (error ()
-                         (requeue-workflow-job (getf job :id))
-                         (return))))))))))
-          (error (e)
-            (llog:error "WatchTasks loop error" :runner-id runner-id
-                                                 :error (princ-to-string e))))
-        (sleep 3))
-       ;; Cleanup on disconnect
-       (handler-case
-           (postmodern:with-connection *db-spec*
-             (postmodern:execute
-              (:update 'cave-runners :set 'status "offline"
-               :where (:= 'id runner-id)))
-             (llog:info "Runner went offline" :runner-id runner-id))
-         (error () nil))))))
+            (postmodern:with-connection *db-spec*
+              (postmodern:execute
+               (:update 'cave-runners :set 'status "offline"
+                :where (:= 'id runner-id)))
+              (llog:info "Runner went offline" :runner-id runner-id))
+          (error () nil))))))
 
 ;;; --- Server Lifecycle ---
 

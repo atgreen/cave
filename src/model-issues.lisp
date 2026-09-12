@@ -779,6 +779,73 @@ by repo secrets. Returns an alist (name . value)."
 
 ;;; ========================== MERGE ELIGIBILITY ==========================
 
+(defun %approvals-rule (pr repo reviews)
+  "The required-approvals rule. A review counts when it approves (or
+approves-with-concerns, if the repo counts those), comes from a current
+reviewer, matches the PR's round unless stale approvals are allowed, and
+isn't a self-approval unless those are allowed."
+  (let* ((allow-stale (getf repo :allow-stale-approvals))
+         (concerns-count (getf repo :concerns-count-as-approval))
+         (allow-self (getf repo :allow-self-approval))
+         (required (getf repo :required-approvals))
+         (version (getf pr :version))
+         (approval-count
+           (loop for r in reviews
+                 when (and (or (equal (getf r :state) "approve")
+                               (and concerns-count
+                                    (equal (getf r :state) "approve_with_concerns")))
+                           (repo-reviewer-p (getf repo :id) (getf r :reviewer-id))
+                           (or allow-stale
+                               (= (getf r :changeset-version) version))
+                           (or allow-self
+                               (/= (getf r :reviewer-id)
+                                    (getf pr :author-id))))
+                 count r)))
+    (list :description (format nil "Approvals: ~A/~A required"
+                               approval-count required)
+          :pass (>= approval-count required))))
+
+(defun %required-checks-rule (pr repo-id)
+  "The required-checks rule. Combines external commit statuses and cave
+workflow runs for the PR's *head commit*; blocks on failed or pending
+results. Staleness is handled implicitly: results recorded against an older
+sha won't match the current head, so they read as missing and block until
+the new head reports. Per the chosen policy (GitHub empty-required-set), an
+absent check is not a blocker — only checks that exist and fail/pend block."
+  (let* ((head (getf pr :head-commit))
+         (statuses (and head (list-commit-statuses repo-id head)))
+         (build (and head (speculative-build-status repo-id head)))
+         (failed (append
+                  (loop for s in statuses
+                        when (member (getf s :state) '("failure" "error")
+                                     :test #'equal)
+                        collect (or (getf s :context) "status"))
+                  (when (eq build :failure) (list "cave workflow"))))
+         (pending (append
+                   (loop for s in statuses
+                         when (equal (getf s :state) "pending")
+                         collect (or (getf s :context) "status"))
+                   (when (eq build :pending) (list "cave workflow"))))
+         (present (or statuses (and build (not (eq build :none))))))
+    (cond
+      ((null head)
+       (list :description "No head commit recorded to evaluate checks"
+             :pass nil))
+      (failed
+       (list :description (format nil "Checks failing: ~{~A~^, ~}" failed)
+             :pass nil))
+      (pending
+       (list :description (format nil "Checks pending: ~{~A~^, ~}" pending)
+             :pass nil))
+      (present
+       (list :description
+             (format nil "All required checks passed (~A context~:P)"
+                     (+ (length statuses) (if (eq build :success) 1 0)))
+             :pass t))
+      (t
+       (list :description "No checks reported for this commit"
+             :pass t)))))
+
 (defun compute-merge-eligibility (pr repo)
   "Compute merge eligibility rules. Returns a list of (:description ... :pass ...)."
   (let* ((cs-id (getf pr :id))
@@ -827,26 +894,7 @@ by repo secrets. Returns an alist (name . value)."
                 rules))))
 
     ;; Rule 4: Required approvals
-    (let* ((allow-stale (getf repo :allow-stale-approvals))
-           (concerns-count (getf repo :concerns-count-as-approval))
-           (allow-self (getf repo :allow-self-approval))
-           (required (getf repo :required-approvals))
-           (approval-count
-             (loop for r in reviews
-                   when (and (or (equal (getf r :state) "approve")
-                                 (and concerns-count
-                                      (equal (getf r :state) "approve_with_concerns")))
-                             (repo-reviewer-p repo-id (getf r :reviewer-id))
-                             (or allow-stale
-                                 (= (getf r :changeset-version) version))
-                             (or allow-self
-                                 (/= (getf r :reviewer-id)
-                                      (getf pr :author-id))))
-                   count r)))
-      (push (list :description (format nil "Approvals: ~A/~A required"
-                                       approval-count required)
-                  :pass (>= approval-count required))
-            rules))
+    (push (%approvals-rule pr repo reviews) rules)
 
     ;; Rule 6: No blocking request-changes
     (when (getf repo :block-on-request-changes)
@@ -870,51 +918,9 @@ by repo secrets. Returns an alist (name . value)."
                     :pass (zerop open-concerns))
               rules)))
 
-    ;; Rule 8: Required checks. Combine external commit statuses and cave
-    ;; workflow runs for the PR's *head commit*. Block on failed, pending, or
-    ;; missing results. Staleness is handled implicitly: results recorded
-    ;; against an older sha won't match the current head, so they read as
-    ;; missing and block until the new head reports.
+    ;; Rule 8: Required checks
     (when (getf repo :required-checks-pass)
-      (let* ((head (getf pr :head-commit))
-             (statuses (and head (list-commit-statuses repo-id head)))
-             (build (and head (speculative-build-status repo-id head)))
-             (failed (append
-                      (loop for s in statuses
-                            when (member (getf s :state) '("failure" "error")
-                                         :test #'equal)
-                            collect (or (getf s :context) "status"))
-                      (when (eq build :failure) (list "cave workflow"))))
-             (pending (append
-                       (loop for s in statuses
-                             when (equal (getf s :state) "pending")
-                             collect (or (getf s :context) "status"))
-                       (when (eq build :pending) (list "cave workflow"))))
-             (present (or statuses (and build (not (eq build :none))))))
-        (push
-         (cond
-           ((null head)
-            (list :description "No head commit recorded to evaluate checks"
-                  :pass nil))
-           (failed
-            (list :description (format nil "Checks failing: ~{~A~^, ~}" failed)
-                  :pass nil))
-           (pending
-            (list :description (format nil "Checks pending: ~{~A~^, ~}" pending)
-                  :pass nil))
-           (present
-            (list :description
-                  (format nil "All required checks passed (~A context~:P)"
-                          (+ (length statuses) (if (eq build :success) 1 0)))
-                  :pass t))
-           ;; No status or run reported for this head. Per the chosen policy
-           ;; (GitHub empty-required-set), an absent check is not a blocker —
-           ;; only checks that exist and fail/pend block. A green check that
-           ;; later goes missing therefore passes; failing CI never merges.
-           (t
-            (list :description "No checks reported for this commit"
-                  :pass t)))
-         rules)))
+      (push (%required-checks-rule pr repo-id) rules))
 
     (nreverse rules)))
 

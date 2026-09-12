@@ -255,9 +255,11 @@
         (hunchentoot:redirect (format nil "/~A/~A/runs" owner repo-name))
         nil))))
 
-(defun handle-workflow-logs-sse (uri)
-  "Handle SSE streaming for workflow run logs. Called from acceptor dispatch."
-  ;; Parse owner/repo and run-id from URI: /:owner/:repo/runs/w/:id/logs
+(defun %sse-authorized-run-id (uri)
+  "Parse /:owner/:repo/runs/w/:id/logs and return the run id — but only when
+the run exists, belongs to the repo named in the URL, and that repo is
+visible to the caller (no cross-repo access by guessing run-ids; mirrors
+workflow-run-detail-page)."
   (let* ((w-pos (search "/runs/w/" uri))
          (prefix (subseq uri 1 w-pos))
          (prefix-slash (position #\/ prefix))
@@ -268,14 +270,49 @@
          (run-id (parse-integer (subseq uri id-start id-end) :junk-allowed t))
          (run (when run-id (find-workflow-run run-id)))
          (repo (when (and owner repo-name) (find-repo owner repo-name))))
-    ;; Authorization: the run must exist, belong to a repo the caller can see,
-    ;; and actually be the run for the repo named in the URL (no cross-repo
-    ;; access by guessing run-ids). Mirrors workflow-run-detail-page.
-    (unless (and run repo
-                 (repo-visible-p repo)
-                 (= (getf run :repo-id) (getf repo :id)))
-      (return-from handle-workflow-logs-sse nil))
-    ;; Send SSE headers
+    (when (and run repo
+               (repo-visible-p repo)
+               (= (getf run :repo-id) (getf repo :id)))
+      run-id)))
+
+(defun %sse-escape-newlines (text)
+  "Escape newlines so TEXT fits a single-line SSE data field."
+  (with-output-to-string (s)
+    (loop for ch across text
+          do (if (char= ch #\Newline)
+                 (write-string "\\n" s)
+                 (write-char ch s)))))
+
+(defun %sse-send-step-updates (send steps sent-lengths prev-statuses)
+  "Emit step-log / step-status events (via SEND) for whatever changed since
+the last poll, tracking progress in SENT-LENGTHS / PREV-STATUSES. Returns T
+while any step is still pending or running."
+  (let ((any-active nil))
+    (dolist (step steps any-active)
+      (let* ((step-id (getf step :id))
+             (log-text (getf step :log))
+             (log-len (if (and log-text (not (eq log-text :null)))
+                          (length log-text) 0))
+             (prev-len (gethash step-id sent-lengths 0))
+             (status (getf step :status))
+             (status-key (format nil "s~A" step-id)))
+        (when (> log-len prev-len)
+          (funcall send "step-log"
+                   (format nil "~A ~A" step-id
+                           (%sse-escape-newlines (subseq log-text prev-len))))
+          (setf (gethash step-id sent-lengths) log-len))
+        (unless (equal status (gethash status-key prev-statuses))
+          (setf (gethash status-key prev-statuses) status)
+          (funcall send "step-status" (format nil "~A ~A" step-id status)))
+        (when (member status '("pending" "running") :test #'equal)
+          (setf any-active t))))))
+
+(defun handle-workflow-logs-sse (uri)
+  "Stream a workflow run's logs as SSE: poll the DB once a second, emitting
+run-status / step-log / step-status diffs, then a final done event once the
+run is terminal and no step is active. Called from acceptor dispatch."
+  (let ((run-id (%sse-authorized-run-id uri)))
+    (unless run-id (return-from handle-workflow-logs-sse nil))
     (setf (hunchentoot:content-type*) "text/event-stream")
     (setf (hunchentoot:header-out "Cache-Control") "no-cache")
     (setf (hunchentoot:header-out "X-Accel-Buffering") "no")
@@ -291,41 +328,16 @@
                (force-output stream)))
         (handler-case
             (loop repeat 600
-                  do (let* ((refreshed-run (find-workflow-run run-id))
-                            (run-status (getf refreshed-run :status))
-                            (jobs (list-workflow-jobs run-id))
-                            (any-active nil))
-                       ;; Send run status changes
+                  do (let ((run-status (getf (find-workflow-run run-id) :status))
+                           (any-active nil))
                        (unless (equal run-status (gethash "run" prev-statuses))
                          (setf (gethash "run" prev-statuses) run-status)
                          (sse-send "run-status" run-status))
-                       ;; Send step updates
-                       (dolist (job jobs)
-                         (dolist (step (list-workflow-steps (getf job :id)))
-                           (let* ((step-id (getf step :id))
-                                  (log-text (getf step :log))
-                                  (log-len (if (and log-text (not (eq log-text :null)))
-                                               (length log-text) 0))
-                                  (prev-len (gethash step-id sent-lengths 0))
-                                  (status (getf step :status))
-                                  (status-key (format nil "s~A" step-id)))
-                             ;; New log content
-                             (when (> log-len prev-len)
-                               (let* ((new-text (subseq log-text prev-len))
-                                      (escaped (with-output-to-string (s)
-                                                 (loop for ch across new-text
-                                                       do (if (char= ch #\Newline)
-                                                              (write-string "\\n" s)
-                                                              (write-char ch s))))))
-                                 (sse-send "step-log" (format nil "~A ~A" step-id escaped))
-                                 (setf (gethash step-id sent-lengths) log-len)))
-                             ;; Status changes
-                             (unless (equal status (gethash status-key prev-statuses))
-                               (setf (gethash status-key prev-statuses) status)
-                               (sse-send "step-status" (format nil "~A ~A" step-id status)))
-                             (when (member status '("pending" "running") :test #'equal)
-                               (setf any-active t)))))
-                       ;; Done?
+                       (dolist (job (list-workflow-jobs run-id))
+                         (when (%sse-send-step-updates
+                                #'sse-send (list-workflow-steps (getf job :id))
+                                sent-lengths prev-statuses)
+                           (setf any-active t)))
                        (when (and (member run-status '("success" "failure" "cancelled")
                                           :test #'equal)
                                   (not any-active))

@@ -166,164 +166,169 @@ builds (and layer-caches) an image with the requested packages on demand."
     ((equal trigger "manual") "manual")
     (t nil)))
 
+(defun %workflow-trigger-matches-p (workflow trigger ref)
+  "Does WORKFLOW's `on:` field accept TRIGGER? Triggers are ref-aware: a push
+to a tag (ref refs/tags/*) satisfies both `push` and `tag`, while a branch
+push satisfies only `push`. This lets a release workflow say `on: [tag]` and
+never schedule on ordinary commits."
+  (let* ((on-field (cdr (assoc "on" workflow :test #'equal)))
+         (triggers (if (listp on-field) on-field (list on-field)))
+         (is-tag (and ref (uiop:string-prefix-p "refs/tags/" ref)))
+         (effective (cond
+                      ((and (equal trigger "push") is-tag) '("push" "tag"))
+                      ((equal trigger "push") '("push"))
+                      (t (list trigger)))))
+    (some (lambda (e) (member e triggers :test #'equal)) effective)))
+
+(defun %workflow-policy-violation (jobs-alist)
+  "The first admin-policy violation across JOBS-ALIST (privileged when
+disabled, or an image outside the allowlist), or NIL."
+  (when (listp jobs-alist)
+    (loop for (job-name . job-spec) in jobs-alist
+          for image = (or (cdr (assoc "image" job-spec :test #'equal))
+                          (%nixery-image
+                           (cdr (assoc "dependencies" job-spec :test #'equal))))
+          for priv = (eq (cdr (assoc "privileged" job-spec :test #'equal)) t)
+          thereis (and job-name image
+                       (workflow-policy-violation image priv)))))
+
+(defun %create-job-steps (job-id steps-raw)
+  "Create the workflow steps for JOB-ID from the raw YAML step list."
+  (loop for step-spec in steps-raw
+        for order from 1
+        do (let ((step-name (cdr (assoc "name" step-spec :test #'equal)))
+                 (command (cdr (assoc "run" step-spec :test #'equal)))
+                 (step-timeout (let ((v (cdr (assoc "timeout" step-spec :test #'equal))))
+                                 (when (integerp v) v)))
+                 (step-continue-on-error (cdr (assoc "continue-on-error" step-spec :test #'equal)))
+                 (step-env (%env-map->string
+                            (cdr (assoc "env" step-spec :test #'equal))))
+                 (step-id (let ((v (cdr (assoc "id" step-spec :test #'equal))))
+                            (if (stringp v) v "")))
+                 (step-if (%strip-expr-wrapper
+                           (cdr (assoc "if" step-spec :test #'equal))))
+                 (step-uses (let ((v (cdr (assoc "uses" step-spec :test #'equal))))
+                              (if (stringp v) v "")))
+                 (step-with (%env-map->string
+                             (cdr (assoc "with" step-spec :test #'equal)))))
+             ;; A step is either `run:` (command) or `uses:` (action).
+             (when (or command (plusp (length step-uses)))
+               (create-workflow-step
+                :job-id job-id
+                :step-order order
+                :name step-name
+                :command (or command "")
+                :timeout-seconds step-timeout
+                :continue-on-error (eq step-continue-on-error t)
+                :env step-env
+                :id-name step-id
+                :if-cond step-if
+                :uses step-uses
+                :with-inputs step-with)))))
+
+(defun %create-jobs-from-spec (run job-name job-spec wf-env)
+  "Create the job rows (one per matrix combination) and their steps for one
+`jobs:` entry. WF-ENV is the workflow-level env, prepended so job/step env
+override by appearing later in the merged KEY=VALUE list."
+  (let* ((image (or (cdr (assoc "image" job-spec :test #'equal))
+                    ;; No image? Build one on the fly from nix deps.
+                    (%nixery-image
+                     (cdr (assoc "dependencies" job-spec :test #'equal)))))
+         (needs-raw (cdr (assoc "needs" job-spec :test #'equal)))
+         (needs (cond
+                  ((null needs-raw) nil)
+                  ((listp needs-raw) needs-raw)
+                  (t (list needs-raw))))
+         (runs-on-raw (cdr (assoc "runs-on" job-spec :test #'equal)))
+         (runs-on (cond
+                    ((null runs-on-raw) nil)
+                    ((listp runs-on-raw) runs-on-raw)
+                    (t (list runs-on-raw))))
+         (job-timeout (let ((v (cdr (assoc "timeout" job-spec :test #'equal))))
+                        (when (integerp v) v)))
+         (job-continue-on-error (cdr (assoc "continue-on-error" job-spec :test #'equal)))
+         (job-privileged (cdr (assoc "privileged" job-spec :test #'equal)))
+         (cache-raw (cdr (assoc "cache" job-spec :test #'equal)))
+         (cache-paths (cond
+                        ((null cache-raw) nil)
+                        ((listp cache-raw)
+                         (remove-if-not #'stringp cache-raw))
+                        ((stringp cache-raw) (list cache-raw))
+                        (t nil)))
+         (job-env (concatenate 'string wf-env
+                               (%env-map->string
+                                (cdr (assoc "env" job-spec :test #'equal)))))
+         ;; Job-level outputs: NAME=<expr>; the runner resolves the
+         ;; ${{ }} against its final steps context and reports back.
+         (job-output-defs (%env-map->string
+                           (cdr (assoc "outputs" job-spec :test #'equal))))
+         (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
+    (when (and job-name image)
+      (let* ((strategy (cdr (assoc "strategy" job-spec :test #'equal)))
+             (matrix (and (listp strategy)
+                          (cdr (assoc "matrix" strategy :test #'equal)))))
+        (dolist (matrix-combo (%matrix-combos matrix))
+          (let* ((job-display-name
+                   (if matrix-combo
+                       (format nil "~A (~{~A~^, ~})" job-name
+                               (mapcar #'cdr matrix-combo))
+                       job-name))
+                 (job (create-workflow-job
+                       :workflow-run-id (getf run :id)
+                       :name job-display-name
+                       :base-name job-name
+                       :image image
+                       :needs needs
+                       :runs-on runs-on
+                       :timeout-seconds job-timeout
+                       :continue-on-error (eq job-continue-on-error t)
+                       :privileged (eq job-privileged t)
+                       :cache-paths cache-paths
+                       :matrix (%matrix->json matrix-combo)
+                       :output-defs job-output-defs
+                       :env job-env)))
+            (llog:info "Created workflow job"
+                       :job job-display-name :job-id (getf job :id))
+            (when (and steps-raw (listp steps-raw))
+              (%create-job-steps (getf job :id) steps-raw))))))))
+
 (defun schedule-workflow-from-yaml (repo-id filename content trigger
                                     &key commit-sha ref triggered-by-id)
-  "Parse a workflow YAML file and create run/jobs/steps if trigger matches."
+  "Parse a workflow YAML file and create run/jobs/steps if trigger matches.
+An admin-policy violation in ANY job rejects the entire run — no job is
+dispatched — surfaced as a failed run so the author sees why."
   (let ((workflow (yaml-parse content)))
     (unless workflow (return-from schedule-workflow-from-yaml nil))
-    ;; Check if trigger matches. Triggers are ref-aware: a push to a tag
-    ;; (ref refs/tags/*) satisfies both `push` and `tag`, while a branch push
-    ;; satisfies only `push`. This lets a release workflow say `on: [tag]` and
-    ;; never schedule on ordinary commits.
-    (let* ((on-field (cdr (assoc "on" workflow :test #'equal)))
-           (triggers (if (listp on-field) on-field (list on-field)))
-           (is-tag (and ref (uiop:string-prefix-p "refs/tags/" ref)))
-           (effective (cond
-                        ((and (equal trigger "push") is-tag) '("push" "tag"))
-                        ((equal trigger "push") '("push"))
-                        (t (list trigger)))))
-      (unless (some (lambda (e) (member e triggers :test #'equal)) effective)
-        (return-from schedule-workflow-from-yaml nil))
-      ;; Create workflow run
-      (let* ((name (or (cdr (assoc "name" workflow :test #'equal))
-                       (pathname-name filename)))
-             ;; Workflow-level `env:` — prepended to each job's env (job/step
-             ;; levels override by appearing later in the merged KEY=VALUE list).
-             (wf-env (%env-map->string (cdr (assoc "env" workflow :test #'equal))))
-             (run (create-workflow-run
-                   :repo-id repo-id
-                   :workflow-name name
-                   :workflow-file filename
-                   :trigger-event trigger
-                   :commit-sha commit-sha
-                   :ref ref
-                   :triggered-by-id triggered-by-id)))
-        (llog:info "Created workflow run"
-                   :name name :file filename :run-id (getf run :id))
-        ;; Create jobs and steps
-        (let ((jobs-alist (cdr (assoc "jobs" workflow :test #'equal))))
-          ;; Admin policy gate: if any job in this workflow violates policy
-          ;; (privileged when disabled, or an image outside the allowlist),
-          ;; reject the entire run — don't dispatch any job — and surface the
-          ;; reason as a failed run so the author sees why.
-          (let ((violation
-                  (when (listp jobs-alist)
-                    (loop for (job-name . job-spec) in jobs-alist
-                          for image = (or (cdr (assoc "image" job-spec :test #'equal))
-                                          (%nixery-image
-                                           (cdr (assoc "dependencies" job-spec :test #'equal))))
-                          for priv = (eq (cdr (assoc "privileged" job-spec :test #'equal)) t)
-                          thereis (and job-name image
-                                       (workflow-policy-violation image priv))))))
-            (when violation
-              (let ((j (create-workflow-job :workflow-run-id (getf run :id)
-                                            :name (format nil "blocked by policy: ~A" violation)
-                                            :image "-")))
-                (update-job-status (getf j :id) "failure"))
-              (update-workflow-run-status (getf run :id) "failure")
-              (llog:warn "Workflow run blocked by admin policy"
-                         :run-id (getf run :id) :file filename :reason violation)
-              (return-from schedule-workflow-from-yaml run)))
-          (when (and jobs-alist (listp jobs-alist))
-            (dolist (job-entry jobs-alist)
-              (let* ((job-name (car job-entry))
-                     (job-spec (cdr job-entry))
-                     (image (or (cdr (assoc "image" job-spec :test #'equal))
-                                ;; No image? Build one on the fly from nix deps.
-                                (%nixery-image
-                                 (cdr (assoc "dependencies" job-spec :test #'equal)))))
-                     (needs-raw (cdr (assoc "needs" job-spec :test #'equal)))
-                     (needs (cond
-                              ((null needs-raw) nil)
-                              ((listp needs-raw) needs-raw)
-                              (t (list needs-raw))))
-                     (runs-on-raw (cdr (assoc "runs-on" job-spec :test #'equal)))
-                     (runs-on (cond
-                                ((null runs-on-raw) nil)
-                                ((listp runs-on-raw) runs-on-raw)
-                                (t (list runs-on-raw))))
-                     (job-timeout (let ((v (cdr (assoc "timeout" job-spec :test #'equal))))
-                                    (when (integerp v) v)))
-                     (job-continue-on-error (cdr (assoc "continue-on-error" job-spec :test #'equal)))
-                     (job-privileged (cdr (assoc "privileged" job-spec :test #'equal)))
-                     (cache-raw (cdr (assoc "cache" job-spec :test #'equal)))
-                     (cache-paths (cond
-                                    ((null cache-raw) nil)
-                                    ((listp cache-raw)
-                                     (remove-if-not #'stringp cache-raw))
-                                    ((stringp cache-raw) (list cache-raw))
-                                    (t nil)))
-                     ;; Merged workflow+job env (workflow first so job overrides).
-                     (job-env (concatenate 'string wf-env
-                                           (%env-map->string
-                                            (cdr (assoc "env" job-spec :test #'equal)))))
-                     ;; Job-level outputs: NAME=<expr>; the runner resolves the
-                     ;; ${{ }} against its final steps context and reports back.
-                     (job-output-defs (%env-map->string
-                                       (cdr (assoc "outputs" job-spec :test #'equal))))
-                     (steps-raw (cdr (assoc "steps" job-spec :test #'equal))))
-                (when (and job-name image)
-                  (let* ((strategy (cdr (assoc "strategy" job-spec :test #'equal)))
-                         (matrix (and (listp strategy)
-                                      (cdr (assoc "matrix" strategy :test #'equal))))
-                         (combos (%matrix-combos matrix)))
-                   (dolist (matrix-combo combos)
-                    (let* ((matrix-json (%matrix->json matrix-combo))
-                           (job-display-name
-                             (if matrix-combo
-                                 (format nil "~A (~{~A~^, ~})" job-name
-                                         (mapcar #'cdr matrix-combo))
-                                 job-name))
-                           (job (create-workflow-job
-                                 :workflow-run-id (getf run :id)
-                                 :name job-display-name
-                                 :base-name job-name
-                                 :image image
-                                 :needs needs
-                                 :runs-on runs-on
-                                 :timeout-seconds job-timeout
-                                 :continue-on-error (eq job-continue-on-error t)
-                                 :privileged (eq job-privileged t)
-                                 :cache-paths cache-paths
-                                 :matrix matrix-json
-                                 :output-defs job-output-defs
-                                 :env job-env)))
-                    (llog:info "Created workflow job"
-                               :job job-display-name :job-id (getf job :id))
-                    ;; Create steps
-                    (when (and steps-raw (listp steps-raw))
-                      (loop for step-spec in steps-raw
-                            for order from 1
-                            do (let ((step-name (cdr (assoc "name" step-spec :test #'equal)))
-                                     (command (cdr (assoc "run" step-spec :test #'equal)))
-                                     (step-timeout (let ((v (cdr (assoc "timeout" step-spec :test #'equal))))
-                                                     (when (integerp v) v)))
-                                     (step-continue-on-error (cdr (assoc "continue-on-error" step-spec :test #'equal)))
-                                     (step-env (%env-map->string
-                                                (cdr (assoc "env" step-spec :test #'equal))))
-                                     (step-id (let ((v (cdr (assoc "id" step-spec :test #'equal))))
-                                                (if (stringp v) v "")))
-                                     (step-if (%strip-expr-wrapper
-                                               (cdr (assoc "if" step-spec :test #'equal))))
-                                     (step-uses (let ((v (cdr (assoc "uses" step-spec :test #'equal))))
-                                                  (if (stringp v) v "")))
-                                     (step-with (%env-map->string
-                                                 (cdr (assoc "with" step-spec :test #'equal)))))
-                                 ;; A step is either `run:` (command) or `uses:` (action).
-                                 (when (or command (plusp (length step-uses)))
-                                   (create-workflow-step
-                                    :job-id (getf job :id)
-                                    :step-order order
-                                    :name step-name
-                                    :command (or command "")
-                                    :timeout-seconds step-timeout
-                                    :continue-on-error (eq step-continue-on-error t)
-                                    :env step-env
-                                    :id-name step-id
-                                    :if-cond step-if
-                                    :uses step-uses
-                                    :with-inputs step-with))))))))))))
-        run)))))
+    (unless (%workflow-trigger-matches-p workflow trigger ref)
+      (return-from schedule-workflow-from-yaml nil))
+    (let* ((name (or (cdr (assoc "name" workflow :test #'equal))
+                     (pathname-name filename)))
+           (wf-env (%env-map->string (cdr (assoc "env" workflow :test #'equal))))
+           (jobs-alist (cdr (assoc "jobs" workflow :test #'equal)))
+           (run (create-workflow-run
+                 :repo-id repo-id
+                 :workflow-name name
+                 :workflow-file filename
+                 :trigger-event trigger
+                 :commit-sha commit-sha
+                 :ref ref
+                 :triggered-by-id triggered-by-id)))
+      (llog:info "Created workflow run"
+                 :name name :file filename :run-id (getf run :id))
+      (let ((violation (%workflow-policy-violation jobs-alist)))
+        (when violation
+          (let ((j (create-workflow-job :workflow-run-id (getf run :id)
+                                        :name (format nil "blocked by policy: ~A" violation)
+                                        :image "-")))
+            (update-job-status (getf j :id) "failure"))
+          (update-workflow-run-status (getf run :id) "failure")
+          (llog:warn "Workflow run blocked by admin policy"
+                     :run-id (getf run :id) :file filename :reason violation)
+          (return-from schedule-workflow-from-yaml run)))
+      (when (and jobs-alist (listp jobs-alist))
+        (dolist (job-entry jobs-alist)
+          (%create-jobs-from-spec run (car job-entry) (cdr job-entry) wf-env)))
+      run)))
 
 (defun rerun-workflow (run-id)
   "Re-create a fresh run from RUN-ID's workflow file at its commit. Reuses

@@ -32,7 +32,10 @@
       (call-next-method)))
 
 (defmethod hunchentoot:acceptor-dispatch-request ((acceptor cave-acceptor) request)
-  "Wrap every request with a pooled DB connection, auth context, and metrics."
+  "Wrap every request with a pooled DB connection, auth context, and metrics.
+A few URI families are served before easy-routes dispatch: trailing-slash
+301s, the embedded Usher OIDC endpoints, git smart-HTTP, and SSE log
+streaming. Each %dispatch helper returns :unhandled to pass."
   (let ((method (hunchentoot:request-method request))
         (start (get-internal-real-time)))
     (bt2:with-lock-held (*metrics-lock*)
@@ -42,49 +45,17 @@
            (let ((*current-user* nil)
                  (*current-user-id* nil))
              (authenticate-request)
-             ;; Normalize trailing slashes — easy-routes doesn't match "/foo/" to "/foo".
-             ;; Skip git smart-HTTP paths and static files which can carry meaningful
-             ;; trailing characters.
              (let ((uri (hunchentoot:script-name request)))
-               (when (and (eq method :get)
-                          (> (length uri) 1)
-                          (char= (char uri (1- (length uri))) #\/)
-                          (not (search ".git/" uri))
-                          (not (uiop:string-prefix-p "/static/" uri)))
-                 (let* ((trimmed (string-right-trim "/" uri))
-                        (qs (hunchentoot:query-string request))
-                        (target (if (and qs (plusp (length qs)))
-                                    (format nil "~A?~A" trimmed qs)
-                                    trimmed)))
-                   ;; Path-only Location so the browser preserves the original
-                   ;; scheme — avoids an http→https extra hop behind Caddy.
-                   (setf (hunchentoot:header-out :location) target
-                         (hunchentoot:return-code*) 301)
-                   (return-from hunchentoot:acceptor-dispatch-request "")))
-               ;; Embedded Usher OIDC provider — serve its endpoints before
-               ;; cave's own routes.
-               (when (and *usher-dispatch* (usher-endpoint-p uri))
-                 (return-from hunchentoot:acceptor-dispatch-request
-                   (dispatch-usher request)))
-               ;; Intercept git smart HTTP before easy-routes dispatch
-               (when (and (search ".git/" uri)
-                          (or (search "/info/refs" uri)
-                              (search "/git-upload-pack" uri)))
-                 (let* ((git-suffix-pos (search ".git/" uri))
-                        (repo-path (subseq uri 1 git-suffix-pos))
-                        (slash (position #\/ repo-path)))
-                   (when slash
-                     (return-from hunchentoot:acceptor-dispatch-request
-                       (handle-git-http (subseq repo-path 0 slash)
-                                        (subseq repo-path (1+ slash)))))))
-               ;; Intercept SSE log streaming
-               (when (and (search "/runs/w/" uri)
-                          (uiop:string-suffix-p uri "/logs")
-                          (eq method :get))
-                 (handler-case
-                     (handle-workflow-logs-sse uri)
-                   (error () nil))
-                 (return-from hunchentoot:acceptor-dispatch-request nil))
+               (macrolet ((try (form)
+                            `(let ((r ,form))
+                               (unless (eq r :unhandled)
+                                 (return-from hunchentoot:acceptor-dispatch-request r)))))
+                 (try (%redirect-trailing-slash uri method request))
+                 (when (and *usher-dispatch* (usher-endpoint-p uri))
+                   (return-from hunchentoot:acceptor-dispatch-request
+                     (dispatch-usher request)))
+                 (try (%dispatch-git-smart-http uri))
+                 (try (%dispatch-workflow-logs-sse uri method)))
                ;; Page-view tracking — log a row for GET hits on repo subpaths
                ;; (skip POSTs, static, hooks, smart-HTTP). Cheap and fire-and-forget.
                (when (eq method :get)
@@ -97,6 +68,54 @@
         (bt2:with-lock-held (*metrics-lock*)
           (decf *active-requests*))
         (record-request method status elapsed)))))
+
+(defun %redirect-trailing-slash (uri method request)
+  "301 GET page URIs ending in '/' to the slash-trimmed form — easy-routes
+doesn't match \"/foo/\" to \"/foo\". Skips git smart-HTTP paths and static
+files, which can carry meaningful trailing characters. Returns :unhandled
+when the URI doesn't need it."
+  (if (and (eq method :get)
+           (> (length uri) 1)
+           (char= (char uri (1- (length uri))) #\/)
+           (not (search ".git/" uri))
+           (not (uiop:string-prefix-p "/static/" uri)))
+      (let* ((trimmed (string-right-trim "/" uri))
+             (qs (hunchentoot:query-string request))
+             (target (if (and qs (plusp (length qs)))
+                         (format nil "~A?~A" trimmed qs)
+                         trimmed)))
+        ;; Path-only Location so the browser preserves the original scheme —
+        ;; avoids an http→https extra hop behind Caddy.
+        (setf (hunchentoot:header-out :location) target
+              (hunchentoot:return-code*) 301)
+        "")
+      :unhandled))
+
+(defun %dispatch-git-smart-http (uri)
+  "Serve git smart-HTTP (info/refs + upload-pack) requests, else :unhandled."
+  (if (and (search ".git/" uri)
+           (or (search "/info/refs" uri)
+               (search "/git-upload-pack" uri)))
+      (let* ((git-suffix-pos (search ".git/" uri))
+             (repo-path (subseq uri 1 git-suffix-pos))
+             (slash (position #\/ repo-path)))
+        (if slash
+            (handle-git-http (subseq repo-path 0 slash)
+                             (subseq repo-path (1+ slash)))
+            :unhandled))
+      :unhandled))
+
+(defun %dispatch-workflow-logs-sse (uri method)
+  "Stream workflow logs over SSE, else :unhandled. Returns NIL after the
+stream ends — the response was written directly to the socket."
+  (if (and (search "/runs/w/" uri)
+           (uiop:string-suffix-p uri "/logs")
+           (eq method :get))
+      (progn
+        (handler-case (handle-workflow-logs-sse uri)
+          (error () nil))
+        nil)
+      :unhandled))
 
 (defun app-root ()
   "Return the application root directory."
