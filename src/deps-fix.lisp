@@ -281,7 +281,7 @@
 (defparameter *deps-fix-workflow-name* "deps-fix")
 (defparameter *ocicl-csv-marker* "===OCICL-CSV-BELOW===")
 
-(defun enqueue-ocicl-fix (repo-id ref project systems &key triggered-by-id)
+(defun enqueue-ocicl-fix (repo-id ref project systems)
   "Schedule a cave-fix runner job: `ocicl latest SYSTEMS` + `ocicl clean`,
    returning the regenerated ocicl.csv via the step log. Returns the run, or NIL."
   (let ((repo (find-repo-by-id repo-id)))
@@ -293,7 +293,7 @@
              (run (create-workflow-run
                    :repo-id repo-id :workflow-name *deps-fix-workflow-name*
                    :workflow-file "" :trigger-event "deps_fix"
-                   :ref ref :triggered-by-id triggered-by-id))
+                   :ref ref))
              (job (create-workflow-job
                    :workflow-run-id (getf run :id)
                    :name (format nil "ocicl-fix:~A" project)

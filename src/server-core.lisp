@@ -230,11 +230,9 @@ Plists become objects, lists of plists become arrays of objects, NIL becomes #()
 
 (defun ensure-repo-visible (repo responder)
   "Return REPO when visible, otherwise return (VALUES NIL error-response)."
-  (unless repo
-    (return-from ensure-repo-visible (values nil (funcall responder))))
-  (unless (repo-visible-p repo)
-    (return-from ensure-repo-visible (values nil (funcall responder))))
-  repo)
+  (if (and repo (repo-visible-p repo))
+      repo
+      (values nil (funcall responder))))
 
 (defmacro %with-repo-admin ((repo owner repo-name fail-form) &body body)
   "Bind REPO from OWNER/REPO-NAME, requiring login + repo admin; else short-circuit."

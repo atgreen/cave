@@ -182,10 +182,9 @@ GPG keyring are built once for the whole batch. Shared by the push hook and the
           (when gpg-home
             (uiop:delete-directory-tree gpg-home :validate t :if-does-not-exist :ignore))))))
 
-(defun verify-pushed-commits (owner-name repo disk-path refs)
+(defun verify-pushed-commits (repo disk-path refs)
   "For each ref update, verify newly-introduced commits' signatures and cache
 the results. Skips deletes and zero-sha boundaries."
-  (declare (ignore owner-name))
   (let* ((shas (loop for r in refs
                      when (and (not (zero-sha-p (getf r :new))))
                        append
@@ -312,7 +311,7 @@ number of commits re-verified."
                          (getf fresh :id) (getf fresh :version) new
                          (git-merge-base disk-path (getf fresh :target-branch) new))))))))))
         ;; Verify any signed commits in the pushed range, cache results
-        (handler-case (verify-pushed-commits owner repo (repo-disk-path owner repo-name) refs)
+        (handler-case (verify-pushed-commits repo (repo-disk-path owner repo-name) refs)
           (error (e)
             (llog:warn "Signature verification failed" :error (princ-to-string e))))
         ;; Invalidate Chamber cache for this repo

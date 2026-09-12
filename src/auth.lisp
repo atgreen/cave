@@ -219,11 +219,15 @@
   (llog:info "Embedded Usher OIDC provider ready"
              :issuer (config-value :oidc-issuer)))
 
-(defun usher-migrate-users (&key (force-admins '("atgreen")))
+(defparameter *force-admin-usernames* '("atgreen")
+  "Usernames granted cave-admin during Usher migration regardless of is_admin.")
+
+(defun usher-migrate-users ()
   "Provision Usher accounts from the existing cave_users (username, email,
-   display name, is_admin). Accounts in FORCE-ADMINS are granted cave-admin too.
-   Skips users that already exist. Returns a list of (username . temp-password)
-   for newly created accounts — show these to the operator once."
+   display name, is_admin). Accounts in *FORCE-ADMIN-USERNAMES* are granted
+   cave-admin too. Skips users that already exist. Returns a list of
+   (username . temp-password) for newly created accounts — show these to the
+   operator once."
   (let ((results nil))
     (dolist (row (postmodern:query
                   (:select 'username 'email 'display-name 'is-admin
@@ -232,7 +236,7 @@
       (destructuring-bind (username email display-name is-admin) row
         (let* ((real-email (and email (not (string-equal email "false")) email))
                (admin (or (eq is-admin t)
-                          (member username force-admins :test #'string=)))
+                          (member username *force-admin-usernames* :test #'string=)))
                (temp (usher:random-token 9)))
           (unless (usher:store-find-user-by-username
                    (usher:provider-store usher::*provider*) username)

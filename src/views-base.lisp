@@ -34,13 +34,13 @@ leaks the viewer's IP the way a remote Gravatar fetch would."
       (format nil "data:image/svg+xml;base64,~A"
               (cl-base64:string-to-base64-string svg)))))
 
-(defun render-avatar (email &key (size 20) (class "avatar") (alt ""))
+(defun render-avatar (email &key (size 20) (alt ""))
   "Render a deterministic identicon avatar for EMAIL. ALT defaults to empty
 (decorative) for callers that show the name as adjacent text; pass a name for
 standalone use."
   (spinneret:with-html
     (:img :src (identicon-data-uri email)
-     :class class :width (princ-to-string size) :height (princ-to-string size)
+     :class "avatar" :width (princ-to-string size) :height (princ-to-string size)
      :alt alt
      :style "border-radius:3px;vertical-align:middle")))
 
@@ -166,17 +166,17 @@ explicitly chosen another theme."
                   (progn
                     (:a :href (first crumb) (second crumb))
                     (:raw " / "))
-                  (:strong (if (listp crumb) (second crumb) crumb)))))))
+                  (:strong crumb))))))
 
 ;;; ========================== AUTH PAGES ==========================
 ;;; Login is handled by the embedded Usher OIDC provider — no local login form needed.
 
 ;;; ========================== DASHBOARD ==========================
 
-(defun format-relative-time (ts &key (now (get-universal-time)))
+(defun format-relative-time (ts)
   "Format a timestamp as 'N units ago'. TS may be a universal-time integer or NIL."
   (when (integerp ts)
-    (let ((delta (max 0 (- now ts))))
+    (let ((delta (max 0 (- (get-universal-time) ts))))
       (cond
         ((< delta 60) "just now")
         ((< delta 3600)
@@ -287,8 +287,8 @@ explicitly chosen another theme."
           (when (and language (plusp (length language))) (hunchentoot:url-encode language))
           page))
 
-(defun render-lang-tag (name &key (show-name t))
-  "A colored language dot (Linguist color) optionally followed by the name.
+(defun render-lang-tag (name)
+  "A colored language dot (Linguist color) followed by the name.
 No-op for a blank or :null NAME."
   (when (and name (not (eq name :null)) (plusp (length name)))
     (spinneret:with-html
@@ -296,7 +296,7 @@ No-op for a blank or :null NAME."
        (:span :title name
         :style (format nil "display:inline-block;width:.65em;height:.65em;border-radius:50%;flex:0 0 auto;background:~A"
                        (or (language-color name) "var(--text-muted,#888)")))
-       (when show-name name)))))
+       name))))
 
 (defun %repo-list-item (r &key meta)
   "Render one repo list <li> with owner/name, description, language, and META."

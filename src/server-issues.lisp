@@ -470,40 +470,39 @@
 (easy-routes:defroute submit-review
     ("/:owner/:repo-name/pulls/:number/review" :method :post) ()
   (when (require-login)
-    (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
-           (num (parse-integer number :junk-allowed t))
-           (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
-      (unless repo (return-from submit-review repo))
-      (unless pr (return-from submit-review (not-found)))
-      (unless (repo-reviewer-p (getf repo :id) *current-user-id*)
-        (setf (hunchentoot:return-code*) 403)
-        (return-from submit-review "Forbidden"))
-      (let* ((state (hunchentoot:post-parameter "state"))
-             (body (hunchentoot:post-parameter "body"))
-             (concern-text (hunchentoot:post-parameter "concern_text"))
-             (review (create-review
-                      :changeset-id (getf pr :id)
-                      :reviewer-id *current-user-id*
-                      :state state
-                      :body (unless (uiop:emptyp body) body)
-                      :changeset-version (getf pr :version))))
-        (when (and (equal state "approve_with_concerns")
-                   (not (uiop:emptyp concern-text)))
-          (create-concern :review-id (getf review :id)
-                          :changeset-id (getf pr :id)
-                          :author-id *current-user-id*
-                          :body concern-text))
-        (log-event "review.submitted"
-                   :user-id *current-user-id*
-                   :repo-id (getf repo :id)
-                   :entity-type "review"
-                   :entity-id (getf review :id))
-        (notify-pr-review repo owner repo-name pr state)
-        (fire-webhooks (getf repo :id) "pull_request" (make-webhook-payload "pull_request.reviewed" :owner owner :repo repo-name :number (getf pr :number) :state state))
-        ;; An approval may make an auto-merge-armed PR eligible.
-        (try-auto-merge owner repo-name (getf pr :id))
-        (hunchentoot:redirect
-         (format nil "/~A/~A/pulls/~A" owner repo-name number))))))
+    (with-visible-repo (repo owner repo-name #'not-found)
+      (let* ((num (parse-integer number :junk-allowed t))
+             (pr (when num (find-pull-request (getf repo :id) num))))
+        (unless pr (return-from submit-review (not-found)))
+        (unless (repo-reviewer-p (getf repo :id) *current-user-id*)
+          (setf (hunchentoot:return-code*) 403)
+          (return-from submit-review "Forbidden"))
+        (let* ((state (hunchentoot:post-parameter "state"))
+               (body (hunchentoot:post-parameter "body"))
+               (concern-text (hunchentoot:post-parameter "concern_text"))
+               (review (create-review
+                        :changeset-id (getf pr :id)
+                        :reviewer-id *current-user-id*
+                        :state state
+                        :body (unless (uiop:emptyp body) body)
+                        :changeset-version (getf pr :version))))
+          (when (and (equal state "approve_with_concerns")
+                     (not (uiop:emptyp concern-text)))
+            (create-concern :review-id (getf review :id)
+                            :changeset-id (getf pr :id)
+                            :author-id *current-user-id*
+                            :body concern-text))
+          (log-event "review.submitted"
+                     :user-id *current-user-id*
+                     :repo-id (getf repo :id)
+                     :entity-type "review"
+                     :entity-id (getf review :id))
+          (notify-pr-review repo owner repo-name pr state)
+          (fire-webhooks (getf repo :id) "pull_request" (make-webhook-payload "pull_request.reviewed" :owner owner :repo repo-name :number (getf pr :number) :state state))
+          ;; An approval may make an auto-merge-armed PR eligible.
+          (try-auto-merge owner repo-name (getf pr :id))
+          (hunchentoot:redirect
+           (format nil "/~A/~A/pulls/~A" owner repo-name number)))))))
 
 (easy-routes:defroute resolve-concern-submit
     ("/:owner/:repo-name/concerns/:concern-id/resolve" :method :post) ()
@@ -662,8 +661,7 @@ any trigger (review submitted, status reported); a no-op otherwise."
     (let* ((repo (ensure-repo-visible (find-repo owner repo-name) #'not-found))
            (num (parse-integer number :junk-allowed t))
            (pr (when (and repo num) (find-pull-request (getf repo :id) num))))
-      (unless repo (return-from merge-pull-request-submit repo))
-      (unless pr (return-from merge-pull-request-submit (not-found)))
+      (unless (and repo pr) (return-from merge-pull-request-submit (not-found)))
       (unless (equal (repo-member-role (getf repo :id) *current-user-id*) "admin")
         (setf (hunchentoot:return-code*) 403)
         (return-from merge-pull-request-submit "Forbidden"))

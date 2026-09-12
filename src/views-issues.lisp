@@ -375,42 +375,6 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
            (:option :value b :selected (when (equal b default-branch) t) b))))
        (:button.btn.btn-primary :type "submit" "Create pull request")))))
 
-(defun render-inline-comments (comments)
-  "Render inline diff comments in a comment row."
-  (spinneret:with-html
-    (dolist (c comments)
-      (:div.diff-inline-comment
-       (:span.diff-inline-comment-author (getf c :username))
-       (:span.diff-inline-comment-date (princ-to-string (getf c :created-at)))
-       (:div.diff-inline-comment-body (getf c :body))))))
-
-(defun hljs-language (filename)
-  "Map filename to highlight.js language class."
-  (let ((ext (pathname-type (pathname filename)))
-        (base (pathname-name (pathname filename))))
-    (cond
-      ((member ext '("lisp" "cl" "asd" "lsp") :test #'equalp) "lisp")
-      ((member ext '("js" "mjs") :test #'equalp) "javascript")
-      ((member ext '("ts" "tsx") :test #'equalp) "typescript")
-      ((equalp ext "py") "python")
-      ((equalp ext "rb") "ruby")
-      ((member ext '("c" "h") :test #'equalp) "c")
-      ((member ext '("cpp" "cc" "cxx" "hpp") :test #'equalp) "cpp")
-      ((equalp ext "go") "go")
-      ((equalp ext "rs") "rust")
-      ((equalp ext "java") "java")
-      ((equalp ext "sql") "sql")
-      ((equalp ext "css") "css")
-      ((equalp ext "html") "html")
-      ((member ext '("md" "markdown") :test #'equalp) "markdown")
-      ((equalp ext "json") "json")
-      ((member ext '("yml" "yaml") :test #'equalp) "yaml")
-      ((member ext '("sh" "bash" "zsh") :test #'equalp) "bash")
-      ((equalp ext "xml") "xml")
-      ((string-equal base "Makefile") "makefile")
-      ((string-equal base "Dockerfile") "dockerfile")
-      (t "plaintext"))))
-
 (defparameter +checks-panel-css+
   ".checks-rollup{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 .5rem;font-weight:600}
 .checks-list{list-style:none;padding:0;margin:0}
@@ -470,21 +434,20 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
 rows + rollup, and reloads once everything settles so the merge box refreshes.")
 
 (defun render-checks-rollup (rollup)
-  "Render the rollup summary line (status dot + 'N failing, M in progress, …')."
+  "Render the rollup summary line (status dot + 'N failing, M in progress, …').
+Callers guard against an empty rollup; the empty state is rendered client-side
+by +checks-panel-js+."
   (spinneret:with-html
-    (if (zerop (getf rollup :total))
-        (:span.checks-summary "No checks have reported yet.")
-        (progn
-          (:span :class (format nil "checks-dot checks-~A" (getf rollup :overall)))
-          (:span.checks-summary
-           (let ((parts nil)
-                 (fail (getf rollup :failure))
-                 (pend (getf rollup :pending))
-                 (succ (getf rollup :success)))
-             (when (plusp fail) (push (format nil "~A failing" fail) parts))
-             (when (plusp pend) (push (format nil "~A in progress" pend) parts))
-             (when (plusp succ) (push (format nil "~A successful" succ) parts))
-             (format nil "~{~A~^, ~}" (nreverse parts))))))))
+    (:span :class (format nil "checks-dot checks-~A" (getf rollup :overall)))
+    (:span.checks-summary
+     (let ((parts nil)
+           (fail (getf rollup :failure))
+           (pend (getf rollup :pending))
+           (succ (getf rollup :success)))
+       (when (plusp fail) (push (format nil "~A failing" fail) parts))
+       (when (plusp pend) (push (format nil "~A in progress" pend) parts))
+       (when (plusp succ) (push (format nil "~A successful" succ) parts))
+       (format nil "~{~A~^, ~}" (nreverse parts))))))
 
 (defun render-check-row (c)
   "Render one check row; icon is driven by the check-STATE class (CSS)."

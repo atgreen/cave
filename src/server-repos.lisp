@@ -308,8 +308,7 @@
 
 (defun blob-cache-put (sha content)
   "Cache blob content by SHA. Evicts oldest entries if over size limit."
-  (let ((size (if (stringp content) (length content)
-                  (length content))))
+  (let ((size (length content)))
     (when (> size (* 4 1024 1024)) ; don't cache blobs > 4MB
       (return-from blob-cache-put content))
     (bt2:with-lock-held (*blob-cache-lock*)
@@ -322,8 +321,7 @@
                           *blob-cache*)
                  (if oldest-key
                      (let ((old (gethash oldest-key *blob-cache*)))
-                       (decf *blob-cache-bytes*
-                             (if (stringp (car old)) (length (car old)) (length (car old))))
+                       (decf *blob-cache-bytes* (length (car old)))
                        (remhash oldest-key *blob-cache*))
                      (return))))
       (setf (gethash sha *blob-cache*) (cons content (get-universal-time)))

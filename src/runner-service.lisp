@@ -226,11 +226,10 @@ Returns a newline-joined string of VOLUME<TAB>CONTAINER-PATH lines, or \"\"."
         (if lines (format nil "~{~A~^~%~}" lines) ""))
       ""))
 
-(defun %github-context-env (run repo owner-name repo-name job)
+(defun %github-context-env (run owner-name repo-name job)
   "GitHub-Actions context env for a workflow job, as newline KEY=VALUE. The
 runner injects these (and adds a CAVE_* twin for every GITHUB_* key, plus the
 RUNNER_*/file-protocol vars)."
-  (declare (ignore repo))
   (let* ((ref (let ((r (getf run :ref))) (if (eq r :null) "" (or r ""))))
          (sha (let ((s (getf run :commit-sha))) (if (eq s :null) "" (or s ""))))
          (ref-name (cond ((uiop:string-prefix-p "refs/heads/" ref) (subseq ref 11))
@@ -325,7 +324,7 @@ RUNNER_*/file-protocol vars)."
                    ;; GITHUB_*/CAVE_* context + the merged workflow/job `env:`.
                    :context-env (if (and run repo)
                                     (concatenate 'string
-                                                 (%github-context-env run repo owner-name repo-name job)
+                                                 (%github-context-env run owner-name repo-name job)
                                                  (let ((e (getf job :env))) (if (and e (not (eq e :null))) e "")))
                                     "")
                    :matrix-json (let ((m (getf job :matrix))) (if (and m (not (eq m :null))) m ""))
@@ -508,9 +507,3 @@ RUNNER_*/file-protocol vars)."
    :name "cave-grpc-server")
 
   (llog:info "gRPC runner service started" :port port))
-
-(defun stop-grpc-server ()
-  "Stop the gRPC runner service."
-  (when *grpc-server*
-    (ag-grpc:server-stop *grpc-server* :graceful t)
-    (setf *grpc-server* nil)))

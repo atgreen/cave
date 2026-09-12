@@ -15,33 +15,21 @@
                        (com.inuoe.jzon:stringify metadata)
                        :null))))
 
-(defun list-recent-events (&key repo-id (limit 30))
-  "List recent events, optionally filtered by repo.
+(defun list-recent-events (&key (limit 30))
+  "List recent events across the instance.
    Clones are excluded — they're noise in a feed and counted in Pulse instead."
-  (if repo-id
-      (postmodern:query
-       (:limit
-        (:order-by
-         (:select 'cave-events.* (:as 'cave-users.username 'actor)
-          :from 'cave-events
-          :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
-          :where (:and (:= 'cave-events.repo-id repo-id)
-                       (:!= 'cave-events.event-type "git.clone")))
-         (:desc 'cave-events.created-at))
-        limit)
-       :plists)
-      (postmodern:query
-       (:limit
-        (:order-by
-         (:select 'cave-events.* (:as 'cave-users.username 'actor)
-                  (:as 'cave-repos.name 'repo-name)
-          :from 'cave-events
-          :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
-          :left-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id)
-          :where (:!= 'cave-events.event-type "git.clone"))
-         (:desc 'cave-events.created-at))
-        limit)
-       :plists)))
+  (postmodern:query
+   (:limit
+    (:order-by
+     (:select 'cave-events.* (:as 'cave-users.username 'actor)
+              (:as 'cave-repos.name 'repo-name)
+      :from 'cave-events
+      :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
+      :left-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id)
+      :where (:!= 'cave-events.event-type "git.clone"))
+     (:desc 'cave-events.created-at))
+    limit)
+   :plists))
 
 (defun log-page-view (repo-id &key ip-hash user-id referer-host)
   "Record a single page view. Cheap insert; aggregated at query time."

@@ -80,21 +80,6 @@
         'name)
        :plists)))
 
-(defun list-public-repos (&key (limit 50))
-  "Public repos across the whole instance, newest first. For the anon landing."
-  (postmodern:query
-   (:limit
-    (:order-by
-     (:select 'cave-repos.*
-              (:as (:coalesce 'cave-orgs.name 'cave-users.username) 'owner-name)
-      :from 'cave-repos
-      :left-join 'cave-orgs :on (:= 'cave-repos.org-id 'cave-orgs.id)
-      :left-join 'cave-users :on (:= 'cave-repos.owner-id 'cave-users.id)
-      :where (:= 'cave-repos.is-private nil))
-     (:desc (:coalesce 'cave-repos.last-pushed-at 'cave-repos.updated-at)))
-    limit)
-   :plists))
-
 (defun search-public-repos (&key query language (sort "recent") (limit 30) (offset 0))
   "Public repos for the Explore page. QUERY filters name/description (ILIKE);
 LANGUAGE filters on the stored primary_language; SORT is recent|newest|name.
@@ -797,15 +782,10 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
               'created-at)
    :plists))
 
-(defun update-job-status (job-id status &key runner-id)
-  "Update a workflow job's status."
+(defun update-job-status (job-id status)
+  "Update a workflow job's status. (The running transition is handled by
+UPDATE-JOB-STATUS-FOR-RUNNER, which also records the runner.)"
   (cond
-    ((equal status "running")
-     (postmodern:execute
-      (:update 'cave-workflow-jobs
-       :set 'status status 'started-at (:now)
-            'runner-id (or runner-id :null)
-       :where (:= 'id job-id))))
     ((member status '("success" "failure" "cancelled" "skipped") :test #'equal)
      (postmodern:execute
       (:update 'cave-workflow-jobs

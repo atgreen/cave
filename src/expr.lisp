@@ -82,8 +82,6 @@ nulllit = 'null'
 (defun %gha-= (a b)
   "GHA loose equality."
   (cond
-    ;; same object identity for hash/vector
-    ((and (or (hash-table-p a) (%gha-array-p a)) (eq a b)) t)
     ((or (hash-table-p a) (%gha-array-p a) (hash-table-p b) (%gha-array-p b))
      (eq a b))
     ((and (stringp a) (stringp b)) (string-equal a b))
@@ -106,8 +104,8 @@ nulllit = 'null'
 
 (defun %gha-member (obj key)
   "Property access obj.KEY (KEY a string)."
-  (cond ((hash-table-p obj) (gethash key obj))
-        (t nil)))
+  (when (hash-table-p obj)
+    (gethash key obj)))
 
 (defun %gha-index (obj idx)
   "Index access obj[IDX]."

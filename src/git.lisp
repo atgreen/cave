@@ -840,21 +840,6 @@ PR rounds. NIL on error or when a commit is missing."
     (declare (ignore _err))
     (when (zerop code) out)))
 
-(defun parse-hunk-header (line)
-  "Parse @@ -old-start,old-count +new-start,new-count @@ from a hunk header.
-   Returns (VALUES old-start new-start)."
-  (let ((at-pos (position #\@ line :start 2)))
-    (when at-pos
-      (let* ((range (string-trim '(#\Space #\@) (subseq line 2 (+ at-pos 1))))
-             (parts (uiop:split-string range :separator '(#\Space)))
-             (old-part (first parts))
-             (new-part (second parts)))
-        (values
-         (when old-part
-           (parse-integer (subseq old-part 1) :junk-allowed t))
-         (when new-part
-           (parse-integer (subseq new-part 1) :junk-allowed t)))))))
-
 (defun git-commit-count (repo-path &key (branch nil))
   "Count commits on a branch (or all if nil)."
   (let ((args (if branch

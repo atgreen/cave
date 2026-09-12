@@ -682,10 +682,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 " (json-for-script (or raw-diff "")))))))
 
-(defun view-commit (&key owner-name repo commit diff-raw diff-stat
-                         signature trailers)
+(defun view-commit (&key owner-name repo commit diff-raw signature trailers)
   "Render a commit detail page with diff."
-  (declare (ignore diff-stat))
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "~A — ~A/~A" (getf commit :short-hash) owner-name repo-name))
       (render-repo-tabs owner-name repo-name :code :repo repo)

@@ -287,18 +287,6 @@
       (make-instance 'cave::is-empty-response
                      :empty (if (git-repo-empty-p disk-path) t nil)))))
 
-(defun handle-chamber-get-diff (request ctx)
-  (declare (ignore ctx))
-  (let* ((owner (slot-value request 'cave::owner))
-         (repo-name (slot-value request 'cave::repo-name))
-         (base-ref (slot-value request 'cave::base-ref))
-         (head-ref (slot-value request 'cave::head-ref))
-         (disk-path (chamber-repo-path owner repo-name)))
-    (with-git-read
-      (make-instance 'cave::get-diff-response
-                     :base-ref base-ref
-                     :head-ref head-ref))))
-
 (defun handle-chamber-get-diff-merge-base (request ctx)
   (declare (ignore ctx))
   (let* ((owner (slot-value request 'cave::owner))
@@ -612,9 +600,6 @@
     "/cave.chamber.Chamber/IsEmpty" #'handle-chamber-is-empty
     :request-type 'cave::is-empty-request :response-type 'cave::is-empty-response)
   (ag-grpc:server-register-handler *chamber-server*
-    "/cave.chamber.Chamber/GetDiff" #'handle-chamber-get-diff
-    :request-type 'cave::get-diff-request :response-type 'cave::get-diff-response)
-  (ag-grpc:server-register-handler *chamber-server*
     "/cave.chamber.Chamber/GetDiffMergeBase" #'handle-chamber-get-diff-merge-base
     :request-type 'cave::get-diff-merge-base-request :response-type 'cave::get-diff-response)
   (ag-grpc:server-register-handler *chamber-server*
@@ -670,9 +655,3 @@
   (start-push-lock-reaper)
 
   (llog:info "Chamber started" :port port))
-
-(defun stop-chamber ()
-  (when *chamber-server*
-    (handler-case (ag-grpc:server-stop *chamber-server* :graceful t)
-      (error () nil))
-    (setf *chamber-server* nil)))

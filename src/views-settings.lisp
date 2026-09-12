@@ -2,14 +2,12 @@
 
 ;;; ========================== REPO SETTINGS ==========================
 
-(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations runners registration-token message secrets protected-branches deploy-keys)
+(defun view-repo-settings (&key owner-name repo members checks mirrors webhooks automations runners registration-token secrets protected-branches deploy-keys)
   "Render repo settings page."
   (let ((repo-name (getf repo :name)))
     (page (:title (format nil "Settings — ~A/~A" owner-name repo-name))
       (render-repo-tabs owner-name repo-name :settings :repo repo)
       (:h1 "Repository settings")
-      (when message
-        (:div.alert message))
 
       ;; Protected branches
       (:section
@@ -379,7 +377,7 @@
 
 ;;; ========================== ADMIN & SETTINGS ==========================
 
-(defun view-admin (&key users pending-users runners registration-token message)
+(defun view-admin (&key users pending-users runners registration-token)
   "Render the admin panel."
   (page (:title "Admin — Cave")
     (:h1 "Instance administration")
@@ -406,9 +404,6 @@
               (:button.btn.btn-sm :type "submit" "Reject")))))))))
     (:section
      (:h2 "Users")
-     (when message
-       (:div.alert :style "border:1px solid var(--primary);padding:.5rem .75rem;margin-bottom:1rem"
-        message))
      (:table.data-table
       (:thead (:tr (:th "Username") (:th "Admin") (:th "Active") (:th "Approval") (:th "Created")))
       (:tbody

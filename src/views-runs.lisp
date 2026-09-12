@@ -62,19 +62,17 @@
        :style (format nil "display:flex;align-items:flex-end;gap:2px;height:~Apx;border-bottom:1px solid var(--border);padding:0 .5rem"
                       chart-h)
        (dolist (day day-labels)
-         (let ((day-total (or (gethash (cons day "_") bucket) 0)))
-           (declare (ignore day-total))
-           (:div :style (format nil "display:flex;flex-direction:column-reverse;width:~Apx;align-items:stretch" col-width)
-            :title day
-            (dolist (tspec types)
-              (let* ((type (first tspec))
-                     (color (third tspec))
-                     (n (or (gethash (cons day type) bucket) 0))
-                     (height (if (zerop n) 0
-                                 (max 1 (round (* (/ n max-total) chart-h))))))
-                (when (plusp n)
-                  (:div :style (format nil "background:~A;height:~Apx" color height)
-                   :title (format nil "~A: ~A ~A" day n type)))))))))
+         (:div :style (format nil "display:flex;flex-direction:column-reverse;width:~Apx;align-items:stretch" col-width)
+          :title day
+          (dolist (tspec types)
+            (let* ((type (first tspec))
+                   (color (third tspec))
+                   (n (or (gethash (cons day type) bucket) 0))
+                   (height (if (zerop n) 0
+                               (max 1 (round (* (/ n max-total) chart-h))))))
+              (when (plusp n)
+                (:div :style (format nil "background:~A;height:~Apx" color height)
+                 :title (format nil "~A: ~A ~A" day n type))))))))
       ;; X-axis labels (every 2 days)
       (:div :style (format nil "display:flex;gap:2px;padding:.25rem .5rem;font-family:var(--font-mono);font-size:.7rem;color:var(--text-muted)")
        (loop for day in day-labels for i from 0

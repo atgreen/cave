@@ -53,26 +53,17 @@
       0))
 
 (defun list-issues (repo-id &key (status "open") (limit 50) (offset 0))
-  "List issues with optional status filter."
+  "List issues filtered by status."
   ;; Pinned issues first (pin_order ASC, NULLs last by Postgres default), then
   ;; newest. Matches GitHub's pinned-on-top behavior.
-  (if status
-      (postmodern:query
-       (:limit
-        (:order-by
-         (:select '* :from 'cave-issues
-          :where (:and (:= 'repo-id repo-id) (:= 'status status)))
-         (:asc 'pin-order) (:desc 'created-at))
-        limit offset)
-       :plists)
-      (postmodern:query
-       (:limit
-        (:order-by
-         (:select '* :from 'cave-issues
-          :where (:= 'repo-id repo-id))
-         (:asc 'pin-order) (:desc 'created-at))
-        limit offset)
-       :plists)))
+  (postmodern:query
+   (:limit
+    (:order-by
+     (:select '* :from 'cave-issues
+      :where (:and (:= 'repo-id repo-id) (:= 'status status)))
+     (:asc 'pin-order) (:desc 'created-at))
+    limit offset)
+   :plists))
 
 (defun update-issue (issue-id &key title body status)
   "Update an issue."
@@ -227,21 +218,14 @@ setting priority/high replaces priority/low. Plain labels are unaffected."
          'repo-id (or repo-id :null)
          'kind kind 'subject subject 'link link)))
 
-(defun list-notifications (user-id &key unread-only (limit 50))
+(defun list-notifications (user-id &key (limit 50))
   "List a user's notifications, newest first."
-  (if unread-only
-      (postmodern:query
-       (:limit (:order-by (:select '* :from 'cave-notifications
-                           :where (:and (:= 'user-id user-id) (:= 'is-read nil)))
-                          (:desc 'created-at))
-               limit)
-       :plists)
-      (postmodern:query
-       (:limit (:order-by (:select '* :from 'cave-notifications
-                           :where (:= 'user-id user-id))
-                          (:desc 'created-at))
-               limit)
-       :plists)))
+  (postmodern:query
+   (:limit (:order-by (:select '* :from 'cave-notifications
+                       :where (:= 'user-id user-id))
+                      (:desc 'created-at))
+           limit)
+   :plists))
 
 (defun find-notification (notification-id user-id)
   "Fetch one notification scoped to its owner, or NIL."

@@ -48,15 +48,6 @@
                   (ag-grpc:make-channel host (or port 9444)
                                         :timeout (config-value :chamber-rpc-timeout 10))))))))
 
-(defun close-all-channels ()
-  "Close all cached gRPC channels."
-  (bt2:with-lock-held (*chamber-channels-lock*)
-    (maphash (lambda (k ch)
-               (declare (ignore k))
-               (handler-case (ag-grpc:channel-close ch) (error () nil)))
-             *chamber-channels*)
-    (clrhash *chamber-channels*)))
-
 ;;; --- Node selection ---
 
 (defun refresh-chamber-nodes ()
@@ -134,21 +125,20 @@
     (broadcast-invalidate-cache owner repo-name)
     result))
 
-(defun broadcast-invalidate-cache (owner repo-name &key exclude-node-id)
+(defun broadcast-invalidate-cache (owner repo-name)
   "Send InvalidateCache to all chamber nodes."
   (dolist (node *chamber-nodes*)
-    (unless (and exclude-node-id (= (getf node :id) exclude-node-id))
-      (handler-case
-          (locked-grpc-call
-           (get-node-channel node)
-           "/cave.chamber.Chamber/InvalidateCache"
-           (make-instance 'cave::invalidate-cache-request
-                          :owner owner :repo-name repo-name)
-           :response-type 'cave::invalidate-cache-response)
-        (error (e)
-          (llog:warn "Cache invalidation failed"
-                     :node (getf node :name)
-                     :error (princ-to-string e)))))))
+    (handler-case
+        (locked-grpc-call
+         (get-node-channel node)
+         "/cave.chamber.Chamber/InvalidateCache"
+         (make-instance 'cave::invalidate-cache-request
+                        :owner owner :repo-name repo-name)
+         :response-type 'cave::invalidate-cache-response)
+      (error (e)
+        (llog:warn "Cache invalidation failed"
+                   :node (getf node :name)
+                   :error (princ-to-string e))))))
 
 ;;; --- Health checker ---
 
@@ -217,11 +207,3 @@
                        :repo-id repo-id :error (princ-to-string e)))))
       (llog:info "Assigned existing repos to chamber nodes" :count (length unassigned))))
   (llog:info "Chamber router initialized" :nodes (length *chamber-nodes*)))
-
-(defun stop-chamber-router ()
-  "Stop the health checker and close channels."
-  (when *chamber-health-thread*
-    (handler-case (bt2:destroy-thread *chamber-health-thread*) (error () nil))
-    (setf *chamber-health-thread* nil))
-  (close-all-channels)
-  (setf *chamber-nodes* nil))

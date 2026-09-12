@@ -29,10 +29,6 @@
     (setf *db-connected* nil)
     (llog:info "Disconnected from database")))
 
-(defun db-query (sql &rest params)
-  "Execute a SQL query with parameters. Returns list of rows as plists."
-  (postmodern:query (apply #'format nil sql params) :plists))
-
 ;;; --- Migrations ---
 
 (defparameter *migrations*

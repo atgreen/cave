@@ -11,6 +11,8 @@ array-utils, ghcr.io/ocicl/array-utils@sha256:a74a7050591fc003ec9c35f1de8f41a5c8
 array-utils-test, ghcr.io/ocicl/array-utils@sha256:a74a7050591fc003ec9c35f1de8f41a5c8ac1a6157ced767ed6e5a73c2596cbf, array-utils-20260218-16e108a/array-utils-test.asd
 assoc-utils, ghcr.io/ocicl/assoc-utils@sha256:2518d63b253803d35c0c186a4a7801476efc678045c3027252b2e4bfdd4a324b, assoc-utils-20241010-b14ab68/assoc-utils.asd
 assoc-utils-test, ghcr.io/ocicl/assoc-utils@sha256:2518d63b253803d35c0c186a4a7801476efc678045c3027252b2e4bfdd4a324b, assoc-utils-20241010-b14ab68/assoc-utils-test.asd
+atomics, ghcr.io/ocicl/atomics@sha256:da49f4ab0778982770f155b7896bb6e2b6652c89ff1e3ef81ef31832abf150b8, atomics-20260830-1caed1a/atomics.asd
+atomics-test, ghcr.io/ocicl/atomics@sha256:da49f4ab0778982770f155b7896bb6e2b6652c89ff1e3ef81ef31832abf150b8, atomics-20260830-1caed1a/atomics-test.asd
 autoload, ghcr.io/ocicl/mgl-pax-bootstrap@sha256:1c15644701ad5b8e441b2724c265c995437052beb52322c447816c3cc17c564a, mgl-pax-20260313-f7f9414/autoload/autoload.asd
 babel, ghcr.io/ocicl/babel@sha256:9d9fcde71acc2b5c39572de4f11756a08c1d8801caa86c581b85dabaa35928b3, babel-20250905-4eaf3f2/babel.asd
 babel-streams, ghcr.io/ocicl/babel@sha256:9d9fcde71acc2b5c39572de4f11756a08c1d8801caa86c581b85dabaa35928b3, babel-20250905-4eaf3f2/babel-streams.asd
@@ -33,6 +35,7 @@ cl-base64, ghcr.io/ocicl/cl-base64@sha256:702412dbc1ed825e275fb23e22c29527eb786b
 cl-base64-tests, ghcr.io/ocicl/cl-base64@sha256:702412dbc1ed825e275fb23e22c29527eb786bf644e47c7621bf0dbb34e17c7e, cl-base64-20240503-80496b7/cl-base64-tests.asd
 cl-bcrypt, ghcr.io/ocicl/cl-bcrypt@sha256:db5ce414ac3d0933152fcd069a906000a26c96a7a4ff46a3ab7efe2dbf001dac, cl-bcrypt-20230809-1d4e023/cl-bcrypt.asd
 cl-bcrypt.test, ghcr.io/ocicl/cl-bcrypt@sha256:db5ce414ac3d0933152fcd069a906000a26c96a7a4ff46a3ab7efe2dbf001dac, cl-bcrypt-20230809-1d4e023/cl-bcrypt.test.asd
+cl-cancel, ghcr.io/ocicl/cl-cancel@sha256:b6e6387eed5027d5becb5fa18b370c1c3a755daf26bca037007018a611bcd353, cl-cancel-20260206-bec34fb/cl-cancel.asd
 cl-commonmark, ghcr.io/ocicl/cl-commonmark@sha256:d9fac9deb32e5e6309cd46793d97c4a8ba2820898789b8ef8f8cbffd00b49ba4, cl-commonmark-20260613-ee5144b/cl-commonmark.asd
 cl-cookie, ghcr.io/ocicl/cl-cookie@sha256:2c3efe5b8518a09dcca46c2180593e75c02a0c8b45583a7549b916a2f2fb023d, cl-cookie-20260406-355f9c1/cl-cookie.asd
 cl-cookie-test, ghcr.io/ocicl/cl-cookie@sha256:2c3efe5b8518a09dcca46c2180593e75c02a0c8b45583a7549b916a2f2fb023d, cl-cookie-20260406-355f9c1/cl-cookie-test.asd
@@ -62,6 +65,8 @@ cl-syntax-fare-quasiquote, ghcr.io/ocicl/cl-syntax@sha256:5e2dfa6f354429f2552510
 cl-syntax-interpol, ghcr.io/ocicl/cl-syntax@sha256:5e2dfa6f354429f2552510032fe7994011d78be0c96ce434e2b88e6b9348a380, cl-syntax-20260203-9bbb6ef/cl-syntax-interpol.asd
 cl-syntax-markup, ghcr.io/ocicl/cl-syntax@sha256:5e2dfa6f354429f2552510032fe7994011d78be0c96ce434e2b88e6b9348a380, cl-syntax-20260203-9bbb6ef/cl-syntax-markup.asd
 cl-utilities, ghcr.io/ocicl/cl-utilities@sha256:e5e0676a4e0627332a0fe64d56ed4f1890f0466d715a11e8d95561b4c2baa38f, cl-utilities-20240503-6b4de39/cl-utilities.asd
+cl_plus_ssl, ghcr.io/ocicl/cl_plus_ssl@sha256:d50fbbba38827e835eec2415744e0fb05a2a0bf4d44940cdc23922f15036efe5, cl-plus-ssl-20251220-499b2f5/cl+ssl.asd
+cl_plus_ssl.test, ghcr.io/ocicl/cl_plus_ssl@sha256:d50fbbba38827e835eec2415744e0fb05a2a0bf4d44940cdc23922f15036efe5, cl-plus-ssl-20251220-499b2f5/cl+ssl.test.asd
 clingon, ghcr.io/ocicl/clingon@sha256:519c73567f308b0eac75a4a4ba468a8b433184aa344eac2b79b8ab9f44b9db3c, clingon-20260429-94d4e2f/clingon.asd
 clingon.demo, ghcr.io/ocicl/clingon@sha256:519c73567f308b0eac75a4a4ba468a8b433184aa344eac2b79b8ab9f44b9db3c, clingon-20260429-94d4e2f/clingon.demo.asd
 clingon.intro, ghcr.io/ocicl/clingon@sha256:519c73567f308b0eac75a4a4ba468a8b433184aa344eac2b79b8ab9f44b9db3c, clingon-20260429-94d4e2f/clingon.intro.asd
@@ -113,6 +118,7 @@ gettext-tests, ghcr.io/ocicl/gettext@sha256:ff132350df89f5fb7311acf2633480d5ccf7
 global-vars, ghcr.io/ocicl/global-vars@sha256:d197e871c9c9abc4bf31b1186f5fd28f0ca848ebe2e9dddf2d82ecee01dbdc65, global-vars-20240503-c749f32/global-vars.asd
 global-vars-test, ghcr.io/ocicl/global-vars@sha256:d197e871c9c9abc4bf31b1186f5fd28f0ca848ebe2e9dddf2d82ecee01dbdc65, global-vars-20240503-c749f32/global-vars-test.asd
 hunchentoot, ghcr.io/ocicl/hunchentoot@sha256:1dbccc1f9770d3d8917ef87d71720b4ec7f2d6bebf24a3072afca478b00b4427, hunchentoot-1.3.1/hunchentoot.asd
+idna, ghcr.io/ocicl/idna@sha256:bcdbe9d13fdfa14870c3e23e3fce0f89700c48479c3fa3aa0e91eb533beea2cf, idna-20260908-a9ca49f/idna.asd
 ieee-floats, ghcr.io/ocicl/ieee-floats@sha256:dcc1ef35f12ab6c611839a64338dc55a1c8e9b211274ffa8cbfd95d15b55c766, ieee-floats-20240503-9566ce8/ieee-floats.asd
 in-nomine, ghcr.io/ocicl/in-nomine@sha256:deec864294e9c9631e972bbf0c5a1452af17568dbe4920c6fb329861583ae252, in-nomine-20250908-24bb48d/in-nomine.asd
 inferior-shell, ghcr.io/ocicl/inferior-shell@sha256:7e0f0ddd1bf490f3caabc421acfd184c57759d8623918f0dadce54526e76a52d, inferior-shell-20240503-1edd2e4/inferior-shell.asd
@@ -161,6 +167,7 @@ plump-dom, ghcr.io/ocicl/plump@sha256:b1cc910915346bb6d7606ae37f1cb6dad3599efa9a
 plump-lexer, ghcr.io/ocicl/plump@sha256:b1cc910915346bb6d7606ae37f1cb6dad3599efa9a6bd2f926d96c9d5c34cbc7, plump-20260417-45fb7ff/plump-lexer.asd
 plump-parser, ghcr.io/ocicl/plump@sha256:b1cc910915346bb6d7606ae37f1cb6dad3599efa9a6bd2f926d96c9d5c34cbc7, plump-20260417-45fb7ff/plump-parser.asd
 postmodern, ghcr.io/ocicl/postmodern@sha256:1575078171b7d86645e492318b5917a578371d1125786f4f43101169e4857cdd, postmodern-1.33.11/postmodern.asd
+precise-time, ghcr.io/ocicl/precise-time@sha256:0fa8039008f0635013d25c14d50c5743c64d6a1ef64bd0e62d1785a4b9d3a873, precise-time-20260218-93ea6ae/precise-time.asd
 proc-parse, ghcr.io/ocicl/proc-parse@sha256:0880f9acb35eb9efbe1f77a981e36e84e8f29a22b14f680c7686eb381fa87bd6, proc-parse-20240503-3afe2b7/proc-parse.asd
 proc-parse-test, ghcr.io/ocicl/proc-parse@sha256:0880f9acb35eb9efbe1f77a981e36e84e8f29a22b14f680c7686eb381fa87bd6, proc-parse-20240503-3afe2b7/proc-parse-test.asd
 pure-tls, ghcr.io/ocicl/pure-tls@sha256:42bc087ee7ea43e0002ddeeac81fc8f136172e5d778d4a67ec7fa2f7d92dacd9, pure-tls-20260622-baaef57/pure-tls.asd
