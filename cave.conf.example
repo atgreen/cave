@@ -21,4 +21,7 @@
  :smtp-from nil
  ;; Public URL (used in clone URLs and links)
  :base-url "http://localhost:8080"
+ ;; Usernames granted cave-admin during `usher-migrate-users`, in addition to
+ ;; accounts already marked is_admin — e.g. :migrate-force-admins ("alice")
+ :migrate-force-admins nil
  :log-level :info)

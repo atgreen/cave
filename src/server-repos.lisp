@@ -21,7 +21,7 @@
                            (format nil "~A/~A/~A/raw/~A?path="
                                    (config-value :base-url "http://localhost:8080")
                                    owner repo-name
-                                   (or ref "HEAD"))))
+                                   (hunchentoot:url-encode (or ref "HEAD")))))
            ;; Cheap pre-check: lookup the README's blob sha via get-blob-info,
            ;; then consult the rendered-HTML cache before we ever read or render.
            (readme-info (when readme-entry

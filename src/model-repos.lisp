@@ -173,7 +173,9 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
   "Public repos ranked by page views over the last DAYS — Cave's trending signal."
   (postmodern:query
    (format nil "SELECT r.*, COALESCE(o.name, u.username) AS owner_name,
-                       COUNT(pv.id) AS views
+                       COUNT(pv.id) AS views,
+                       EXISTS(SELECT 1 FROM cave_repo_mirrors m
+                               WHERE m.repo_id = r.id AND m.direction = 'pull') AS is_mirror
                 FROM cave_page_views pv
                 JOIN cave_repos r ON r.id = pv.repo_id
                 LEFT JOIN cave_orgs o ON o.id = r.org_id
