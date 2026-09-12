@@ -289,7 +289,7 @@
                                       :head-commit head-commit)))
         ;; Snapshot round 1 for interdiff.
         (when head-commit
-          (record-changeset-version (getf pr :id) 1 head-commit
+          (record-pull-request-version (getf pr :id) 1 head-commit
                                     (git-merge-base disk-path target head-commit)))
         ;; Schedule automations
         (schedule-automations (getf repo :id) "changeset_opened"
@@ -336,8 +336,6 @@
              (conflict-files (getf (find :conflicts eligibility
                                          :key (lambda (r) (getf r :kind)))
                                    :conflict-files))
-             (stack (find-stack-by-id (getf pr :stack-id)))
-             (stack-items (when stack (list-stack-pull-requests (getf stack :id))))
              ;; Diff
              (source (getf pr :source-branch))
              (target (getf pr :target-branch))
@@ -370,7 +368,7 @@
                              (or (eql (getf pr :author-id) *current-user-id*)
                                  (current-user-repo-role repo))))
              (code-owners (ignore-errors (pr-code-owners owner repo-name pr)))
-             (versions (list-changeset-versions (getf pr :id)))
+             (versions (list-pull-request-versions (getf pr :id)))
              (comments-json (if comment-hts
                                 (com.inuoe.jzon:stringify comment-hts)
                                 "[]")))
@@ -379,7 +377,6 @@
                          :author author :reviews reviews
                          :eligibility eligibility :can-merge can-merge
                          :can-override can-override :conflict-files conflict-files
-                         :stack stack :stack-items stack-items
                          :diff-raw diff-raw :source-missing source-missing
                          :diff-comments-json comments-json
                          :comment-action (format nil "/~A/~A/pulls/~A/diff-comment"
@@ -394,9 +391,9 @@
   (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((num (parse-integer number :junk-allowed t))
            (pr (when num (find-pull-request (getf repo :id) num)))
-           (vf (and pr from (find-changeset-version (getf pr :id)
+           (vf (and pr from (find-pull-request-version (getf pr :id)
                                                     (parse-integer from :junk-allowed t))))
-           (vt (and pr to (find-changeset-version (getf pr :id)
+           (vt (and pr to (find-pull-request-version (getf pr :id)
                                                   (parse-integer to :junk-allowed t)))))
       (unless (and pr vf vt) (return-from pull-request-interdiff (not-found)))
       (let* ((disk (repo-disk-path owner repo-name))
@@ -458,7 +455,7 @@
             (side (or (hunchentoot:post-parameter "side") "new"))
             (body (hunchentoot:post-parameter "body")))
         (when (and file-path line-number body (not (uiop:emptyp body)))
-          (create-diff-comment :changeset-id (getf pr :id)
+          (create-diff-comment :pr-id (getf pr :id)
                                :author-id *current-user-id*
                                :file-path file-path
                                :line-number line-number
@@ -481,7 +478,7 @@
                (body (hunchentoot:post-parameter "body"))
                (concern-text (hunchentoot:post-parameter "concern_text"))
                (review (create-review
-                        :changeset-id (getf pr :id)
+                        :pr-id (getf pr :id)
                         :reviewer-id *current-user-id*
                         :state state
                         :body (unless (uiop:emptyp body) body)
@@ -489,7 +486,7 @@
           (when (and (equal state "approve_with_concerns")
                      (not (uiop:emptyp concern-text)))
             (create-concern :review-id (getf review :id)
-                            :changeset-id (getf pr :id)
+                            :pr-id (getf pr :id)
                             :author-id *current-user-id*
                             :body concern-text))
           (log-event "review.submitted"
@@ -515,6 +512,7 @@
           (when (or (= (getf concern :author-id) *current-user-id*)
                     (equal role "admin"))
             (resolve-concern cid *current-user-id*))))
+      ;; The concern row's key mirrors its DB column (changeset_id).
       (let ((pr (when concern (find-pull-request-by-id (getf concern :changeset-id)))))
         (hunchentoot:redirect
          (if pr

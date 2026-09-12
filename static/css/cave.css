@@ -522,24 +522,6 @@ section { margin-bottom: var(--sp-8); }
 .rule-pass { color: var(--green-bright); }
 .rule-fail { color: var(--red); }
 
-/* --- Stack --- */
-.stack-list { padding-left: 0; counter-reset: stack; list-style: none; }
-.stack-list li {
-  padding: var(--sp-2) var(--sp-3);
-  border-left: 2px solid var(--border-subtle);
-  margin-bottom: 1px;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  background: var(--surface);
-  font-family: var(--font-mono);
-  font-size: .85rem;
-}
-.stack-current {
-  border-left-color: var(--accent);
-  background: var(--accent-bg);
-}
-
 /* --- Footer --- */
 .site-footer {
   margin-top: var(--sp-12);

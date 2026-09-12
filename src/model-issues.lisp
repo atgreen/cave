@@ -44,7 +44,7 @@
        repo-id :single)
       0))
 
-(defun count-open-changesets (repo-id)
+(defun count-open-pull-requests (repo-id)
   "Number of open (not merged, not closed) pull requests in REPO-ID."
   (or (postmodern:query
        "SELECT count(*) FROM cave_changesets
@@ -364,11 +364,11 @@ mean zero. Used to show the per-row comment count on the issues list."
 
 ;;; ========================== DIFF COMMENTS ==========================
 
-(defun create-diff-comment (&key changeset-id author-id file-path line-number side body)
+(defun create-diff-comment (&key pr-id author-id file-path line-number side body)
   "Create an inline diff comment. Returns the comment plist."
   (postmodern:query
    (:insert-into 'cave-diff-comments
-    :set 'changeset-id changeset-id
+    :set 'changeset-id pr-id
          'author-id author-id
          'file-path file-path
          'line-number line-number
@@ -377,14 +377,14 @@ mean zero. Used to show the per-row comment count on the issues list."
     :returning '*)
    :plist))
 
-(defun list-diff-comments (changeset-id)
+(defun list-diff-comments (pr-id)
   "List all inline diff comments for a PR, with author usernames."
   (postmodern:query
    (:order-by
     (:select 'cave-diff-comments.* 'cave-users.username
      :from 'cave-diff-comments
      :inner-join 'cave-users :on (:= 'cave-diff-comments.author-id 'cave-users.id)
-     :where (:= 'cave-diff-comments.changeset-id changeset-id))
+     :where (:= 'cave-diff-comments.changeset-id pr-id))
     'cave-diff-comments.file-path
     'cave-diff-comments.line-number
     'cave-diff-comments.created-at)
@@ -392,8 +392,7 @@ mean zero. Used to show the per-row comment count on the issues list."
 
 ;;; ========================== PULL REQUESTS ==========================
 
-(defun create-pull-request (&key repo-id author-id source-branch target-branch head-commit
-                               stack-id stack-order)
+(defun create-pull-request (&key repo-id author-id source-branch target-branch head-commit)
   "Create a new pull request."
   (let ((number (next-repo-number repo-id)))
     (postmodern:query
@@ -404,8 +403,6 @@ mean zero. Used to show the per-row comment count on the issues list."
            'source-branch source-branch
            'target-branch target-branch
            'head-commit head-commit
-           'stack-id (or stack-id :null)
-           'stack-order (or stack-order :null)
       :returning '*)
      :plist)))
 
@@ -416,10 +413,10 @@ mean zero. Used to show the per-row comment count on the issues list."
     :where (:and (:= 'repo-id repo-id) (:= 'number number)))
    :plist))
 
-(defun find-pull-request-by-id (changeset-id)
+(defun find-pull-request-by-id (pr-id)
   "Find a pull request by ID."
   (postmodern:query
-   (:select '* :from 'cave-changesets :where (:= 'id changeset-id))
+   (:select '* :from 'cave-changesets :where (:= 'id pr-id))
    :plist))
 
 (defun find-pull-request-by-branch (repo-id source-branch)
@@ -469,34 +466,34 @@ mean zero. Used to show the per-row comment count on the issues list."
               limit offset)
       :plists))))
 
-(defun update-pull-request-head (changeset-id head-commit)
+(defun update-pull-request-head (pr-id head-commit)
   "Update the head commit and bump version."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'head-commit head-commit
          'version (:+ 'version 1)
          'updated-at (:now)
-    :where (:= 'id changeset-id))))
+    :where (:= 'id pr-id))))
 
-(defun record-changeset-version (changeset-id version head-commit base-commit)
+(defun record-pull-request-version (pr-id version head-commit base-commit)
   "Snapshot a PR round's commit range (idempotent on changeset+version)."
   (postmodern:execute
    "INSERT INTO cave_changeset_versions (changeset_id, version, head_commit, base_commit)
     VALUES ($1, $2, $3, $4) ON CONFLICT (changeset_id, version) DO NOTHING"
-   changeset-id version head-commit (or base-commit :null)))
+   pr-id version head-commit (or base-commit :null)))
 
-(defun list-changeset-versions (changeset-id)
+(defun list-pull-request-versions (pr-id)
   "All recorded rounds for a PR, newest version first."
   (postmodern:query
    (:order-by (:select '* :from 'cave-changeset-versions
-               :where (:= 'changeset-id changeset-id))
+               :where (:= 'changeset-id pr-id))
               (:desc 'version))
    :plists))
 
-(defun find-changeset-version (changeset-id version)
+(defun find-pull-request-version (pr-id version)
   (postmodern:query
    (:select '* :from 'cave-changeset-versions
-    :where (:and (:= 'changeset-id changeset-id) (:= 'version version)))
+    :where (:and (:= 'changeset-id pr-id) (:= 'version version)))
    :plist))
 
 ;;; ========================== CI SECRETS ==============================
@@ -657,44 +654,44 @@ by repo secrets. Returns an alist (name . value)."
       LEFT JOIN cave_users u ON u.id = r.owner_id"
    :plists))
 
-(defun close-pull-request (changeset-id)
+(defun close-pull-request (pr-id)
   "Mark a pull request as closed (without merging)."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'is-closed t 'closed-at (:now) 'updated-at (:now)
-    :where (:= 'id changeset-id))))
+    :where (:= 'id pr-id))))
 
-(defun reopen-pull-request (changeset-id)
+(defun reopen-pull-request (pr-id)
   "Reopen a previously-closed (un-merged) pull request."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'is-closed nil 'closed-at :null 'updated-at (:now)
-    :where (:and (:= 'id changeset-id) (:= 'is-merged nil)))))
+    :where (:and (:= 'id pr-id) (:= 'is-merged nil)))))
 
-(defun merge-pull-request (changeset-id)
+(defun merge-pull-request (pr-id)
   "Mark a pull request as merged."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'is-merged t 'merged-at (:now) 'updated-at (:now)
-    :where (:= 'id changeset-id))))
+    :where (:= 'id pr-id))))
 
-(defun set-pull-request-draft (changeset-id draft)
+(defun set-pull-request-draft (pr-id draft)
   "Mark a PR draft (work-in-progress) or ready. Clears auto-merge when drafting."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'is-draft (if draft t nil)
          'auto-merge-strategy (if draft :null 'auto-merge-strategy)
          'updated-at (:now)
-    :where (:= 'id changeset-id))))
+    :where (:= 'id pr-id))))
 
-(defun set-pull-request-auto-merge (changeset-id strategy user-id)
+(defun set-pull-request-auto-merge (pr-id strategy user-id)
   "Arm (STRATEGY non-nil) or disarm (NIL) auto-merge for a PR."
   (postmodern:execute
    (:update 'cave-changesets
     :set 'auto-merge-strategy (or strategy :null)
          'auto-merge-by (if strategy user-id :null)
          'updated-at (:now)
-    :where (:= 'id changeset-id))))
+    :where (:= 'id pr-id))))
 
 (defun pull-requests-armed-for-head (repo-id commit-sha)
   "Open, auto-merge-armed PRs whose head is COMMIT-SHA (for status-driven auto-merge)."
@@ -709,28 +706,13 @@ by repo secrets. Returns an alist (name . value)."
 
 ;;; ========================== STACKS ==========================
 
-(defun find-stack-by-id (stack-id)
-  "Find a stack by ID."
-  (when stack-id
-    (postmodern:query
-     (:select '* :from 'cave-stacks :where (:= 'id stack-id))
-     :plist)))
-
-(defun list-stack-pull-requests (stack-id)
-  "List all pull requests in a stack, ordered by stack_order."
-  (postmodern:query
-   (:order-by
-    (:select '* :from 'cave-changesets :where (:= 'stack-id stack-id))
-    'stack-order)
-   :plists))
-
 ;;; ========================== REVIEWS ==========================
 
-(defun create-review (&key changeset-id reviewer-id state body changeset-version)
+(defun create-review (&key pr-id reviewer-id state body changeset-version)
   "Create a review."
   (postmodern:query
    (:insert-into 'cave-reviews
-    :set 'changeset-id changeset-id
+    :set 'changeset-id pr-id
          'reviewer-id reviewer-id
          'state state
          'body (or body :null)
@@ -738,14 +720,14 @@ by repo secrets. Returns an alist (name . value)."
     :returning '*)
    :plist))
 
-(defun list-reviews (changeset-id)
+(defun list-reviews (pr-id)
   "List all reviews for a changeset, newest first."
   (postmodern:query
    (:order-by
     (:select 'cave-reviews.* (:as 'cave-users.username 'reviewer-username) (:as 'cave-users.email 'reviewer-email)
      :from 'cave-reviews
      :inner-join 'cave-users :on (:= 'cave-reviews.reviewer-id 'cave-users.id)
-     :where (:= 'cave-reviews.changeset-id changeset-id))
+     :where (:= 'cave-reviews.changeset-id pr-id))
     (:desc 'cave-reviews.created-at))
    :plists))
 
@@ -755,22 +737,22 @@ by repo secrets. Returns an alist (name . value)."
 
 ;;; ========================== CONCERNS ==========================
 
-(defun create-concern (&key review-id changeset-id author-id body)
+(defun create-concern (&key review-id pr-id author-id body)
   "Create a concern."
   (postmodern:query
    (:insert-into 'cave-concerns
     :set 'review-id review-id
-         'changeset-id changeset-id
+         'changeset-id pr-id
          'author-id author-id
          'body body
     :returning '*)
    :plist))
 
-(defun list-concerns (changeset-id)
+(defun list-concerns (pr-id)
   "List all concerns for a changeset."
   (postmodern:query
    (:order-by
-    (:select '* :from 'cave-concerns :where (:= 'changeset-id changeset-id))
+    (:select '* :from 'cave-concerns :where (:= 'changeset-id pr-id))
     'created-at)
    :plists))
 
@@ -787,11 +769,11 @@ by repo secrets. Returns an alist (name . value)."
    (:select '* :from 'cave-concerns :where (:= 'id concern-id))
    :plist))
 
-(defun count-open-concerns (changeset-id)
+(defun count-open-concerns (pr-id)
   "Count open concerns for a changeset."
   (or (postmodern:query
        (:select (:count '*) :from 'cave-concerns
-        :where (:and (:= 'changeset-id changeset-id) (:= 'status "open")))
+        :where (:and (:= 'changeset-id pr-id) (:= 'status "open")))
        :single)
       0))
 

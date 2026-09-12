@@ -567,7 +567,7 @@ function caveShowCommentForm(td) {
 existing-comments JSON array, ~A = the JSON-quoted POST action URL.")
 
 (defun view-pull-request (&key owner-name repo pr author reviews eligibility
-                             can-merge can-override conflict-files stack stack-items diff-raw
+                             can-merge can-override conflict-files diff-raw
                              diff-comments-json comment-action
                              checks checks-rollup source-missing can-close code-owners
                              versions)
@@ -645,21 +645,6 @@ existing-comments JSON array, ~A = the JSON-quoted POST action URL.")
          :style "margin:var(--sp-3) 0;padding:.6rem .8rem;border:1px solid var(--red,#b04a4a);border-radius:var(--radius);background:var(--red-bg,rgba(176,74,74,.1))"
          (format nil "Source branch ~A no longer exists — its commits were removed (most likely pruned by a mirror sync). This PR has nothing to merge and should be closed."
                  (getf pr :source-branch))))
-
-      ;; Stack
-      (when stack
-        (:section
-         (:h2 (format nil "Stack: ~A" (getf stack :name)))
-         (:ol.stack-list
-          (dolist (item stack-items)
-            (:li :class (when (= (getf item :number) cs-num) "stack-current")
-             (:a :href (pr-url owner-name repo-name
-                                (getf item :number))
-              (format nil "#~A ~A" (getf item :number) (getf item :source-branch)))
-             (:span.badge
-              (cond ((getf item :is-merged) "merged")
-                    ((getf item :is-closed) "closed")
-                    (t "open"))))))))
 
       ;; Diff with inline comments
       (when diff-raw

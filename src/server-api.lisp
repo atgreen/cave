@@ -286,7 +286,7 @@
         (unless (member state '("approve" "approve_with_concerns" "request_changes" "comment")
                         :test #'equal)
           (return-from api-submit-review (json-error "invalid state")))
-        (let ((review (create-review :changeset-id (getf pr :id)
+        (let ((review (create-review :pr-id (getf pr :id)
                                      :reviewer-id *current-user-id*
                                      :state state
                                      :body (if (eq body 'null) nil body)

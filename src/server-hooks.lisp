@@ -306,7 +306,7 @@ number of commits re-verified."
                   ;; Snapshot the new round for interdiff.
                   (let ((fresh (find-pull-request-by-id (getf open-pr :id))))
                     (when fresh
-                      (record-changeset-version
+                      (record-pull-request-version
                        (getf fresh :id) (getf fresh :version) new
                        (git-merge-base disk-path (getf fresh :target-branch) new)))))))))
         ;; Verify any signed commits in the pushed range, cache results
