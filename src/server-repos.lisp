@@ -663,3 +663,114 @@
                    :unique-visitors (repo-unique-visitors-by-day repo-id :days days)
                    :referrers (repo-top-referrers repo-id :days days :limit 10))))))
 
+
+;;; ========================== BADGES & FEEDS ==========================
+
+(defun %xml-escape (s)
+  (with-output-to-string (out)
+    (loop for ch across (or s "")
+          do (case ch
+               (#\& (write-string "&amp;" out))
+               (#\< (write-string "&lt;" out))
+               (#\> (write-string "&gt;" out))
+               (#\" (write-string "&quot;" out))
+               (t (write-char ch out))))))
+
+(defun %rfc3339 (universal)
+  "RFC3339 UTC string for a universal-time, or NIL."
+  (when (integerp universal)
+    (multiple-value-bind (s mi h d mo y) (decode-universal-time universal 0)
+      (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ" y mo d h mi s))))
+
+(defun %badge-svg (label status)
+  "Shields-style flat SVG badge: LABEL on gray, STATUS word on a status color."
+  (let* ((color (cond ((equal status "success") "#3fb950")
+                      ((equal status "failure") "#e05d44")
+                      ((member status '("running" "queued") :test #'equal) "#dfb317")
+                      (t "#9f9f9f")))
+         (msg (or status "no runs"))
+         (lw (+ 12 (* 7 (length label))))
+         (rw (+ 12 (* 7 (length msg))))
+         (w (+ lw rw)))
+    (format nil "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"~D\" height=\"20\" role=\"img\" aria-label=\"~A: ~A\"><rect rx=\"3\" width=\"~D\" height=\"20\" fill=\"#555\"/><rect rx=\"3\" x=\"~D\" width=\"~D\" height=\"20\" fill=\"~A\"/><rect x=\"~D\" width=\"3\" height=\"20\" fill=\"~A\"/><g fill=\"#fff\" text-anchor=\"middle\" font-family=\"Verdana,DejaVu Sans,sans-serif\" font-size=\"11\"><text x=\"~D\" y=\"14\">~A</text><text x=\"~D\" y=\"14\">~A</text></g></svg>"
+            w (%xml-escape label) (%xml-escape msg)
+            w lw rw color lw color
+            (floor lw 2) (%xml-escape label)
+            (+ lw (floor rw 2)) (%xml-escape msg))))
+
+(defun %param-or-nil (name)
+  (let ((v (hunchentoot:get-parameter name)))
+    (when (and v (plusp (length v))) v)))
+
+(easy-routes:defroute repo-badge ("/:owner/:repo-name/badge.svg" :method :get) ()
+  (with-visible-repo (repo owner repo-name #'not-found)
+    (let* ((wf (%param-or-nil "workflow"))
+           (ref (%param-or-nil "ref"))
+           (run (find-if (lambda (r)
+                           (and (or (not wf) (equal (getf r :workflow-name) wf))
+                                (or (not ref) (equal (getf r :ref) ref))))
+                         (list-workflow-runs (getf repo :id) :limit 100))))
+      (setf (hunchentoot:content-type*) "image/svg+xml")
+      (setf (hunchentoot:header-out :cache-control) "no-cache, max-age=60")
+      (%badge-svg (or wf "build") (when run (getf run :status))))))
+
+(defun %atom-feed (&key title link entries)
+  "Minimal Atom feed. ENTRIES: plists (:title :link :updated :content)."
+  (with-output-to-string (out)
+    (format out "<?xml version=\"1.0\" encoding=\"utf-8\"?>~%~
+                 <feed xmlns=\"http://www.w3.org/2005/Atom\">~%~
+                 <title>~A</title><link href=\"~A\"/><id>~A</id><updated>~A</updated>~%"
+            (%xml-escape title) (%xml-escape link) (%xml-escape link)
+            (or (getf (first entries) :updated) (%rfc3339 (get-universal-time))))
+    (dolist (e entries)
+      (format out "<entry><title>~A</title><link href=\"~A\"/><id>~A</id>~
+                   <updated>~A</updated>~@[<content type=\"text\">~A</content>~]</entry>~%"
+              (%xml-escape (getf e :title)) (%xml-escape (getf e :link))
+              (%xml-escape (getf e :link))
+              (or (getf e :updated) (%rfc3339 (get-universal-time)))
+              (let ((c (getf e :content))) (when c (%xml-escape c)))))
+    (format out "</feed>~%")))
+
+(defun %atom-response (feed)
+  (setf (hunchentoot:content-type*) "application/atom+xml; charset=utf-8")
+  feed)
+
+(easy-routes:defroute releases-feed ("/:owner/:repo-name/releases.atom" :method :get) ()
+  (with-visible-repo (repo owner repo-name #'not-found)
+    (let ((base (config-value :base-url "")))
+      (%atom-response
+       (%atom-feed
+        :title (format nil "~A/~A releases" owner repo-name)
+        :link (format nil "~A/~A/~A/releases" base owner repo-name)
+        :entries
+        (loop for r in (list-releases (getf repo :id) :limit 30)
+              unless (getf r :is-draft)
+              collect (list :title (format nil "~A ~A~@[ — ~A~]"
+                                           repo-name (getf r :tag-name)
+                                           (let ((n (getf r :name)))
+                                             (unless (or (eq n :null) (equal n "")) n)))
+                            :link (format nil "~A/~A/~A/releases#~A"
+                                          base owner repo-name (getf r :tag-name))
+                            :updated (%rfc3339 (let ((p (getf r :published-at)))
+                                                 (if (integerp p) p (getf r :created-at))))
+                            :content (let ((b (getf r :body)))
+                                       (unless (eq b :null) b)))))))))
+
+(easy-routes:defroute commits-feed ("/:owner/:repo-name/commits.atom" :method :get) ()
+  (with-visible-repo (repo owner repo-name #'not-found)
+    (let* ((base (config-value :base-url ""))
+           (ref (or (%param-or-nil "ref")
+                    (chamber-get-default-branch owner repo-name) "main"))
+           (commits (chamber-get-log owner repo-name :limit 30 :branch ref)))
+      (%atom-response
+       (%atom-feed
+        :title (format nil "~A/~A commits on ~A" owner repo-name ref)
+        :link (format nil "~A/~A/~A/commits/~A" base owner repo-name ref)
+        :entries
+        (loop for c in commits
+              collect (list :title (getf c :subject)
+                            :link (format nil "~A/~A/~A/commit/~A"
+                                          base owner repo-name (getf c :hash))
+                            :updated (%rfc3339 (or (getf c :time)
+                                                   (parse-git-date (getf c :date))))
+                            :content (getf c :author))))))))
