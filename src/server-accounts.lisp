@@ -617,7 +617,10 @@ leaking the viewer's IP or breaking HTTPS."
   "The rendered profile page for USER; private repos shown only to themselves."
   (let* ((is-self (and *current-user-id* (= *current-user-id* (getf user :id))))
          (repos (list-user-repos (getf user :id) :include-private is-self)))
-    (html-response (view-user-profile :user user :repos repos :is-self is-self))))
+    (html-response (view-user-profile :user user :repos repos :is-self is-self
+                                      :activity (ignore-errors
+                                                 (user-event-counts-by-day
+                                                  (getf user :id)))))))
 
 (defun %org-page-response (org)
   "The rendered org page; private repos shown only to members."

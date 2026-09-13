@@ -70,6 +70,18 @@
                 GROUP BY referer_host ORDER BY count DESC LIMIT $2" days)
    repo-id limit :plists))
 
+(defun user-event-counts-by-day (user-id &key (days 371))
+  "Per-day activity counts for USER-ID over the trailing DAYS days:
+plists (:day \"YYYY-MM-DD\" :count n). Drives the profile heatmap."
+  (postmodern:query
+   (format nil "SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day, ~
+                       COUNT(*)::int AS count ~
+                FROM cave_events ~
+                WHERE user_id = $1 ~
+                  AND created_at >= NOW() - INTERVAL '~D days' ~
+                GROUP BY day ORDER BY day ASC" days)
+   user-id :plists))
+
 (defun repo-event-counts-by-day (repo-id &key (days 14))
   "Return list of plists (:day yyyy-mm-dd :type event-type :count n) over
 the trailing DAYS days for a single repo. Used to render the Pulse chart."

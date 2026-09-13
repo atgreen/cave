@@ -599,13 +599,62 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
 
 ;;; ========================== USER PROFILE ==========================
 
-(defun view-user-profile (&key user repos is-self)
+(defun %day-string (universal)
+  (multiple-value-bind (s mi h d mo y) (decode-universal-time universal 0)
+    (declare (ignore s mi h))
+    (format nil "~4,'0D-~2,'0D-~2,'0D" y mo d)))
+
+(defun render-contribution-heatmap (day-counts)
+  "GitHub-style 53-week activity heatmap SVG. DAY-COUNTS: plists (:day :count).
+Colors derive from the theme's --link via stepped fill-opacity, so every
+theme (light, dark, nord, …) gets a sensible scale."
+  (let ((counts (make-hash-table :test 'equal))
+        (total 0))
+    (dolist (d day-counts)
+      (setf (gethash (getf d :day) counts) (getf d :count))
+      (incf total (getf d :count)))
+    (let* ((now (get-universal-time))
+           (sun-dow (multiple-value-bind (s mi h d mo y dow)
+                        (decode-universal-time now 0)
+                      (declare (ignore s mi h d mo y))
+                      (mod (1+ dow) 7)))   ; CL: 0=Mon … 6=Sun → 0=Sun
+           (start (- now (* 86400 (+ sun-dow (* 52 7)))))
+           (cell 11) (gap 2))
+      (spinneret:with-html
+        (:div :style "overflow-x:auto"
+         (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:.25rem"
+          (format nil "~D contribution~:P in the last year" total))
+         (:raw
+          (with-output-to-string (svg)
+            (format svg "<svg class=\"heatmap\" width=\"~D\" height=\"~D\" aria-label=\"activity heatmap\">"
+                    (* 53 (+ cell gap)) (* 7 (+ cell gap)))
+            (loop for w below 53
+                  do (loop for dow below 7
+                           for time = (+ start (* 86400 (+ (* w 7) dow)))
+                           while (<= time now)
+                           do (let* ((day (%day-string time))
+                                     (n (or (gethash day counts) 0))
+                                     (opacity (cond ((zerop n) nil)
+                                                    ((<= n 2) "0.25")
+                                                    ((<= n 5) "0.5")
+                                                    ((<= n 9) "0.75")
+                                                    (t "1"))))
+                                (format svg "<rect x=\"~D\" y=\"~D\" width=\"~D\" height=\"~D\" rx=\"2\" fill=\"~A\"~@[ fill-opacity=\"~A\"~]><title>~A: ~D event~:[s~;~]</title></rect>"
+                                        (* w (+ cell gap)) (* dow (+ cell gap))
+                                        cell cell
+                                        (if (zerop n) "var(--border)" "var(--link)")
+                                        opacity day n (= n 1)))))
+            (format svg "</svg>"))))))))
+
+(defun view-user-profile (&key user repos is-self activity)
   "Render a user's public profile / repo listing."
   (let ((username (getf user :username)))
     (page (:title (format nil "~A — Cave" username))
       (:h1 username)
       (when is-self
         (:a.btn.btn-primary :href "/-/new-repo" "New repository"))
+      (when activity
+        (render-contribution-heatmap activity))
       (:h2 "Repositories")
       (if repos
           (:ul.repo-list
