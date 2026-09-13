@@ -668,6 +668,26 @@ by repo secrets. Returns an alist (name . value)."
     :set 'is-closed nil 'closed-at :null 'updated-at (:now)
     :where (:and (:= 'id pr-id) (:= 'is-merged nil)))))
 
+;; Per-repo merge claim: one PR merge at a time per repository, so two admins
+;; (or auto-merge racing a manual click) can't interleave git merges on the
+;; same target. In-process is enough — all merges execute in this image.
+(defvar *active-merge-repos* (make-hash-table :test 'eql))
+(defvar *active-merge-repos-lock* (bt2:make-lock :name "active-merges"))
+
+(defun begin-repo-merge (repo-id)
+  "Claim the merge slot for REPO-ID. Returns T if claimed, NIL if one is running."
+  (bt2:with-lock-held (*active-merge-repos-lock*)
+    (unless (gethash repo-id *active-merge-repos*)
+      (setf (gethash repo-id *active-merge-repos*) t))))
+
+(defun end-repo-merge (repo-id)
+  (bt2:with-lock-held (*active-merge-repos-lock*)
+    (remhash repo-id *active-merge-repos*)))
+
+(defun repo-merge-in-progress-p (repo-id)
+  (bt2:with-lock-held (*active-merge-repos-lock*)
+    (gethash repo-id *active-merge-repos*)))
+
 (defun merge-pull-request (pr-id)
   "Mark a pull request as merged."
   (postmodern:execute
@@ -864,6 +884,13 @@ absent check is not a blocker — only checks that exist and fail/pend block."
     ;; (manually or via auto-merge) until marked ready.
     (when (getf pr :is-draft)
       (push (list :description "Pull request is a draft" :pass nil) rules))
+
+    ;; Rule 3: No concurrent merge in flight for this repository. Advisory
+    ;; here; perform-pr-merge enforces it via begin-repo-merge.
+    (when (repo-merge-in-progress-p repo-id)
+      (push (list :description "Another merge is in progress for this repository"
+                  :pass nil)
+            rules))
 
     ;; Rules 2 + 1b share the bare-repo path: the target branch must exist,
     ;; and merging it must not conflict. Conflicts are detected in-memory with

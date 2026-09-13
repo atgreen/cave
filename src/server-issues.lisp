@@ -597,6 +597,14 @@ caller."
 PR merged, auto-delete the source branch if configured, and fire post-merge side
 effects. Returns (values OK MESSAGE). Caller is responsible for permission and
 eligibility checks."
+  (unless (begin-repo-merge (getf repo :id))
+    (return-from perform-pr-merge
+      (values nil "Another merge is in progress for this repository — try again.")))
+  (unwind-protect
+      (%perform-pr-merge owner repo-name pr repo strategy actor-id)
+    (end-repo-merge (getf repo :id))))
+
+(defun %perform-pr-merge (owner repo-name pr repo strategy actor-id)
   (let* ((source (getf pr :source-branch))
          (target (getf pr :target-branch))
          (strategy (cond ((equal strategy "squash") "squash")
