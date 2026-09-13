@@ -18,6 +18,7 @@ distinct color without a stored color column."
 
 (defun view-issues (&key owner-name repo issues current-status
                          labels-by-issue current-label all-labels
+                         assignees-by-issue current-assignee all-assignees
                          comment-counts authors)
   "Render the issues list — a triage surface: status glyph, title, colored
 labels, and a metadata line (number, author, age, comment count)."
@@ -49,6 +50,17 @@ labels, and a metadata line (number, author, age, comment count)."
             :href (format nil "?status=~A&label=~A" (or current-status "open")
                           (hunchentoot:url-encode l))
             l))))
+      ;; Assignee filter bar
+      (when all-assignees
+        (:div :style "margin:.5rem 0;display:flex;gap:.35rem;flex-wrap:wrap;align-items:center"
+         (:span :style "font-size:.8rem;color:var(--text-muted)" "Assignee:")
+         (when current-assignee
+           (:a.btn.btn-sm :href (format nil "?status=~A" (or current-status "open")) "✕ clear"))
+         (dolist (a all-assignees)
+           (:a :class (format nil "btn btn-sm~@[ btn-active~]" (equal a current-assignee))
+            :href (format nil "?status=~A&assignee=~A" (or current-status "open")
+                          (hunchentoot:url-encode a))
+            a))))
       (if issues
           (:ul.issues
            (dolist (iss issues)
@@ -79,6 +91,9 @@ labels, and a metadata line (number, author, age, comment count)."
                  (:div.issue-meta
                   (format nil "#~A" num)
                   (when author (format nil " · opened by ~A" author))
+                  (let ((assignees (and assignees-by-issue (gethash iid assignees-by-issue))))
+                    (when assignees
+                      (format nil " · assigned to ~{~A~^, ~}" assignees)))
                   (when ago (format nil " · ~A" ago))
                   (when (plusp ncomments) (format nil " · 💬 ~A" ncomments))))))))
           (:p.empty "No issues found.")))))

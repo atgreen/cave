@@ -164,6 +164,20 @@ setting priority/high replaces priority/low. Plain labels are unaffected."
     :where (:= 'cave-issue-assignees.issue-id issue-id))
    :plists))
 
+(defun assignees-in-repo (repo-id)
+  "Distinct usernames assigned to any issue in REPO-ID, sorted."
+  (postmodern:query
+   (:order-by
+    (:select 'cave-users.username :distinct
+     :from 'cave-issue-assignees
+     :inner-join 'cave-issues
+     :on (:= 'cave-issue-assignees.issue-id 'cave-issues.id)
+     :inner-join 'cave-users
+     :on (:= 'cave-issue-assignees.user-id 'cave-users.id)
+     :where (:= 'cave-issues.repo-id repo-id))
+    'cave-users.username)
+   :column))
+
 (defun set-issue-assignees (issue-id user-ids)
   "Replace an issue's assignees with USER-IDS (a list of user ids)."
   (postmodern:with-transaction ()

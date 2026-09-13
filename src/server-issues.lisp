@@ -6,14 +6,28 @@
   (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((status (or (hunchentoot:get-parameter "status") "open"))
            (label-filter (hunchentoot:get-parameter "label"))
+           (assignee-filter (hunchentoot:get-parameter "assignee"))
            (issues (list-issues (getf repo :id) :status status))
            (labels-by-issue (let ((h (make-hash-table)))
                               (dolist (i issues)
                                 (setf (gethash (getf i :id) h) (issue-labels (getf i :id))))
                               h))
+           (assignees-by-issue (let ((h (make-hash-table)))
+                                 (dolist (i issues)
+                                   (setf (gethash (getf i :id) h)
+                                         (mapcar (lambda (a) (getf a :username))
+                                                 (issue-assignees (getf i :id)))))
+                                 h))
            (issues (if (and label-filter (plusp (length label-filter)))
                        (remove-if-not
                         (lambda (i) (member label-filter (gethash (getf i :id) labels-by-issue)
+                                            :test #'equal))
+                        issues)
+                       issues))
+           (issues (if (and assignee-filter (plusp (length assignee-filter)))
+                       (remove-if-not
+                        (lambda (i) (member assignee-filter
+                                            (gethash (getf i :id) assignees-by-issue)
                                             :test #'equal))
                         issues)
                        issues)))
@@ -30,6 +44,9 @@
          (view-issues :owner-name owner :repo repo :issues issues :current-status status
                       :labels-by-issue labels-by-issue
                       :current-label label-filter
+                      :assignees-by-issue assignees-by-issue
+                      :current-assignee assignee-filter
+                      :all-assignees (assignees-in-repo (getf repo :id))
                       :comment-counts comment-counts
                       :authors authors
                       :all-labels (labels-in-repo (getf repo :id))))))))
