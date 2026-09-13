@@ -24,6 +24,11 @@
     (when (and repo (getf repo :is-private)) (:span.badge "private"))
     (when (and repo (getf repo :is-mirror)) (:span.badge "mirror"))
     (when (and repo (getf repo :is-archived)) (:span.badge "archived"))
+    ;; Marker for the 't' fuzzy file finder (static/js/filefinder.js): present
+    ;; on every repo page so the shortcut works anywhere in the repo.
+    (:div :id "file-finder-root" :hidden t
+     :data-owner owner-name :data-repo repo-name
+     :data-ref (or ref default-branch "main"))
     (:nav.repo-tabs
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :overview))
       :href (format nil "/~A/~A~A" owner-name repo-name q) "Overview")

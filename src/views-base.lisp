@@ -65,6 +65,9 @@ explicitly chosen another theme."
         (:link :rel "preconnect" :href "https://fonts.gstatic.com" :crossorigin "")
         (:link :rel "stylesheet" :href "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap")
         (:link :rel "stylesheet" :href "/static/css/cave.css")
+        ;; Fuzzy file finder ('t' on repo pages); no-ops on pages without
+        ;; a #file-finder-root marker.
+        (:script :src "/static/js/filefinder.js" :defer t)
         ;; Inject custom theme CSS if active
         (when *current-user*
           (let ((theme-css (user-theme-css *current-user-id*

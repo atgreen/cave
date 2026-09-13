@@ -414,6 +414,27 @@ section { margin-bottom: var(--sp-8); }
 .repo-last-author { color: var(--text-muted); margin-left: auto; white-space: nowrap; }
 .repo-last-time { color: var(--text-muted); white-space: nowrap; font-size: .8rem; }
 
+/* Fuzzy file finder overlay */
+#ff-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 200;
+              display: flex; align-items: flex-start; justify-content: center;
+              padding-top: 12vh; }
+#ff-box { width: min(640px, 92vw); background: var(--surface);
+          border: 1px solid var(--border); border-radius: 8px;
+          box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden; }
+#ff-input { width: 100%; padding: .7rem .9rem; border: none; outline: none;
+            border-bottom: 1px solid var(--border); background: var(--surface);
+            color: var(--text); font-size: 1rem;
+            font-family: var(--font-mono, monospace); }
+#ff-list { list-style: none; margin: 0; padding: .25rem 0; max-height: 50vh;
+           overflow-y: auto; }
+.ff-item { padding: .3rem .9rem; cursor: pointer; white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis;
+           font-family: var(--font-mono, monospace); font-size: .85rem; }
+.ff-item:hover { background: var(--bg); }
+.ff-selected { background: var(--bg); outline: 1px solid var(--border); }
+.ff-dir { color: var(--text-muted); }
+.ff-base { color: var(--text); font-weight: 600; }
+
 /* Beads tab */
 .beads-row { border: 1px solid var(--border); border-radius: 6px; margin: .35rem 0;
              background: var(--surface); }

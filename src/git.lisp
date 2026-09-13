@@ -347,6 +347,16 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
                      entries)))
     (nreverse entries)))
 
+(defun git-list-files (repo-path ref &key (limit 20000))
+  "All file paths under REF (recursive), capped at LIMIT."
+  (multiple-value-bind (output _err code)
+      (git-run repo-path "ls-tree" "-r" "--name-only" ref)
+    (declare (ignore _err))
+    (when (zerop code)
+      (let ((files (remove "" (uiop:split-string output :separator '(#\Newline))
+                           :test #'equal)))
+        (if (> (length files) limit) (subseq files 0 limit) files)))))
+
 (defun git-blame (repo-path ref path)
   "Blame REF:PATH. Returns a list of per-line plists
    (:hash :short-hash :author :time :line-no :content) in file order,

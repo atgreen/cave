@@ -810,3 +810,13 @@ Skips malformed lines and non-issue records (agents, roles, …)."
       (html-response
        (view-beads :owner-name owner :repo repo :issues issues
                    :have-export (and content t))))))
+
+;;; ========================== FILE FINDER ==========================
+
+(easy-routes:defroute repo-filelist ("/:owner/:repo-name/filelist/:ref" :method :get) ()
+  (with-visible-repo (repo owner repo-name #'not-found)
+    (unless (%valid-git-ref-name-p ref) (return-from repo-filelist (not-found)))
+    (let ((files (git-list-files (repo-disk-path owner repo-name) ref)))
+      (setf (hunchentoot:content-type*) "application/json")
+      (setf (hunchentoot:header-out :cache-control) "private, max-age=60")
+      (com.inuoe.jzon:stringify (coerce (or files nil) 'vector)))))
