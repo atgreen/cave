@@ -11,6 +11,7 @@ const runsViews = fs.readFileSync(path.join(root, "src/views-runs.lisp"), "utf8"
 const accountRoutes = fs.readFileSync(path.join(root, "src/server-accounts.lisp"), "utf8");
 const activityModel = fs.readFileSync(path.join(root, "src/model-activity.lisp"), "utf8");
 const repoModel = fs.readFileSync(path.join(root, "src/model-repos.lisp"), "utf8");
+const makefile = fs.readFileSync(path.join(root, "Makefile"), "utf8");
 
 function hexToRgb(hex) {
   return hex.match(/[a-f\d]{2}/gi).map((channel) => parseInt(channel, 16) / 255);
@@ -54,6 +55,16 @@ test("muted text meets WCAG AA in every built-in theme", () => {
     expect(
       contrast(tokens["text-muted"], tokens.bg),
       `${selector} muted text contrast`,
+    ).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+test("Basalt failure text meets WCAG AA on interactive surfaces", () => {
+  const tokens = themeTokens(":root");
+  for (const background of ["surface", "surface-hover"]) {
+    expect(
+      contrast(tokens.red, tokens[background]),
+      `failure text contrast on ${background}`,
     ).toBeGreaterThanOrEqual(4.5);
   }
 });
@@ -114,8 +125,33 @@ test("runner and workflow timestamps are human and machine readable", () => {
   expect(runsViews).toContain("(render-relative-time (getf wr :created-at))");
   expect(runsViews).toContain("(render-relative-time (getf r :created-at))");
   expect(runsViews).toContain('(render-relative-time ls :fallback "never")');
+  expect(runsViews).toContain("(render-relative-time (getf run :created-at))");
   expect(runsViews).not.toMatch(/princ-to-string \(getf (?:wr|r) :created-at\)/);
+  expect(runsViews).not.toContain("(princ-to-string (getf run :created-at))");
   expect(runsViews).not.toContain("(princ-to-string ls)");
+});
+
+test("version-stamped Cave binaries depend on Git HEAD movement", () => {
+  expect(makefile).toMatch(/GIT_HEAD_STATE\s*:?=.*git-path HEAD/);
+  expect(makefile).toMatch(/GIT_HEAD_STATE[\s\S]*git-path logs\/HEAD/);
+  expect(makefile).toMatch(/cave-server:[^\n]*\$\(GIT_HEAD_STATE\)/);
+});
+
+test("workflow recovery requeues work before deleting offline runners", () => {
+  const start = repoModel.indexOf("(defun cleanup-offline-runners");
+  const end = repoModel.indexOf("(defun create-registration-token", start);
+  const cleanup = repoModel.slice(start, end);
+  expect(cleanup.indexOf("Reset workflow jobs")).toBeLessThan(
+    cleanup.indexOf("Delete offline runners"),
+  );
+  expect(cleanup.indexOf("Reset automation runs")).toBeLessThan(
+    cleanup.indexOf("(cleanup-stale-ephemeral-runners)"),
+  );
+  expect(repoModel).toContain("(defun reconcile-running-workflow-runs");
+  expect(repoModel).toContain("SET status='queued', started_at=NULL");
+  expect(repoModel).toContain("j.status IN ('queued','blocked')");
+  expect(repoModel).toContain("j.status IN ('running','assigned')");
+  expect(repoModel).toContain("(reconcile-running-workflow-runs)");
 });
 
 test("run links use the shared link colour token", () => {
@@ -128,7 +164,7 @@ test("workflow runs separate active work and collapse older history", () => {
   expect(runsViews).toContain("(:h3.run-group-title \"Recent\")");
   expect(runsViews).toContain("(:details.run-archive");
   expect(runsViews).toContain("10 (length finished)");
-  expect(styles).toMatch(/\.run-archive\s*>\s*summary\s*\{/);
+  expect(styles).toMatch(/\.run-archive\s*>\s*summary(?:\s*,|\s*\{)/);
 });
 
 test("activity feeds omit Cave's internal Dolt synchronization refs", () => {
@@ -166,6 +202,14 @@ test("dashboard repository rows expose a mobile-friendly content hierarchy", () 
   expect(styles).toMatch(
     /@media\s*\(max-width:\s*720px\)[\s\S]*\.dashboard-repo-list li\s*\{[^}]*display:\s*grid/,
   );
+});
+
+test("dashboard defers excess repositories and activity behind disclosure", () => {
+  expect(baseViews).toContain("(defparameter +dashboard-initial-item-limit+ 8)");
+  expect(baseViews.match(/\(:details\.dashboard-archive/g) || []).toHaveLength(2);
+  expect(baseViews).toContain("more repositories");
+  expect(baseViews).toContain("older activity");
+  expect(styles).toMatch(/\.dashboard-archive\s*>\s*summary\s*\{/);
 });
 
 test("shared chrome exposes compact mobile navigation markup", () => {

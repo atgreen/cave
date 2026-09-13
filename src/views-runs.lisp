@@ -389,7 +389,7 @@
           (:span :style "color:var(--text-muted);font-size:.85rem"
            (getf run :ref)))
         (:span :style "color:var(--text-muted);font-size:.85rem"
-         (princ-to-string (getf run :created-at)))
+         (render-relative-time (getf run :created-at)))
         ;; Re-run a finished run — recovers from a zombie/failed build.
         (when (and *current-user-id*
                    (repo-member-role (getf repo :id) *current-user-id*)

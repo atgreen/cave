@@ -35,8 +35,8 @@
   --green-bright:   #9ab87a;
   --green-bg:       rgba(124, 154, 94, 0.12);
 
-  --red:            #c25450;
-  --red-bg:         rgba(194, 84, 80, 0.10);
+  --red:            #df716d;
+  --red-bg:         rgba(223, 113, 109, 0.10);
 
   --yellow:         #c9a03e;
   --yellow-bg:      rgba(201, 160, 62, 0.10);
@@ -663,8 +663,8 @@ section { margin-bottom: var(--sp-8); }
   font-size: .75rem;
   white-space: nowrap;
 }
-.run-archive { margin-top: var(--sp-3); }
-.run-archive > summary {
+.run-archive, .dashboard-archive { margin-top: var(--sp-3); }
+.run-archive > summary, .dashboard-archive > summary {
   width: max-content;
   padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--border);
@@ -674,7 +674,7 @@ section { margin-bottom: var(--sp-8); }
   font-family: var(--font-mono);
   font-size: .78rem;
 }
-.run-archive[open] > summary { margin-bottom: var(--sp-2); }
+.run-archive[open] > summary, .dashboard-archive[open] > summary { margin-bottom: var(--sp-2); }
 
 /* --- Personal settings --- */
 .settings-layout {

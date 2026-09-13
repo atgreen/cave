@@ -567,6 +567,66 @@ data: featured repositories, recent activity, and instance stats."
        (format nil "~D public repositor~:@P · running Cave ~A"
                (or repo-count (length repos)) +version+)))))
 
+(defparameter +dashboard-initial-item-limit+ 8)
+
+(defun render-dashboard-repo-items (repos username)
+  "Render dashboard repository LI elements for REPOS."
+  (spinneret:with-html
+    (dolist (repo repos)
+      (let ((pushed (or (getf repo :last-pushed-at)
+                        (getf repo :updated-at))))
+        (:li
+         (:div.dashboard-repo-heading
+          (:a :href (repo-url username (getf repo :name))
+           (getf repo :name))
+          (when (getf repo :is-private)
+            (:span.badge "private"))
+          (when (getf repo :is-mirror)
+            (:span.badge "mirror")))
+         (when (getf repo :description)
+           (:span.desc (getf repo :description)))
+         (when (format-relative-time pushed)
+           (:span.repo-meta
+            "Updated " (format-relative-time pushed))))))))
+
+(defun render-dashboard-repositories (repos username)
+  "Render an initial repository set with the remainder behind disclosure."
+  (let* ((initial-count (min +dashboard-initial-item-limit+ (length repos)))
+         (initial (subseq repos 0 initial-count))
+         (remaining (nthcdr initial-count repos)))
+    (spinneret:with-html
+      (:ul.repo-list.dashboard-repo-list
+       (render-dashboard-repo-items initial username))
+      (when remaining
+        (:details.dashboard-archive
+         (:summary (format nil "Show ~D more repositories" (length remaining)))
+         (:ul.repo-list.dashboard-repo-list
+          (render-dashboard-repo-items remaining username)))))))
+
+(defun render-dashboard-event-items (events)
+  "Render dashboard activity LI elements for EVENTS."
+  (spinneret:with-html
+    (dolist (ev events)
+      (:li
+       (render-event ev)
+       (let ((rel (format-relative-time (getf ev :created-at))))
+         (when rel
+           (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:auto" rel)))))))
+
+(defun render-dashboard-events (events)
+  "Render recent activity with older items behind disclosure."
+  (let* ((initial-count (min +dashboard-initial-item-limit+ (length events)))
+         (initial (subseq events 0 initial-count))
+         (remaining (nthcdr initial-count events)))
+    (spinneret:with-html
+      (:ul.issue-list
+       (render-dashboard-event-items initial))
+      (when remaining
+        (:details.dashboard-archive
+         (:summary (format nil "Show ~D older activity item~:P" (length remaining)))
+         (:ul.issue-list
+          (render-dashboard-event-items remaining)))))))
+
 (defun view-dashboard (&key orgs repos username events)
   "Render the dashboard."
   (page (:title "Dashboard — Cave")
@@ -577,23 +637,7 @@ data: featured repositories, recent activity, and instance stats."
       (:h2 "Your repositories")
       (:a.btn.btn-primary :href "/-/new-repo" "New repository"))
      (if repos
-         (:ul.repo-list.dashboard-repo-list
-          (dolist (repo repos)
-            (let ((pushed (or (getf repo :last-pushed-at)
-                              (getf repo :updated-at))))
-              (:li
-               (:div.dashboard-repo-heading
-                (:a :href (repo-url username (getf repo :name))
-                 (getf repo :name))
-                (when (getf repo :is-private)
-                  (:span.badge "private"))
-                (when (getf repo :is-mirror)
-                  (:span.badge "mirror")))
-               (when (getf repo :description)
-                 (:span.desc (getf repo :description)))
-               (when (format-relative-time pushed)
-                 (:span.repo-meta
-                  "Updated " (format-relative-time pushed)))))))
+         (render-dashboard-repositories repos username)
          (:p.empty "No personal repositories yet.")))
 
     (:section
@@ -610,13 +654,7 @@ data: featured repositories, recent activity, and instance stats."
     (when events
       (:section
        (:h2 "Recent activity")
-       (:ul.issue-list
-        (dolist (ev events)
-          (:li
-           (render-event ev)
-           (let ((rel (format-relative-time (getf ev :created-at))))
-             (when rel
-               (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:auto" rel))))))))))
+       (render-dashboard-events events)))))
 
 ;;; ========================== PERSONAL REPO CREATION ==========================
 

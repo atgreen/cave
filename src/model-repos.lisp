@@ -581,10 +581,6 @@ a member. Truthy exactly when the current user has any membership."
     :where (:and (:= 'status "online")
                  (:<= 'last-seen-at
                       (:- (:now) (:raw "INTERVAL '60 seconds'"))))))
-  (cleanup-stale-ephemeral-runners)
-  ;; Delete offline runners (they re-register on reconnect)
-  (postmodern:execute
-   (:delete-from 'cave-runners :where (:= 'status "offline")))
   ;; Reset workflow jobs assigned to offline runners
   (postmodern:execute
    (:update 'cave-workflow-jobs
@@ -598,7 +594,12 @@ a member. Truthy exactly when the current user has any membership."
     :set 'status "queued" 'runner-id :null
     :where (:and (:= 'status "assigned")
                  (:in 'runner-id (:select 'id :from 'cave-runners
-                                  :where (:= 'status "offline")))))))
+                                  :where (:= 'status "offline"))))))
+  (cleanup-stale-ephemeral-runners)
+  ;; Delete offline runners only after their assigned work has been recovered;
+  ;; deleting first makes both runner-id subqueries empty.
+  (postmodern:execute
+   (:delete-from 'cave-runners :where (:= 'status "offline"))))
 
 (defun create-registration-token (&key scope scope-id created-by-id)
   "Create a runner registration token."
@@ -629,6 +630,24 @@ a member. Truthy exactly when the current user has any membership."
      :plist)))
 
 ;;; ========================== WORKFLOWS ==========================
+
+(defun reconcile-running-workflow-runs ()
+  "Return orphan-recovered workflow runs to QUEUED once no job is actively
+   assigned or running. The job reaper may already have moved their abandoned
+   jobs back to the queue, so leaving the parent RUNNING is both misleading and
+   prevents make-workflow-task-event from starting it cleanly on redispatch."
+  (postmodern:query
+   "UPDATE cave_workflow_runs w
+       SET status='queued', started_at=NULL, finished_at=NULL
+     WHERE w.status = 'running'
+       AND EXISTS (SELECT 1 FROM cave_workflow_jobs j
+                    WHERE j.workflow_run_id = w.id
+                      AND j.status IN ('queued','blocked'))
+       AND NOT EXISTS (SELECT 1 FROM cave_workflow_jobs j
+                        WHERE j.workflow_run_id = w.id
+                          AND j.status IN ('running','assigned'))
+   RETURNING w.id"
+   :column))
 
 (defun reap-stale-workflow-jobs (&key (max-minutes 120) (max-attempts 3)
                                       (assigned-grace-minutes 10))
@@ -689,6 +708,7 @@ a member. Truthy exactly when the current user has any membership."
             max-minutes max-attempts :column)))
     (dolist (rid (remove-duplicates failed-runs))
       (update-workflow-run-status rid "failure"))
+    (reconcile-running-workflow-runs)
     (values (length requeued) (length failed-runs))))
 
 (defun create-workflow-run (&key repo-id workflow-name workflow-file trigger-event

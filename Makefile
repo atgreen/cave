@@ -2,6 +2,7 @@ SBCL ?= /usr/bin/sbcl
 LISP := $(SBCL) --non-interactive --eval '(push (truename ".") asdf:*central-registry*)'
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GIT_HEAD_STATE := $(wildcard $(shell git rev-parse --git-path HEAD 2>/dev/null) $(shell git rev-parse --git-path logs/HEAD 2>/dev/null))
 QUADLET_DIR = $(HOME)/.config/containers/systemd
 
 .PHONY: help build cave load lint clean test test-smoke test-workflow \
@@ -25,7 +26,7 @@ zoekt-git-index: ## Build zoekt-git-index from sourcegraph/zoekt source
 	@if [ ! -d _zoekt ]; then git clone --depth 1 https://github.com/sourcegraph/zoekt.git _zoekt; fi
 	cd _zoekt && CGO_ENABLED=0 go build -o ../zoekt-git-index ./cmd/zoekt-git-index
 
-cave-server: src/*.lisp *.asd
+cave-server: src/*.lisp *.asd $(GIT_HEAD_STATE)
 	$(LISP) --eval '(asdf:make :cave)'
 	chmod +x cave-server
 
