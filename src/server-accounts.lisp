@@ -214,11 +214,15 @@ editing the landing copy is a git push — no redeploy."
        (view-dashboard :orgs (list-user-orgs *current-user-id*)
                        :repos (list-user-repos *current-user-id* :include-private t)
                        :username (getf *current-user* :username)
-                       :events (list-recent-events :limit 20)))
+                       :events (visible-feed-events
+                                (list-recent-events :limit 100)
+                                :limit 20)))
       (html-response
        (view-public-landing :repos (search-public-repos :limit 50)
                             :repo-count (count-public-repos)
-                            :events (list-recent-public-events :limit 20)
+                            :events (visible-feed-events
+                                     (list-recent-public-events :limit 100)
+                                     :limit 20)
                             :hero-html (ignore-errors (compute-landing-hero))))))
 
 ;; ----------------------------------------------------------------------------
@@ -715,4 +719,3 @@ leaking the viewer's IP or breaking HTTPS."
   (let ((org (find-org-by-name name)))
     (when org (return-from owner-page (%org-page-response org))))
   (not-found))
-

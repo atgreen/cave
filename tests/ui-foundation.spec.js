@@ -7,6 +7,8 @@ const styles = fs.readFileSync(path.join(root, "static/css/cave.css"), "utf8");
 const repoViews = fs.readFileSync(path.join(root, "src/views-repos.lisp"), "utf8");
 const settingsViews = fs.readFileSync(path.join(root, "src/views-settings.lisp"), "utf8");
 const baseViews = fs.readFileSync(path.join(root, "src/views-base.lisp"), "utf8");
+const runsViews = fs.readFileSync(path.join(root, "src/views-runs.lisp"), "utf8");
+const accountRoutes = fs.readFileSync(path.join(root, "src/server-accounts.lisp"), "utf8");
 
 function hexToRgb(hex) {
   return hex.match(/[a-f\d]{2}/gi).map((channel) => parseInt(channel, 16) / 255);
@@ -54,6 +56,10 @@ test("muted text meets WCAG AA in every built-in theme", () => {
   }
 });
 
+test("anonymous visitors default to Terminal Warmth", () => {
+  expect(baseViews).toContain('th "terminal-warmth"');
+});
+
 test("the shared visual system defines a generous responsive canvas", () => {
   expect(styles).toMatch(/--content-width:\s*1200px/);
   expect(styles).toMatch(/--control-height:\s*36px/);
@@ -96,7 +102,40 @@ test("admin account dates are human and machine readable", () => {
   expect(baseViews).toContain("(defun format-datetime-utc");
   expect(baseViews).toContain("(defun datetime-iso8601");
   expect(settingsViews).toContain("(:table.data-table.admin-table");
-  expect(styles).toMatch(/\.admin-table\s*\{[^}]*overflow-x:\s*auto/s);
+  expect(styles).toMatch(/\.data-table\s*\{[^}]*overflow-x:\s*auto/s);
   expect(settingsViews).toContain("(:time :datetime (datetime-iso8601");
   expect(settingsViews).not.toContain("(:td (princ-to-string (getf u :created-at)))");
+});
+
+test("runner and workflow timestamps are human and machine readable", () => {
+  expect(baseViews).toContain("(defun render-relative-time");
+  expect(runsViews).toContain("(render-relative-time (getf wr :created-at))");
+  expect(runsViews).toContain("(render-relative-time (getf r :created-at))");
+  expect(runsViews).toContain('(render-relative-time ls :fallback "never")');
+  expect(runsViews).not.toMatch(/princ-to-string \(getf (?:wr|r) :created-at\)/);
+  expect(runsViews).not.toContain("(princ-to-string ls)");
+});
+
+test("run links use the shared link colour token", () => {
+  expect(runsViews).not.toContain("var(--primary)");
+});
+
+test("activity feeds omit Cave's internal Dolt synchronization refs", () => {
+  expect(baseViews).toContain("(defun internal-feed-ref-p");
+  expect(baseViews).toContain('"refs/dolt/"');
+  expect(baseViews).toContain('"__dolt_remote_info__"');
+  expect(baseViews).toContain("(defun visible-feed-events");
+  expect(accountRoutes.match(/:events \(visible-feed-events/g)).toHaveLength(2);
+});
+
+test("shared chrome exposes compact mobile navigation markup", () => {
+  expect(baseViews).toContain("(:details.nav-menu");
+  expect(baseViews).toContain("(:summary.nav-menu-toggle");
+  expect(baseViews).toContain("(:div.nav-menu-content");
+  expect(baseViews).toContain('(:script :src "/static/js/navigation.js" :defer t)');
+});
+
+test("repository and organization creation pages use focused form layouts", () => {
+  expect(baseViews.match(/\(:div\.form-page/g) || []).toHaveLength(2);
+  expect(repoViews).toContain("(:div.form-page");
 });

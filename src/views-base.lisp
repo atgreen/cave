@@ -45,10 +45,10 @@ standalone use."
      :style "border-radius:3px;vertical-align:middle")))
 
 (defun effective-theme ()
-  "The active theme name.  Defaults to \"light\" unless the logged-in user has
-explicitly chosen another theme."
+  "The active theme name.  Anonymous visitors default to \"terminal-warmth\";
+logged-in users keep their explicitly chosen theme."
   (let ((th (and *current-user* (getf *current-user* :theme))))
-    (if (and (stringp th) (not (uiop:emptyp th))) th "light")))
+    (if (and (stringp th) (not (uiop:emptyp th))) th "terminal-warmth")))
 
 (defmacro page ((&key title) &body body)
   "Wrap BODY in a full HTML page with nav and container."
@@ -68,6 +68,7 @@ explicitly chosen another theme."
         ;; Fuzzy file finder ('t' on repo pages); no-ops on pages without
         ;; a #file-finder-root marker.
         (:script :src "/static/js/filefinder.js" :defer t)
+        (:script :src "/static/js/navigation.js" :defer t)
         ;; Inject custom theme CSS if active
         (when *current-user*
           (let ((theme-css (user-theme-css *current-user-id*
@@ -80,32 +81,36 @@ explicitly chosen another theme."
           (:a.nav-brand :href "/"
            (:span.nav-logo :aria-hidden "true")
            (:span "Cave"))
-          (:div.nav-right
+          (:div :class (if *current-user* "nav-right nav-right-auth" "nav-right")
            (if *current-user*
                (progn
                  (when (config-value :zoekt-enabled)
                    (:form.nav-search :method "get" :action "/-/search"
                     (:input.nav-search-input :type "text" :name "q"
                      :placeholder "Search code..." :autocomplete "off")))
-                 (let ((unread (ignore-errors (count-unread-notifications *current-user-id*))))
-                   (:a.btn.btn-sm :href "/-/notifications" :title "Notifications"
-                    :aria-label (if (and unread (plusp unread))
-                                    (format nil "Notifications, ~A unread" unread)
-                                    "Notifications")
-                    (:raw "<svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" style=\"vertical-align:middle\"><path d=\"M8 2a4 4 0 0 0-4 4c0 3-1.2 4.2-1.7 4.7a.5.5 0 0 0 .35.85h10.7a.5.5 0 0 0 .35-.85C13.2 10.2 12 9 12 6a4 4 0 0 0-4-4z\"/><path d=\"M6.5 13a1.5 1.5 0 0 0 3 0\"/></svg>")
-                    (when (and unread (plusp unread))
-                      (:span :style "color:var(--green,#7c9a5e);font-weight:600;margin-left:.35em"
-                       (format nil "~A" unread)))))
-                 (:a.btn.btn-sm :href "/-/explore" "Explore")
-                 (:a.btn.btn-sm :href "/-/new-org" "New org")
-                 (:a.btn.btn-sm :href "/-/settings" "Settings")
-                 (when (getf *current-user* :is-admin)
-                   (:a.btn.btn-sm :href "/-/admin" "Admin"))
-                 (render-avatar (getf *current-user* :email) :size 20
-                                :alt (format nil "~A avatar" (getf *current-user* :username)))
-                 (:span.nav-user (getf *current-user* :username))
-                 (:form :method "post" :action "/logout" :style "display:inline"
-                  (:button.btn.btn-sm :type "submit" "Sign out")))
+                 (:details.nav-menu :open "open"
+                  (:summary.nav-menu-toggle :aria-label "Open navigation" "Menu")
+                  (:div.nav-menu-content
+                   (let ((unread (ignore-errors (count-unread-notifications *current-user-id*))))
+                     (:a.btn.btn-sm :href "/-/notifications" :title "Notifications"
+                      :aria-label (if (and unread (plusp unread))
+                                      (format nil "Notifications, ~A unread" unread)
+                                      "Notifications")
+                      (:raw "<svg width=\"14\" height=\"14\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" style=\"vertical-align:middle\"><path d=\"M8 2a4 4 0 0 0-4 4c0 3-1.2 4.2-1.7 4.7a.5.5 0 0 0 .35.85h10.7a.5.5 0 0 0 .35-.85C13.2 10.2 12 9 12 6a4 4 0 0 0-4-4z\"/><path d=\"M6.5 13a1.5 1.5 0 0 0 3 0\"/></svg>")
+                      (when (and unread (plusp unread))
+                        (:span :style "color:var(--green,#7c9a5e);font-weight:600;margin-left:.35em"
+                         (format nil "~A" unread)))))
+                   (:a.btn.btn-sm :href "/-/explore" "Explore")
+                   (:a.btn.btn-sm :href "/-/new-org" "New org")
+                   (:a.btn.btn-sm :href "/-/settings" "Settings")
+                   (when (getf *current-user* :is-admin)
+                     (:a.btn.btn-sm :href "/-/admin" "Admin"))
+                   (:div.nav-identity
+                    (render-avatar (getf *current-user* :email) :size 20
+                                   :alt (format nil "~A avatar" (getf *current-user* :username)))
+                    (:span.nav-user (getf *current-user* :username)))
+                   (:form :method "post" :action "/logout" :style "display:inline"
+                    (:button.btn.btn-sm :type "submit" "Sign out")))))
                (progn
                  (:a.btn.btn-sm :href "/-/explore" "Explore")
                  (:a.btn.btn-sm :href "/-/auth/login" "Sign in"))))))
@@ -220,6 +225,17 @@ last crumb is a pair when ?path= is empty)."
           (format nil "~A ~D, ~D" (aref months (1- month)) day year))
         "Unknown")))
 
+(defun render-relative-time (timestamp &key (fallback "Unknown"))
+  "Render TIMESTAMP as accessible relative time, or FALLBACK when unavailable."
+  (let* ((universal-time (timestamp-universal-time timestamp))
+         (relative-time (format-relative-time universal-time)))
+    (if relative-time
+        (spinneret:with-html
+          (:time :datetime (datetime-iso8601 universal-time)
+                 :title (format-datetime-utc universal-time)
+           relative-time))
+        fallback)))
+
 (defun parse-git-date (date)
   "Universal-time for a git %ai date like \"2026-09-12 15:33:15 -0400\", or NIL."
   (when (and (stringp date) (>= (length date) 25))
@@ -262,6 +278,28 @@ last crumb is a pair when ?path= is empty)."
     ((uiop:string-prefix-p "refs/heads/" ref) (subseq ref 11))
     ((uiop:string-prefix-p "refs/tags/" ref) (subseq ref 10))
     (t ref)))
+
+(defun internal-feed-ref-p (ref)
+  "True when REF is Cave's internal Dolt synchronization traffic."
+  (and (stringp ref)
+       (or (uiop:string-prefix-p "refs/dolt/" ref)
+           (string= (short-ref ref) "__dolt_remote_info__"))))
+
+(defun feed-event-visible-p (event)
+  "True when EVENT belongs in a human-facing activity feed."
+  (or (not (equal (getf event :event-type) "git.push"))
+      (not (internal-feed-ref-p
+            (metadata-get (event-metadata event) "ref")))))
+
+(defun visible-feed-events (events &key (limit 20))
+  "Return up to LIMIT human-facing events from newest-first EVENTS."
+  (loop with visible = nil
+        for event in events
+        when (feed-event-visible-p event)
+          do (push event visible)
+             (when (= (length visible) limit)
+               (return (nreverse visible)))
+        finally (return (nreverse visible))))
 
 (defun format-push-event (actor md)
   "Render a git.push event from its parsed metadata."
@@ -622,8 +660,9 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
 (defun view-new-personal-repo (&key error)
   "Render the personal repo creation form."
   (page (:title "New repository — Cave")
-    (:h1 "New repository")
-    (render-new-repo-form "/-/new-repo" :error error)))
+    (:div.form-page
+     (:h1 "New repository")
+     (render-new-repo-form "/-/new-repo" :error error))))
 
 ;;; ========================== USER PROFILE ==========================
 
@@ -735,20 +774,21 @@ Month labels above, Mon/Wed/Fri gutter left, caption + level legend below."
 (defun view-new-org (&key error)
   "Render the new org form."
   (page (:title "New organization — Cave")
-    (:h1 "Create organization")
-    (when error (:div.alert.alert-error error))
-    (:form :method "post" :action "/-/new-org"
-     (:div.field
-      (:label :for "name" "Name (URL-safe, lowercase)")
-      (:input :type "text" :id "name" :name "name" :required t
-              :pattern "[a-z0-9][a-z0-9._-]*" :autofocus t))
-     (:div.field
-      (:label :for "display_name" "Display name")
-      (:input :type "text" :id "display_name" :name "display_name"))
-     (:div.field
-      (:label :for "description" "Description (optional)")
-      (:input :type "text" :id "description" :name "description"))
-     (:button.btn.btn-primary :type "submit" "Create organization"))))
+    (:div.form-page
+     (:h1 "Create organization")
+     (when error (:div.alert.alert-error error))
+     (:form :method "post" :action "/-/new-org"
+      (:div.field
+       (:label :for "name" "Name (URL-safe, lowercase)")
+       (:input :type "text" :id "name" :name "name" :required t
+               :pattern "[a-z0-9][a-z0-9._-]*" :autofocus t))
+      (:div.field
+       (:label :for "display_name" "Display name")
+       (:input :type "text" :id "display_name" :name "display_name"))
+      (:div.field
+       (:label :for "description" "Description (optional)")
+       (:input :type "text" :id "description" :name "description"))
+      (:button.btn.btn-primary :type "submit" "Create organization")))))
 
 (defun view-org (&key org repos is-member is-admin)
   "Render an org page."

@@ -325,7 +325,7 @@
           (dolist (wr workflow-runs)
             (:li :style "flex-wrap:wrap"
              (:a :href (format nil "/~A/~A/runs/w/~A" owner-name repo-name (getf wr :id))
-                 :style "font-weight:600;color:var(--primary)"
+                 :style "font-weight:600"
               (getf wr :workflow-name))
              (:span.badge (getf wr :trigger-event))
              (render-status-badge (getf wr :status))
@@ -333,7 +333,7 @@
              (:span :style "font-size:.75rem;color:var(--text-muted)"
               (getf wr :workflow-file))
              (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
-              (princ-to-string (getf wr :created-at))))))))
+              (render-relative-time (getf wr :created-at))))))))
 
       ;; Automation runs
       (:section
@@ -347,7 +347,7 @@
                (render-status-badge (getf r :status))
                (render-short-sha (getf r :commit-sha))
                (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
-                (princ-to-string (getf r :created-at))))))
+                (render-relative-time (getf r :created-at))))))
            (:p.empty "No automation runs yet."))))))
 
 (defun view-workflow-run (&key owner-name repo run jobs artifacts)
@@ -482,7 +482,7 @@ SHOW-SCOPE adds the scope column (instance vs repo) for the admin panel."
                    (getf r :status)))
              (:td :style "color:var(--text-muted);font-size:.75rem"
               (let ((ls (getf r :last-seen-at)))
-                (if (and ls (not (eq ls :null))) (princ-to-string ls) "never")))
+                (render-relative-time ls :fallback "never")))
              (:td
               (:form :method "post" :style "display:inline"
                :action (format nil "~A/~A/delete" delete-action-prefix (getf r :id))
@@ -498,4 +498,3 @@ SHOW-SCOPE adds the scope column (instance vs repo) for the admin panel."
                                (getf registration-token :token))))))
     (:form :method "post" :action token-action
      (:button.btn.btn-primary :type "submit" "Generate registration token"))))
-

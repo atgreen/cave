@@ -147,9 +147,18 @@ section { margin-bottom: var(--sp-8); }
   color: var(--text-secondary);
   font-weight: 500;
 }
+.nav-menu { position: relative; }
+.nav-menu-toggle { display: none; }
+.nav-menu-content {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.nav-identity { display: inline-flex; align-items: center; gap: var(--sp-2); }
 
 /* --- Container --- */
 .container { max-width: var(--content-width); margin: 0 auto; padding: var(--sp-8) var(--sp-5); }
+.form-page { max-width: 48rem; }
 
 /* --- Buttons --- */
 .btn {
@@ -1442,10 +1451,12 @@ html[data-theme="dracula"] {
     border-top: 1px solid var(--border);
   }
   .repo-sidebar-section { padding: 0; border: 0; }
-  .settings-layout { grid-template-columns: 1fr; gap: var(--sp-5); }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); }
   .settings-nav {
     position: static;
     flex-direction: row;
+    min-width: 0;
+    max-width: 100%;
     overflow-x: auto;
     padding-bottom: var(--sp-2);
   }
@@ -1460,21 +1471,62 @@ html[data-theme="dracula"] {
 }
 
 @media (max-width: 720px) {
-  .nav-inner { flex-wrap: wrap; gap: var(--sp-2); }
-  /* Let the action cluster wrap to a second line instead of overflowing. */
-  .nav-right { flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); }
-  /* Search takes its own full-width row above the wrapped buttons. */
-  .nav-search { flex: 1 1 100%; }
+  .nav-inner { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-2); }
+  .nav-right-auth { display: contents; }
+  .nav-right-auth .nav-search { grid-column: 1 / -1; grid-row: 2; }
   .nav-search-input { width: 100%; }
+  .nav-menu { grid-column: 2; grid-row: 1; justify-self: end; }
+  .nav-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--control-height);
+    padding: 6px var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    cursor: pointer;
+    list-style: none;
+  }
+  .nav-menu-toggle::-webkit-details-marker { display: none; }
+  .nav-menu:not([open]) > .nav-menu-content { display: none; }
+  .nav-menu[open] > .nav-menu-content {
+    position: absolute;
+    z-index: 100;
+    top: calc(100% + var(--sp-2));
+    right: 0;
+    display: flex;
+    width: min(16rem, calc(100vw - var(--sp-6)));
+    padding: var(--sp-2);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .4);
+  }
+  .nav-menu-content .btn { justify-content: flex-start; }
+  .nav-identity { padding: var(--sp-2) var(--sp-3); }
   /* Tabs scroll horizontally rather than clipping the last tab. */
-  .repo-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .repo-tabs {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+  }
   .repo-tab { white-space: nowrap; }
   .container { padding: var(--sp-4) var(--sp-3); }
   .repo-title-row { align-items: flex-start; flex-direction: column; gap: var(--sp-2); }
   .repo-title { font-size: 1.4rem; overflow-wrap: anywhere; }
   .repo-sidebar { grid-template-columns: 1fr; }
+  .settings-content, .settings-section { min-width: 0; max-width: 100%; }
   .settings-section { padding: var(--sp-4); }
-  .admin-table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+  .settings-content pre { max-width: 100%; overflow-x: auto; }
+  .settings-content .data-list li { min-width: 0; flex-wrap: wrap; }
+  .settings-content .data-list li > * { min-width: 0; max-width: 100%; }
+  .settings-content .data-list code { overflow-wrap: anywhere; word-break: break-all; }
+  .data-table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
   .repo-info-bar, .repo-last-commit { align-items: flex-start; flex-wrap: wrap; }
   .repo-last-msg { flex-basis: calc(100% - 7rem); }
   /* Long inline-code tokens (clone URLs, hashes) must wrap, not push width. */

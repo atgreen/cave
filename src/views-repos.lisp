@@ -6,8 +6,9 @@
   "Render the new repo form for an org."
   (let ((org-name (getf org :name)))
     (page (:title "New repository — Cave")
-      (:h1 (format nil "New repository in ~A" org-name))
-      (render-new-repo-form (format nil "/o/~A/-/new-repo" org-name) :error error))))
+      (:div.form-page
+       (:h1 (format nil "New repository in ~A" org-name))
+       (render-new-repo-form (format nil "/o/~A/-/new-repo" org-name) :error error)))))
 
 (defun render-repo-tabs (owner-name repo-name &optional active-tab &key repo
                                                                         ref default-branch)
