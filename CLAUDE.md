@@ -56,12 +56,17 @@ federate to an external OIDC provider by setting a different `oidc-issuer`.
 - **src/db.lisp** — PostgreSQL via postmodern, numbered migrations
 - **src/auth.lisp** — embedded Usher OIDC provider (`init-usher`) + relying-party
   client, sessions, API tokens, sudo mode
-- **src/model.lisp** — Domain queries: users, orgs, repos, issues, PRs, reviews,
-  releases, signatures, page views, SSH keys, etc.
+- **src/url.lisp** — In-app URL builders (issue-url, pr-url, tree/blob/raw-url)
+- **src/model-{accounts,repos,issues,activity}.lisp** — Domain queries, split by
+  area: users/orgs/keys; repos/members/workflow-jobs; issues/PRs/reviews;
+  events/releases/deps
+- **src/markup.lisp** — Markdown rendering + camo image proxy, CODEOWNERS
+  parsing, Linguist language tables
 - **src/git.lisp** — Git CLI integration (branch listing, log, file tree, diff,
   merge, tags, signature verification, commit trailers)
-- **src/views.lisp** — All HTML via Spinneret (s-expression HTML, no template files)
-- **src/notify.lisp** — Email notifications and webhooks
+- **src/views-{base,repos,issues,runs,settings}.lisp** — All HTML via Spinneret
+  (s-expression HTML, no template files), split by page area
+- **src/notify.lisp** — Email notifications, webhooks, automation scheduling
 - **src/search-zoekt.lisp** — Zoekt code search: indexing, API client, visibility filter
 - **src/metrics.lisp** — Prometheus metrics endpoint
 - **src/runner-service.lisp** — gRPC service for automation runners
@@ -71,9 +76,12 @@ federate to an external OIDC provider by setting a different `oidc-issuer`.
 - **src/chamber-client.lisp** — Chamber client with `chamber-or` graceful fallback to direct git
 - **src/chamber-router.lisp** — Multi-chamber routing (Praefect-style)
 - **src/ssh.lisp** — SSH transport: git-shell auth, authorized_keys generation
-- **src/server.lisp** — Hunchentoot routes and request handling
-- **src/main.lisp** — CLI subcommands via clingon: init, serve, migrate,
-  git-shell, update-keys, post-receive, runner, sync-mirrors, sync-themes
+- **src/server-{core,repos,issues,accounts,releases,hooks,api}.lisp** —
+  Hunchentoot routes and request handling, split by route group; server-core
+  holds the acceptor, dispatch, and shared helpers (with-visible-repo etc.)
+- **src/main-{admin,git,runner,app}.lisp** — CLI subcommands via clingon:
+  init, serve, migrate, git-shell, update-keys, post-receive, runner,
+  sync-mirrors, sync-themes
 - **cave-shell.sh** — Bash wrapper called by sshd, parses `cave-server git-shell` output
   (user-id + disk-path), exports `CAVE_PUSH_USER_ID`, then execs git
 - **cli/cavectl/** — Go source for the declarative deploy tool
@@ -85,7 +93,7 @@ federate to an external OIDC provider by setting a different `oidc-issuer`.
 
 - Use `/usr/bin/sbcl` (system SBCL), not linuxbrew, so binaries work in containers.
 - HTML is generated with Spinneret, not template files. All views are functions
-  in `views.lisp`.
+  in the `views-*.lisp` files.
 - Logging via llog (structured). Known bug: `set-root-level` doesn't suppress
   output (atgreen/cl-llog#2).
 - Database queries use postmodern's s-sql. Each migration is a

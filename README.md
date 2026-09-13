@@ -43,13 +43,12 @@ are not built yet.
 
 ### Experimental
 
-- **Stacked changesets** — dependent PRs are tracked and displayed as a stack, but there is no atomic "land stack" yet; members still merge one PR at a time (see *Planned*)
 - **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back, with a partial **GitHub-Actions-compatible** syntax: `push`/`pull_request`/`tag` triggers, workflow/job/step `env:`, multi-line `run: |` blocks, the standard `GITHUB_*` env (each with a `CAVE_*` twin) plus `RUNNER_*`/`CI`, and the `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_PATH`/`$GITHUB_STEP_SUMMARY` file-command protocol, `${{ }}` expressions (in `run:`/`env:`/`if:`, across the `github`/`steps`/`matrix`/`needs`/… contexts), `strategy.matrix`, job `outputs:`/`needs.*`, and `uses:` actions (GitHub model: empty workspace + cave-local, Lisp-native built-ins like `actions/checkout`). Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs (as is anything a step emits via `::add-mask::`). A reaper requeues jobs orphaned by a dead/restarted runner (bounded retries) so the queue self-heals. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
 - **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
 
 ### Planned
 
-- **Atomic stack landing** — ordered validation plus all-or-nothing merge of a stack
+- **Stacked changesets** — dependent-PR stacks with ordered validation and all-or-nothing landing (schema groundwork exists; no UI or write path yet)
 - **`Closes #N` auto-close** — close issues automatically from commit/PR messages (labels, assignees, milestones, and filtering are now *Implemented*)
 - **Fully sandboxed checks** — pre-receive checks already run under a Landlock filesystem sandbox (cross-repo isolation, scoped to the extracted worktree) with a scrubbed environment, network isolation (`unshare -n` plus Landlock TCP-deny, best-effort where the container can't `unshare`), and a wall-clock timeout (`:checks-*`). Still missing for full isolation: cgroup memory/CPU limits and dropping to a per-repo unprivileged UID
 - **Repo deployment / CD** — build images, queue deploys, roll back, manage secrets
@@ -168,15 +167,19 @@ file. No JavaScript framework.
 src/
 ├── package.lisp        — Package definition
 ├── config.lisp         — S-expression config parser
+├── url.lisp            — In-app URL builders (issue/PR permalinks, tree/blob/raw)
 ├── db.lisp             — PostgreSQL via Postmodern, numbered migrations
 ├── auth.lisp           — Embedded Usher OpenID Provider, sessions, API tokens,
 │                         GPG/SSH key mgmt, notifications, sudo mode
-├── model.lisp          — Domain queries: users, orgs, repos, issues, PRs,
-│                         reviews, releases, signatures, page views, …
+├── model-*.lisp        — Domain queries, split by area: accounts, repos,
+│                         issues/PRs, activity (events, releases, deps)
+├── markup.lisp         — Markdown rendering + camo image proxy, CODEOWNERS,
+│                         Linguist language tables
 ├── git.lisp            — Git CLI integration (branch, log, tree, diff, merge,
 │                         tag, signature verification, trailers)
-├── views.lisp          — All HTML views via Spinneret
-├── notify.lisp         — Email notifications, webhooks
+├── views-*.lisp        — All HTML views via Spinneret, split by area: base,
+│                         repos, issues/PRs, runs, settings
+├── notify.lisp         — Email notifications, webhooks, automation scheduling
 ├── search-zoekt.lisp   — Zoekt code search: indexing, API client, visibility
 ├── metrics.lisp        — Prometheus metrics endpoint
 ├── runner-service.lisp — gRPC service for automation runners
@@ -186,8 +189,11 @@ src/
 ├── chamber-client.lisp — Chamber client with chamber-or graceful fallback
 ├── chamber-router.lisp — Multi-chamber routing (Praefect-style)
 ├── ssh.lisp            — SSH transport, authorized_keys generation
-├── server.lisp         — HTTP routes and request handling
-└── main.lisp           — CLI subcommands (serve, init, migrate, runner, etc.)
+├── server-*.lisp       — HTTP routes, split by group: core (acceptor +
+│                         shared helpers), repos, issues/PRs, accounts,
+│                         releases, hooks, api
+└── main-*.lisp         — CLI subcommands, split by group: admin (serve,
+                          init, migrate), git, runner, app
 
 cli/cavectl/            — Go deployment tool source
 internal/cavectl/       — Go libraries: config, plan, apply, runtime, doctor, …
