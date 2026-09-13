@@ -535,7 +535,7 @@ data: featured repositories, recent activity, and instance stats."
         (:a.btn :href "/-/auth/login" "Sign in")
         (:a.btn.btn-primary :href "/-/register" "Register")))
       ;; Two columns: featured repos | recent activity
-      (:div :style "display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4);align-items:start"
+      (:div.landing-grid
        (:section
         (:div :style "display:flex;justify-content:space-between;align-items:baseline"
          (:h2 "Repositories")

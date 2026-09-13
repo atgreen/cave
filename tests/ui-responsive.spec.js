@@ -10,6 +10,10 @@ const navigationScript = fs.readFileSync(
   path.resolve(__dirname, "../static/js/navigation.js"),
   "utf8",
 );
+const baseViews = fs.readFileSync(
+  path.resolve(__dirname, "../src/views-base.lisp"),
+  "utf8",
+);
 
 async function renderAtMobileWidth(page, markup) {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -32,6 +36,29 @@ async function renderAtDesktopWidth(page, markup) {
     </html>
   `);
 }
+
+test("public landing stacks repositories and activity without mobile overflow", async ({ page }) => {
+  expect(baseViews).toContain("(:div.landing-grid");
+  await renderAtMobileWidth(page, `
+    <div class="landing-grid">
+      <section>
+        <h2>Repositories</h2>
+        <ul class="repo-list"><li><a>atgreen/secscan-skill</a><span class="desc">Token-efficient in-session LLM security-triage skill</span></li></ul>
+      </section>
+      <section>
+        <h2>Recent activity</h2>
+        <ul class="issue-list"><li><span>atgreen pushed a commit that refreshes embedded version metadata</span></li></ul>
+      </section>
+    </div>
+  `);
+  const layout = await page.locator(".landing-grid").evaluate((element) => ({
+    columns: getComputedStyle(element).gridTemplateColumns,
+    scrollWidth: document.documentElement.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+  }));
+  expect(layout.columns.split(" ")).toHaveLength(1);
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
+});
 
 test("mobile Settings contains long credentials within the viewport", async ({ page }) => {
   await renderAtMobileWidth(page, `
