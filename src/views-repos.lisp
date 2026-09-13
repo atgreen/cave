@@ -354,7 +354,7 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
           (:span.repo-info-stat
            (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))
        (when commit-count
-         (:span.repo-info-stat
+         (:a.repo-info-stat :href (commits-url owner-name repo-name current-ref)
           (format nil "~A ~:[commits~;commit~]" commit-count (= commit-count 1)))))
       ;; Language breakdown bar
       (render-language-bar language-stats)
@@ -378,7 +378,9 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
       ;; Recent commits
       (when recent-commits
         (:section
-         (:h2 "Recent commits")
+         (:h2 "Recent commits "
+          (:a :style "font-size:.8rem;font-weight:normal"
+           :href (commits-url owner-name repo-name current-ref) "view all"))
          (:ul.issue-list
           (dolist (c recent-commits)
             (let ((sig (when signatures (gethash (getf c :hash) signatures))))
@@ -632,6 +634,11 @@ serves the unrendered bytes."
               (:a.btn.btn-sm :href (format nil "~A&view=source"
                                            (blob-url owner-name repo-name ref path))
                "Source")))
+        (unless is-binary
+          (:a.btn.btn-sm :href (blame-url owner-name repo-name ref path)
+           "Blame"))
+        (:a.btn.btn-sm :href (commits-url owner-name repo-name ref path)
+         "History")
         (:a.btn.btn-sm :href (raw-url owner-name repo-name ref path)
          "Raw")))
       (cond
@@ -658,6 +665,66 @@ serves the unrendered bytes."
                         (json-for-script content)
                         (json-for-script (or language "plaintext"))
                         (repo-url owner-name repo-name)))))))))
+
+;;; ========================== BLAME & COMMIT LIST ==========================
+
+(defun view-blame (&key owner-name repo ref path blame default-branch)
+  "Render per-line blame for a file: hunk gutter (commit, author, age) beside
+line numbers and content, GitHub-style."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Blame ~A — ~A/~A" path owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :code :repo repo
+                        :ref ref :default-branch default-branch)
+      (:div.blob-meta
+       (:span (format nil "Blame — ~A @ ~A" path ref))
+       (:div.blob-view-toggle :style "margin-left:auto;display:flex;gap:0"
+        (:a.btn.btn-sm :href (blob-url owner-name repo-name ref path) "View file")
+        (:a.btn.btn-sm :href (commits-url owner-name repo-name ref path) "History")))
+      (:div.blame-table
+       (let ((prev nil))
+         (dolist (l blame)
+           (let ((new-hunk (not (equal prev (getf l :hash)))))
+             (:div :class (if new-hunk "blame-row blame-hunk-start" "blame-row")
+              (:div.blame-meta
+               (when new-hunk
+                 (:a :href (format nil "/~A/~A/commit/~A"
+                                   owner-name repo-name (getf l :hash))
+                  (:code (getf l :short-hash)))
+                 (:span.blame-author (getf l :author))
+                 (:span.blame-age (format-relative-time (getf l :time)))))
+              (:div.blame-lineno (princ-to-string (getf l :line-no)))
+              (:pre.blame-code (getf l :content)))
+             (setf prev (getf l :hash)))))))))
+
+(defun view-commits (&key owner-name repo ref path commits signatures
+                          default-branch more-p)
+  "Render a commit listing for REF, optionally filtered to PATH's history."
+  (let ((repo-name (getf repo :name)))
+    (page (:title (format nil "Commits — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :code :repo repo
+                        :ref ref :default-branch default-branch)
+      (:h1 (if (and path (plusp (length path)))
+               (format nil "History of ~A @ ~A" path ref)
+               (format nil "Commits on ~A" ref)))
+      (if commits
+          (:ul.issue-list
+           (dolist (c commits)
+             (let ((sig (when signatures (gethash (getf c :hash) signatures))))
+               (:li
+                (:a :href (format nil "/~A/~A/commit/~A"
+                                  owner-name repo-name (getf c :hash))
+                 (:code :style "color:var(--link);font-size:.8rem"
+                  (getf c :short-hash)))
+                (:span (getf c :subject))
+                (render-verified-badge sig)
+                (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
+                 :title (getf c :date)
+                 (format nil "~A~@[ · ~A~]" (getf c :author)
+                         (commit-relative-time c)))))))
+          (:p.empty "No commits."))
+      (when more-p
+        (:p :style "color:var(--text-muted)"
+         "Showing the most recent commits; the full history is available with git.")))))
 
 ;;; ========================== COMMIT PAGE ==========================
 

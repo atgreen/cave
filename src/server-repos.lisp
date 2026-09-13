@@ -181,6 +181,40 @@
                   "Could not create branch (it may already exist)")))))))))
 
 ;; Blob (file) viewing
+(easy-routes:defroute blame-page ("/:owner/:repo-name/blame/:ref" :method :get) ()
+  (with-visible-repo (repo owner repo-name #'not-found)
+    (unless (%valid-git-ref-name-p ref) (return-from blame-page (not-found)))
+    (let* ((path (or (hunchentoot:get-parameter "path") ""))
+           ;; Direct git read (no Chamber blame RPC yet); v1 chambers share
+           ;; the filesystem, so the disk path is always readable here.
+           (blame (when (plusp (length path))
+                    (git-blame (repo-disk-path owner repo-name) ref path))))
+      (if blame
+          (html-response
+           (view-blame :owner-name owner :repo repo :ref ref :path path
+                       :blame blame
+                       :default-branch (or (chamber-get-default-branch owner repo-name)
+                                           "main")))
+          (hunchentoot:redirect (blob-url owner repo-name ref path))))))
+
+(easy-routes:defroute commits-page ("/:owner/:repo-name/commits/:ref" :method :get) ()
+  (with-visible-repo (repo owner repo-name #'not-found)
+    (unless (%valid-git-ref-name-p ref) (return-from commits-page (not-found)))
+    (let* ((path (let ((p (hunchentoot:get-parameter "path")))
+                   (when (and p (plusp (length p))) p)))
+           (limit 100)
+           (commits (git-log (repo-disk-path owner repo-name)
+                             :branch ref :limit limit :path path)))
+      (html-response
+       (view-commits :owner-name owner :repo repo :ref ref :path path
+                     :commits commits
+                     :signatures (commit-signatures-by-sha
+                                  (getf repo :id)
+                                  (mapcar (lambda (c) (getf c :hash)) commits))
+                     :default-branch (or (chamber-get-default-branch owner repo-name)
+                                         "main")
+                     :more-p (= (length commits) limit))))))
+
 (easy-routes:defroute blob-page ("/:owner/:repo-name/blob/:ref" :method :get) ()
   (with-visible-repo (repo owner repo-name #'not-found)
     (unless (%valid-git-ref-name-p ref) (return-from blob-page (not-found)))

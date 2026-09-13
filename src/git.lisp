@@ -312,12 +312,14 @@ Returns a markdown string, or NIL when there is nothing to report."
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-log (repo-path &key (branch nil) (limit 20))
-  "Get recent commits. Returns list of plists (:hash :short-hash :author :date :subject)."
+(defun git-log (repo-path &key (branch nil) (limit 20) path)
+  "Get recent commits, optionally only those touching PATH.
+Returns list of plists (:hash :short-hash :author :date :subject)."
   (let* ((format-str "%H%n%h%n%an%n%ai%n%s%n---")
          (args (list "log" (format nil "--format=~A" format-str)
                      (format nil "-~A" limit)))
-         (args (if branch (append args (list branch)) args)))
+         (args (if branch (append args (list branch)) args))
+         (args (if path (append args (list "--" path)) args)))
     (multiple-value-bind (output _err exit-code)
         (apply #'git-run repo-path args)
       (declare (ignore _err))
@@ -344,6 +346,36 @@ Returns a markdown string, or NIL when there is nothing to report."
                            :subject subject)
                      entries)))
     (nreverse entries)))
+
+(defun git-blame (repo-path ref path)
+  "Blame REF:PATH. Returns a list of per-line plists
+   (:hash :short-hash :author :time :line-no :content) in file order,
+   :time a universal-time — or NIL when the file can't be blamed."
+  (multiple-value-bind (output _err code)
+      (git-run repo-path "blame" "--line-porcelain" ref "--" path)
+    (declare (ignore _err))
+    (when (zerop code)
+      (let ((entries nil) (hash nil) (author nil) (time nil) (line-no 0))
+        (dolist (l (uiop:split-string output :separator '(#\Newline)))
+          (cond
+            ;; The content line of each group is tab-prefixed.
+            ((and (plusp (length l)) (char= (char l 0) #\Tab))
+             (incf line-no)
+             (push (list :hash hash
+                         :short-hash (when hash (subseq hash 0 7))
+                         :author author :time time :line-no line-no
+                         :content (subseq l 1))
+                   entries))
+            ((uiop:string-prefix-p "author " l) (setf author (subseq l 7)))
+            ((uiop:string-prefix-p "author-time " l)
+             (setf time (let ((n (parse-integer (subseq l 12) :junk-allowed t)))
+                          (when n (+ n 2208988800)))))
+            ;; Group header: "<40-hex sha> <orig-line> <final-line> [count]"
+            ((and (> (length l) 40)
+                  (char= (char l 40) #\Space)
+                  (every (lambda (c) (digit-char-p c 16)) (subseq l 0 40)))
+             (setf hash (subseq l 0 40)))))
+        (nreverse entries)))))
 
 (defun git-show-commit (repo-path hash)
   "Get a single commit's metadata. Returns plist or NIL."

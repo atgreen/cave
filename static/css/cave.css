@@ -414,6 +414,22 @@ section { margin-bottom: var(--sp-8); }
 .repo-last-author { color: var(--text-muted); margin-left: auto; white-space: nowrap; }
 .repo-last-time { color: var(--text-muted); white-space: nowrap; font-size: .8rem; }
 
+/* Blame view */
+.blame-table { border: 1px solid var(--border); border-radius: 6px; overflow-x: auto;
+               background: var(--surface); font-size: .85rem; }
+.blame-row { display: grid; grid-template-columns: 24rem 3.5rem 1fr; align-items: baseline; }
+.blame-hunk-start { border-top: 1px solid var(--border); }
+.blame-table .blame-row:first-child { border-top: none; }
+.blame-meta { padding: 0 .6rem; white-space: nowrap; overflow: hidden;
+              text-overflow: ellipsis; color: var(--text-muted); }
+.blame-meta code { font-size: .8rem; }
+.blame-author { margin-left: .5rem; }
+.blame-age { margin-left: .5rem; font-size: .8rem; }
+.blame-lineno { text-align: right; padding-right: .75rem; color: var(--text-muted);
+                user-select: none; font-family: var(--font-mono, monospace); }
+.blame-code { margin: 0; padding: 0 .5rem; white-space: pre; overflow-x: visible;
+              font-family: var(--font-mono, monospace); background: transparent; border: none; }
+
 /* --- Repo actions --- */
 .repo-actions { margin-bottom: var(--sp-6); display: flex; gap: var(--sp-2); }
 

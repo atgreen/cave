@@ -35,3 +35,15 @@ slashes and paths with spaces/# survive the round-trip."
   "Raw-file URL. REF and PATH are url-encoded (see TREE-URL)."
   (format nil "/~A/~A/raw/~A?path=~A"
           owner repo (hunchentoot:url-encode ref) (hunchentoot:url-encode path)))
+
+(defun blame-url (owner repo ref path)
+  "Blame-view URL. REF and PATH are url-encoded (see TREE-URL)."
+  (format nil "/~A/~A/blame/~A?path=~A"
+          owner repo (hunchentoot:url-encode ref) (hunchentoot:url-encode path)))
+
+(defun commits-url (owner repo ref &optional path)
+  "Commit-list URL for REF, optionally filtered to commits touching PATH."
+  (if (and path (plusp (length path)))
+      (format nil "/~A/~A/commits/~A?path=~A"
+              owner repo (hunchentoot:url-encode ref) (hunchentoot:url-encode path))
+      (format nil "/~A/~A/commits/~A" owner repo (hunchentoot:url-encode ref))))
