@@ -192,14 +192,17 @@ Paginated with LIMIT/OFFSET ($1/$2; filter params follow)."
   (postmodern:query
    (:limit
     (:order-by
-     (:select 'cave-events.* (:as 'cave-users.username 'actor)
-              (:as 'cave-repos.name 'repo-name)
-      :from 'cave-events
-      :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
-      :inner-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id)
-      :where (:and (:= 'cave-repos.is-private nil)
-                   (:!= 'cave-events.event-type "git.clone")))
-     (:desc 'cave-events.created-at))
+     (:select 'event.* (:as 'actor.username 'actor)
+              (:as 'repo.name 'repo-name)
+              (:as (:coalesce 'org.name 'owner.username) 'owner-name)
+      :from (:as 'cave-events 'event)
+      :left-join (:as 'cave-users 'actor) :on (:= 'event.user-id 'actor.id)
+      :inner-join (:as 'cave-repos 'repo) :on (:= 'event.repo-id 'repo.id)
+      :left-join (:as 'cave-orgs 'org) :on (:= 'repo.org-id 'org.id)
+      :left-join (:as 'cave-users 'owner) :on (:= 'repo.owner-id 'owner.id)
+      :where (:and (:= 'repo.is-private nil)
+                   (:!= 'event.event-type "git.clone")))
+     (:desc 'event.created-at))
     limit)
    :plists))
 
@@ -1294,4 +1297,3 @@ with cave workflow jobs. CHECKS is a list of plists (:name :state :description
                  :single)))
     ;; Returns the NEW value, so the assigned number is result - 1
     (1- result)))
-

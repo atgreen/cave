@@ -57,6 +57,10 @@ test("mobile Settings contains long credentials within the viewport", async ({ p
   `);
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  const categoryRailMask = await page.locator(".settings-nav").evaluate(
+    (element) => getComputedStyle(element).maskImage,
+  );
+  expect(categoryRailMask).toContain("linear-gradient");
 });
 
 test("mobile data tables scroll inside the viewport", async ({ page }) => {
@@ -78,6 +82,10 @@ test("mobile data tables scroll inside the viewport", async ({ page }) => {
   }));
   expect(dimensions.pageWidth).toBe(390);
   expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.clientWidth);
+  const tableMask = await page.locator("table").evaluate(
+    (element) => getComputedStyle(element).maskImage,
+  );
+  expect(tableMask).toContain("linear-gradient");
 });
 
 test("mobile repository tabs signal that more tabs are available", async ({ page }) => {
@@ -171,4 +179,29 @@ test("single-purpose desktop forms use a focused reading measure", async ({ page
 
   const width = await page.locator(".form-page").evaluate((element) => element.getBoundingClientRect().width);
   expect(width).toBeLessThanOrEqual(768);
+});
+
+test("mobile dashboard repository rows read as three calm lines", async ({ page }) => {
+  await renderAtMobileWidth(page, `
+    <ul class="repo-list dashboard-repo-list">
+      <li>
+        <div class="dashboard-repo-heading"><a>cave</a><span class="badge">private</span></div>
+        <span class="desc">A deliberately long repository description that should not compete with metadata.</span>
+        <span class="repo-meta">Updated 2 hours ago</span>
+      </li>
+    </ul>
+  `);
+
+  const positions = await page.locator(".dashboard-repo-list li").evaluate((row) => {
+    const children = [...row.children].map((child) => child.getBoundingClientRect());
+    return {
+      display: getComputedStyle(row).display,
+      y: children.map((child) => Math.round(child.y)),
+      lineClamp: getComputedStyle(row.querySelector(".desc")).webkitLineClamp,
+    };
+  });
+  expect(positions.display).toBe("grid");
+  expect(positions.y[1]).toBeGreaterThan(positions.y[0]);
+  expect(positions.y[2]).toBeGreaterThan(positions.y[1]);
+  expect(positions.lineClamp).toBe("2");
 });

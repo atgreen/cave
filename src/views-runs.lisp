@@ -311,6 +311,25 @@
          " Mark as pre-release"))
        (:button.btn.btn-primary :type "submit" "Publish release")))))
 
+(defun workflow-run-active-p (run)
+  "True while RUN still represents current work rather than history."
+  (member (getf run :status) '("queued" "assigned" "running") :test #'equal))
+
+(defun render-workflow-run-list (owner-name repo-name workflow-runs)
+  "Render WORKFLOW-RUNS with the shared compact row treatment."
+  (spinneret:with-html
+    (:ul.data-list.workflow-run-list
+     (dolist (wr workflow-runs)
+       (:li
+        (:a :href (format nil "/~A/~A/runs/w/~A" owner-name repo-name (getf wr :id))
+            :style "font-weight:600"
+         (getf wr :workflow-name))
+        (:span.badge (getf wr :trigger-event))
+        (render-status-badge (getf wr :status))
+        (render-short-sha (getf wr :commit-sha))
+        (:span.workflow-file (getf wr :workflow-file))
+        (:span.run-age (render-relative-time (getf wr :created-at))))))))
+
 (defun view-runs (&key owner-name repo runs workflow-runs)
   "Render the runs list — both automations and workflows."
   (let ((repo-name (getf repo :name)))
@@ -319,21 +338,24 @@
 
       ;; Workflow runs
       (when workflow-runs
-        (:section
-         (:h2 "Workflow runs")
-         (:ul.data-list
-          (dolist (wr workflow-runs)
-            (:li :style "flex-wrap:wrap"
-             (:a :href (format nil "/~A/~A/runs/w/~A" owner-name repo-name (getf wr :id))
-                 :style "font-weight:600"
-              (getf wr :workflow-name))
-             (:span.badge (getf wr :trigger-event))
-             (render-status-badge (getf wr :status))
-             (render-short-sha (getf wr :commit-sha))
-             (:span :style "font-size:.75rem;color:var(--text-muted)"
-              (getf wr :workflow-file))
-             (:span :style "margin-left:auto;color:var(--text-muted);font-size:.75rem"
-              (render-relative-time (getf wr :created-at))))))))
+        (let* ((active (remove-if-not #'workflow-run-active-p workflow-runs))
+               (finished (remove-if #'workflow-run-active-p workflow-runs))
+               (recent-count (min 10 (length finished)))
+               (recent (subseq finished 0 recent-count))
+               (older (nthcdr recent-count finished)))
+          (:section.runs-panel
+           (:h2 "Workflow runs")
+           (when active
+             (:h3.run-group-title "Active")
+             (render-workflow-run-list owner-name repo-name active))
+           (when recent
+             (:h3.run-group-title "Recent")
+             (render-workflow-run-list owner-name repo-name recent))
+           (when older
+             (:details.run-archive
+              (:summary
+               (format nil "Show ~D older run~:P" (length older)))
+              (render-workflow-run-list owner-name repo-name older))))))
 
       ;; Automation runs
       (:section

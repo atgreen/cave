@@ -9,6 +9,8 @@ const settingsViews = fs.readFileSync(path.join(root, "src/views-settings.lisp")
 const baseViews = fs.readFileSync(path.join(root, "src/views-base.lisp"), "utf8");
 const runsViews = fs.readFileSync(path.join(root, "src/views-runs.lisp"), "utf8");
 const accountRoutes = fs.readFileSync(path.join(root, "src/server-accounts.lisp"), "utf8");
+const activityModel = fs.readFileSync(path.join(root, "src/model-activity.lisp"), "utf8");
+const repoModel = fs.readFileSync(path.join(root, "src/model-repos.lisp"), "utf8");
 
 function hexToRgb(hex) {
   return hex.match(/[a-f\d]{2}/gi).map((channel) => parseInt(channel, 16) / 255);
@@ -120,12 +122,50 @@ test("run links use the shared link colour token", () => {
   expect(runsViews).not.toContain("var(--primary)");
 });
 
+test("workflow runs separate active work and collapse older history", () => {
+  expect(runsViews).toContain("(defun workflow-run-active-p");
+  expect(runsViews).toContain("(:h3.run-group-title \"Active\")");
+  expect(runsViews).toContain("(:h3.run-group-title \"Recent\")");
+  expect(runsViews).toContain("(:details.run-archive");
+  expect(runsViews).toContain("10 (length finished)");
+  expect(styles).toMatch(/\.run-archive\s*>\s*summary\s*\{/);
+});
+
 test("activity feeds omit Cave's internal Dolt synchronization refs", () => {
   expect(baseViews).toContain("(defun internal-feed-ref-p");
   expect(baseViews).toContain('"refs/dolt/"');
   expect(baseViews).toContain('"__dolt_remote_info__"');
   expect(baseViews).toContain("(defun visible-feed-events");
   expect(accountRoutes.match(/:events \(visible-feed-events/g)).toHaveLength(2);
+});
+
+test("the public landing feed is balanced with its eight featured repositories", () => {
+  expect(accountRoutes).toMatch(
+    /view-public-landing[\s\S]*?list-recent-public-events :limit 100\)[\s\S]*?:limit 8\)/,
+  );
+});
+
+test("activity entries use human copy and link their repository context", () => {
+  expect(baseViews).toContain('(equal type "pr.merge_override")');
+  expect(baseViews).toContain("bypassed merge checks");
+  expect(baseViews).toContain("(defun render-event");
+  expect(baseViews).toContain("(repo-url owner repo)");
+  expect(baseViews).toContain("(render-event ev)");
+  expect(baseViews).not.toContain('(:span (format-event ev))');
+  expect(baseViews).not.toContain('(format nil "~A: ~A" actor type)');
+  for (const model of [activityModel, repoModel]) {
+    expect(model).toContain("'owner-name");
+    expect(model).toContain("'owner.username");
+  }
+});
+
+test("dashboard repository rows expose a mobile-friendly content hierarchy", () => {
+  expect(baseViews).toContain("(:ul.repo-list.dashboard-repo-list");
+  expect(baseViews).toContain("(:div.dashboard-repo-heading");
+  expect(baseViews).toContain("(:span.repo-meta");
+  expect(styles).toMatch(
+    /@media\s*\(max-width:\s*720px\)[\s\S]*\.dashboard-repo-list li\s*\{[^}]*display:\s*grid/,
+  );
 });
 
 test("shared chrome exposes compact mobile navigation markup", () => {

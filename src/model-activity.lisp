@@ -21,13 +21,16 @@
   (postmodern:query
    (:limit
     (:order-by
-     (:select 'cave-events.* (:as 'cave-users.username 'actor)
-              (:as 'cave-repos.name 'repo-name)
-      :from 'cave-events
-      :left-join 'cave-users :on (:= 'cave-events.user-id 'cave-users.id)
-      :left-join 'cave-repos :on (:= 'cave-events.repo-id 'cave-repos.id)
-      :where (:!= 'cave-events.event-type "git.clone"))
-     (:desc 'cave-events.created-at))
+     (:select 'event.* (:as 'actor.username 'actor)
+              (:as 'repo.name 'repo-name)
+              (:as (:coalesce 'org.name 'owner.username) 'owner-name)
+      :from (:as 'cave-events 'event)
+      :left-join (:as 'cave-users 'actor) :on (:= 'event.user-id 'actor.id)
+      :left-join (:as 'cave-repos 'repo) :on (:= 'event.repo-id 'repo.id)
+      :left-join (:as 'cave-orgs 'org) :on (:= 'repo.org-id 'org.id)
+      :left-join (:as 'cave-users 'owner) :on (:= 'repo.owner-id 'owner.id)
+      :where (:!= 'event.event-type "git.clone"))
+     (:desc 'event.created-at))
     limit)
    :plists))
 

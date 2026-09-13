@@ -330,21 +330,38 @@ last crumb is a pair when ?path= is empty)."
     ((or (null value) (eq value :null)) "someone")
     (t value)))
 
-(defun format-event (event)
-  "Format an event as a short English sentence."
-  (let ((type (getf event :event-type))
-        (actor (->actor (getf event :actor)))
-        (md (event-metadata event)))
-    (cond
-      ((equal type "issue.created") (format nil "~A opened an issue" actor))
-      ((equal type "review.submitted") (format nil "~A submitted a review" actor))
-      ((equal type "pr.merged") (format nil "~A merged a pull request" actor))
-      ((equal type "repo.created") (format nil "~A created a repository" actor))
-      ((equal type "repo.forked") (format nil "~A forked a repository" actor))
-      ((equal type "changeset.merged") (format nil "~A merged a changeset" actor))
-      ((equal type "git.push") (format-push-event actor md))
-      ((equal type "git.clone") (format nil "~A cloned" actor))
-      (t (format nil "~A: ~A" actor type)))))
+(defun format-event (event &key (include-repo t))
+  "Format EVENT as a short English sentence, with repository context by default."
+  (let* ((type (getf event :event-type))
+         (actor (->actor (getf event :actor)))
+         (md (event-metadata event))
+         (repo (getf event :repo-name))
+         (copy
+           (cond
+             ((equal type "issue.created") (format nil "~A opened an issue" actor))
+             ((equal type "review.submitted") (format nil "~A submitted a review" actor))
+             ((equal type "pr.merged") (format nil "~A merged a pull request" actor))
+             ((equal type "pr.merge_override") (format nil "~A bypassed merge checks" actor))
+             ((equal type "repo.created") (format nil "~A created a repository" actor))
+             ((equal type "repo.forked") (format nil "~A forked a repository" actor))
+             ((equal type "changeset.merged") (format nil "~A merged a changeset" actor))
+             ((equal type "git.push") (format-push-event actor md))
+             ((equal type "git.clone") (format nil "~A cloned" actor))
+             (t (format nil "~A recorded repository activity" actor)))))
+    (if (and include-repo repo (not (eq repo :null)))
+        (format nil "~A in ~A" copy repo)
+        copy)))
+
+(defun render-event (event)
+  "Render human-facing event copy and link its repository context when known."
+  (let ((owner (getf event :owner-name))
+        (repo (getf event :repo-name)))
+    (spinneret:with-html
+      (:span.activity-copy
+       (format-event event :include-repo nil)
+       (when (and owner repo (not (eq owner :null)) (not (eq repo :null)))
+         (:span " in "
+          (:a :href (repo-url owner repo) (format nil "~A/~A" owner repo))))))))
 
 (defun view-account-pending (&key username)
   "Shown after OIDC callback for a self-registered user awaiting admin approval."
@@ -540,7 +557,7 @@ data: featured repositories, recent activity, and instance stats."
             (:ul.issue-list
              (dolist (ev events)
                (:li
-                (:span (format-event ev))
+                (render-event ev)
                 (let ((rel (format-relative-time (getf ev :created-at))))
                   (when rel
                     (:span :style "color:var(--text-muted);font-size:.8rem;margin-left:.5rem" rel))))))
@@ -560,21 +577,22 @@ data: featured repositories, recent activity, and instance stats."
       (:h2 "Your repositories")
       (:a.btn.btn-primary :href "/-/new-repo" "New repository"))
      (if repos
-         (:ul.repo-list
+         (:ul.repo-list.dashboard-repo-list
           (dolist (repo repos)
             (let ((pushed (or (getf repo :last-pushed-at)
                               (getf repo :updated-at))))
               (:li
-               (:a :href (repo-url username (getf repo :name))
-                (getf repo :name))
-               (when (getf repo :is-private)
-                 (:span.badge "private"))
-               (when (getf repo :is-mirror)
-                 (:span.badge "mirror"))
+               (:div.dashboard-repo-heading
+                (:a :href (repo-url username (getf repo :name))
+                 (getf repo :name))
+                (when (getf repo :is-private)
+                  (:span.badge "private"))
+                (when (getf repo :is-mirror)
+                  (:span.badge "mirror")))
                (when (getf repo :description)
                  (:span.desc (getf repo :description)))
                (when (format-relative-time pushed)
-                 (:span.repo-meta :style "margin-left:auto;color:var(--text-muted);font-size:.85rem"
+                 (:span.repo-meta
                   "Updated " (format-relative-time pushed)))))))
          (:p.empty "No personal repositories yet.")))
 
@@ -595,12 +613,10 @@ data: featured repositories, recent activity, and instance stats."
        (:ul.issue-list
         (dolist (ev events)
           (:li
-           (:span (format-event ev))
+           (render-event ev)
            (let ((rel (format-relative-time (getf ev :created-at))))
              (when rel
-               (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:.5rem" rel)))
-           (when (and (getf ev :repo-name) (not (eq (getf ev :repo-name) :null)))
-             (:span.badge :style "margin-left:auto" (getf ev :repo-name))))))))))
+               (:span :style "color:var(--text-muted);font-size:.85rem;margin-left:auto" rel))))))))))
 
 ;;; ========================== PERSONAL REPO CREATION ==========================
 

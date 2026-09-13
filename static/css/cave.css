@@ -287,6 +287,13 @@ section { margin-bottom: var(--sp-8); }
   color: var(--text-muted);
   font-size: .8rem;
 }
+.dashboard-repo-heading { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.dashboard-repo-list .repo-meta {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: .85rem;
+  white-space: nowrap;
+}
 .issue-number {
   font-family: var(--font-mono);
   color: var(--text-muted);
@@ -638,6 +645,36 @@ section { margin-bottom: var(--sp-8); }
   background: var(--surface);
 }
 .data-list code { color: var(--text-muted); font-size: .75rem; }
+
+/* --- Workflow run history --- */
+.run-group-title {
+  margin: var(--sp-4) 0 var(--sp-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.workflow-run-list li { flex-wrap: wrap; }
+.workflow-run-list .workflow-file { color: var(--text-muted); font-size: .75rem; }
+.workflow-run-list .run-age {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: .75rem;
+  white-space: nowrap;
+}
+.run-archive { margin-top: var(--sp-3); }
+.run-archive > summary {
+  width: max-content;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: .78rem;
+}
+.run-archive[open] > summary { margin-bottom: var(--sp-2); }
 
 /* --- Personal settings --- */
 .settings-layout {
@@ -1515,6 +1552,11 @@ html[data-theme="dracula"] {
     -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
     mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
   }
+  .settings-nav, .data-table {
+    scrollbar-width: thin;
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 32px), transparent 100%);
+  }
   .repo-tab { white-space: nowrap; }
   .container { padding: var(--sp-4) var(--sp-3); }
   .repo-title-row { align-items: flex-start; flex-direction: column; gap: var(--sp-2); }
@@ -1527,6 +1569,15 @@ html[data-theme="dracula"] {
   .settings-content .data-list li > * { min-width: 0; max-width: 100%; }
   .settings-content .data-list code { overflow-wrap: anywhere; word-break: break-all; }
   .data-table { display: block; max-width: 100%; overflow-x: auto; white-space: nowrap; }
+  .dashboard-repo-list li { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-1); }
+  .dashboard-repo-list .desc {
+    display: -webkit-box;
+    margin-left: 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .dashboard-repo-list .repo-meta { margin-left: 0; }
   .repo-info-bar, .repo-last-commit { align-items: flex-start; flex-wrap: wrap; }
   .repo-last-msg { flex-basis: calc(100% - 7rem); }
   /* Long inline-code tokens (clone URLs, hashes) must wrap, not push width. */
