@@ -774,3 +774,39 @@
                             :updated (%rfc3339 (or (getf c :time)
                                                    (parse-git-date (getf c :date))))
                             :content (getf c :author))))))))
+
+;;; ========================== BEADS TAB ==========================
+
+(defun %parse-iso8601z (s)
+  "Universal-time for a \"2026-09-13T02:26:10Z\"-style timestamp, or NIL."
+  (when (and (stringp s) (>= (length s) 19))
+    (ignore-errors
+      (encode-universal-time
+       (parse-integer s :start 17 :end 19) (parse-integer s :start 14 :end 16)
+       (parse-integer s :start 11 :end 13) (parse-integer s :start 8 :end 10)
+       (parse-integer s :start 5 :end 7) (parse-integer s :start 0 :end 4) 0))))
+
+(defun %parse-beads-jsonl (text)
+  "Parse a beads issues.jsonl export into a list of hash tables.
+Skips malformed lines and non-issue records (agents, roles, …)."
+  (let ((issues nil))
+    (dolist (line (uiop:split-string text :separator '(#\Newline)))
+      (when (plusp (length (string-trim '(#\Space #\Return) line)))
+        (handler-case
+            (let ((obj (com.inuoe.jzon:parse line)))
+              (when (and (hash-table-p obj)
+                         (equal (gethash "_type" obj) "issue"))
+                (push obj issues)))
+          (error () nil))))
+    (nreverse issues)))
+
+(easy-routes:defroute beads-page ("/:owner/:repo-name/beads" :method :get) ()
+  (with-visible-repo (repo owner repo-name #'not-found)
+    (let* ((empty (chamber-is-empty owner repo-name))
+           (ref (unless empty (or (chamber-get-default-branch owner repo-name) "main")))
+           (content (when ref
+                      (chamber-get-blob owner repo-name ref ".beads/issues.jsonl")))
+           (issues (when content (%parse-beads-jsonl content))))
+      (html-response
+       (view-beads :owner-name owner :repo repo :issues issues
+                   :have-export (and content t))))))

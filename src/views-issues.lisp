@@ -809,3 +809,86 @@ existing-comments JSON array, ~A = the JSON-quoted POST action URL.")
             :style "border-color:var(--danger)" "Request changes")
            (:button.btn :type "submit" :name "state" :value "comment" "Comment"))))))))
 
+
+;;; ========================== BEADS TAB ==========================
+
+(defun %bfield (h key)
+  "String field KEY from a parsed-jzon hash H; NIL for absent/null/empty."
+  (let ((v (gethash key h)))
+    (when (and (stringp v) (plusp (length v))) v)))
+
+(defun %beads-priority-badge (p)
+  (let* ((n (if (numberp p) (floor p) 4))
+         (color (case n (0 "#e05d44") (1 "#fe7d37") (2 "#dfb317")
+                        (3 "#3fb950") (t "#9f9f9f"))))
+    (spinneret:with-html
+      (:span :style (format nil "color:~A;border:1px solid ~A;border-radius:9px;~
+                                 padding:0 .45em;font-size:.72rem;font-weight:600"
+                            color color)
+       (format nil "P~D" n)))))
+
+(defun %beads-row (b)
+  "One <details> row for a beads issue hash-table B."
+  (spinneret:with-html
+    (:details.beads-row
+     (:summary.beads-summary
+      (:code.beads-id (%bfield b "id"))
+      (%beads-priority-badge (gethash "priority" b))
+      (let ((ty (%bfield b "issue_type")))
+        (when (and ty (not (equal ty "task"))) (:span.badge ty)))
+      (:span.beads-title (%bfield b "title"))
+      (:span.beads-meta
+       (let* ((dc (gethash "dependency_count" b))
+              (dc (and (numberp dc) (plusp dc) (floor dc))))
+         (when dc (format nil "~D dep~:P · " dc)))
+       (or (%bfield b "assignee") "")
+       (let ((rel (format-relative-time (%parse-iso8601z (%bfield b "updated_at")))))
+         (when rel (format nil " · ~A" rel)))))
+     (let ((d (%bfield b "description")))
+       (when d (:pre.beads-desc d)))
+     (let ((r (%bfield b "close_reason")))
+       (when r (:p.beads-close-reason (:strong "Closed: ") r))))))
+
+(defun view-beads (&key owner-name repo issues have-export)
+  "Render the read-only Beads tab from a repo's committed .beads/issues.jsonl."
+  (let* ((repo-name (getf repo :name))
+         (in-progress (remove-if-not
+                       (lambda (b) (equal (%bfield b "status") "in_progress")) issues))
+         (open (sort (remove-if-not
+                      (lambda (b) (equal (%bfield b "status") "open")) issues)
+                     #'< :key (lambda (b) (let ((p (gethash "priority" b)))
+                                            (if (numberp p) p 4)))))
+         (closed (sort (remove-if-not
+                        (lambda (b) (equal (%bfield b "status") "closed")) issues)
+                       #'string> :key (lambda (b) (or (%bfield b "closed_at") "")))))
+    (page (:title (format nil "Beads — ~A/~A" owner-name repo-name))
+      (render-repo-tabs owner-name repo-name :beads :repo repo)
+      (cond
+        ((not have-export)
+         (:section
+          (:h1 "Beads")
+          (:p.empty "This repository has no committed beads export.")
+          (:p "Track work with "
+              (:a :href "https://github.com/gastownhall/beads" "beads")
+              ", then commit the issue export so it renders here:")
+          (:pre "bd export -o .beads/issues.jsonl
+git add .beads/issues.jsonl
+git commit -m \"beads: export issues\"")))
+        (t
+         (:section
+          (:h1 (format nil "Beads (~D open · ~D in progress · ~D closed)"
+                       (length open) (length in-progress) (length closed)))
+          (:p :style "color:var(--text-muted);font-size:.85rem"
+           "Read-only view of the committed " (:code ".beads/issues.jsonl")
+           " export on the default branch.")
+          (when in-progress
+            (:h2 "In progress")
+            (:div (dolist (b in-progress) (%beads-row b))))
+          (:h2 "Open")
+          (if open
+              (:div (dolist (b open) (%beads-row b)))
+              (:p.empty "No open beads."))
+          (when closed
+            (:h2 (format nil "Recently closed"))
+            (:div (dolist (b (subseq closed 0 (min 25 (length closed))))
+                    (%beads-row b))))))))))

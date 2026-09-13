@@ -37,6 +37,8 @@
       :href (format nil "/~A/~A/pulls" owner-name repo-name)
       (let ((n (and repo (count-open-pull-requests (getf repo :id)))))
         (if (and n (plusp n)) (format nil "Pull requests (~A)" n) "Pull requests")))
+     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :beads))
+      :href (format nil "/~A/~A/beads" owner-name repo-name) "Beads")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :runs))
       :href (format nil "/~A/~A/runs" owner-name repo-name) "Runs")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :releases))

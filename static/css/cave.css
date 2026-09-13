@@ -414,6 +414,19 @@ section { margin-bottom: var(--sp-8); }
 .repo-last-author { color: var(--text-muted); margin-left: auto; white-space: nowrap; }
 .repo-last-time { color: var(--text-muted); white-space: nowrap; font-size: .8rem; }
 
+/* Beads tab */
+.beads-row { border: 1px solid var(--border); border-radius: 6px; margin: .35rem 0;
+             background: var(--surface); }
+.beads-summary { display: flex; gap: .5rem; align-items: baseline; padding: .45rem .6rem;
+                 cursor: pointer; list-style: none; }
+.beads-summary::-webkit-details-marker { display: none; }
+.beads-id { color: var(--link); font-size: .8rem; white-space: nowrap; }
+.beads-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.beads-meta { color: var(--text-muted); font-size: .8rem; white-space: nowrap; }
+.beads-desc { margin: 0 .6rem .5rem; padding: .5rem; font-size: .82rem;
+              white-space: pre-wrap; background: var(--bg); border-radius: 4px; }
+.beads-close-reason { margin: 0 .6rem .5rem; color: var(--text-muted); font-size: .85rem; }
+
 /* Blame view */
 .blame-table { border: 1px solid var(--border); border-radius: 6px; overflow-x: auto;
                background: var(--surface); font-size: .85rem; }
