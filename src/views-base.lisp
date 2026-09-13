@@ -78,7 +78,7 @@ explicitly chosen another theme."
         (:nav.nav
          (:div.nav-inner
           (:a.nav-brand :href "/"
-           (:raw "<svg class=\"nav-logo\" viewBox=\"0 0 256 256\" aria-hidden=\"true\"><g fill=\"none\" stroke=\"currentColor\" stroke-width=\"16\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M104 62a24 24 0 0 1 48 0\"/><line x1=\"104\" y1=\"62\" x2=\"104\" y2=\"78\"/><line x1=\"152\" y1=\"62\" x2=\"152\" y2=\"78\"/><path d=\"M84 84H172\"/><path d=\"M92 92H164\"/><path d=\"M96 92L84 176Q84 188 96 188H160Q172 188 172 176L160 92\"/><path d=\"M92 196H164\"/></g><g fill=\"currentColor\"><path d=\"M112 142l-14 14 14 14 8-8 -6-6 6-6z\"/><rect x=\"123\" y=\"136\" width=\"10\" height=\"40\" rx=\"5\" transform=\"rotate(15 128 156)\"/><path d=\"M144 142l14 14 -14 14 -8-8 6-6 -6-6z\"/></g></svg>")
+           (:span.nav-logo :aria-hidden "true")
            (:span "Cave"))
           (:div.nav-right
            (if *current-user*
@@ -191,6 +191,34 @@ last crumb is a pair when ?path= is empty)."
         ((< delta (* 86400 365))
          (let ((mo (floor delta (* 86400 30)))) (format nil "~D month~:P ago" mo)))
         (t (let ((y (floor delta (* 86400 365)))) (format nil "~D year~:P ago" y)))))))
+
+(defun timestamp-universal-time (timestamp)
+  "Return TIMESTAMP as Common Lisp universal time, or NIL when unavailable."
+  (cond
+    ((integerp timestamp) timestamp)
+    ((typep timestamp 'local-time:timestamp)
+     (local-time:timestamp-to-universal timestamp))))
+
+(defun datetime-iso8601 (timestamp)
+  "Format TIMESTAMP as a machine-readable UTC ISO-8601 value."
+  (let ((universal-time (timestamp-universal-time timestamp)))
+    (when universal-time
+      (multiple-value-bind (second minute hour day month year)
+          (decode-universal-time universal-time 0)
+        (format nil "~4,'0D-~2,'0D-~2,'0DT~2,'0D:~2,'0D:~2,'0DZ"
+                year month day hour minute second)))))
+
+(defun format-datetime-utc (timestamp)
+  "Format TIMESTAMP as a concise, consistently UTC, human-readable date."
+  (let ((universal-time (timestamp-universal-time timestamp))
+        (months #("Jan" "Feb" "Mar" "Apr" "May" "Jun"
+                  "Jul" "Aug" "Sep" "Oct" "Nov" "Dec")))
+    (if universal-time
+        (multiple-value-bind (second minute hour day month year)
+            (decode-universal-time universal-time 0)
+          (declare (ignore second minute hour))
+          (format nil "~A ~D, ~D" (aref months (1- month)) day year))
+        "Unknown")))
 
 (defun parse-git-date (date)
   "Universal-time for a git %ai date like \"2026-09-12 15:33:15 -0400\", or NIL."
@@ -792,4 +820,3 @@ Month labels above, Mon/Wed/Fri gutter left, caption + level legend below."
        (render-runner-management runners registration-token
                                  (format nil "/o/~A/-/settings/runners/token" org-name)
                                  (format nil "/o/~A/-/settings/runners" org-name))))))
-

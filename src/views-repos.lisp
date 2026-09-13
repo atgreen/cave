@@ -11,25 +11,31 @@
 
 (defun render-repo-tabs (owner-name repo-name &optional active-tab &key repo
                                                                         ref default-branch)
-  "Render the repo breadcrumb and navigation tab bar. When REF is a non-default
+  "Render the repository identity and navigation. When REF is a non-default
    ref, the Overview and Code tabs carry ?ref=<ref> so the selected branch/tag
    persists as the user moves between those two views."
   (let ((q (if (and ref default-branch (not (equal ref default-branch)))
                (format nil "?ref=~A" (hunchentoot:url-encode ref))
                "")))
    (spinneret:with-html
-    (render-breadcrumbs
-     (list (list (format nil "/~A" owner-name) owner-name)
-           repo-name))
-    (when (and repo (getf repo :is-private)) (:span.badge "private"))
-    (when (and repo (getf repo :is-mirror)) (:span.badge "mirror"))
-    (when (and repo (getf repo :is-archived)) (:span.badge "archived"))
+    (:header.repo-header
+     (:div.repo-title-row
+      (:h1.repo-title
+       (:a.repo-owner :href (format nil "/~A" owner-name) owner-name)
+       (:span.repo-title-separator " / ")
+       (:a :href (repo-url owner-name repo-name) repo-name))
+      (:div.repo-badges
+       (when (and repo (getf repo :is-private)) (:span.badge "private"))
+       (when (and repo (getf repo :is-mirror)) (:span.badge "mirror"))
+       (when (and repo (getf repo :is-archived)) (:span.badge "archived"))))
+     (when (and repo (getf repo :description))
+       (:p.repo-description (getf repo :description))))
     ;; Marker for the 't' fuzzy file finder (static/js/filefinder.js): present
     ;; on every repo page so the shortcut works anywhere in the repo.
     (:div :id "file-finder-root" :hidden t
      :data-owner owner-name :data-repo repo-name
      :data-ref (or ref default-branch "main"))
-    (:nav.repo-tabs
+    (:nav.repo-tabs :aria-label "Repository"
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :overview))
       :href (format nil "/~A/~A~A" owner-name repo-name q) "Overview")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :code))
@@ -158,18 +164,13 @@
         (https-url (https-clone-url owner-name repo-name)))
     (spinneret:with-html
       (:div.clone-widget
-       :style "display:flex;align-items:stretch;gap:0;margin:var(--sp-3) 0;max-width:640px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;font-family:var(--font-mono);font-size:.85rem"
        (:button.clone-tab.clone-tab-active :type "button" :data-scheme "ssh"
-        :style "padding:.4rem .75rem;background:var(--surface);border:none;border-right:1px solid var(--border);color:var(--text);cursor:pointer;font-family:inherit;font-size:inherit"
         "SSH")
        (:button.clone-tab :type "button" :data-scheme "https"
-        :style "padding:.4rem .75rem;background:transparent;border:none;border-right:1px solid var(--border);color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:inherit"
         "HTTPS")
        (:input.clone-url-input :type "text" :readonly t
-        :data-ssh ssh-url :data-https https-url :value ssh-url
-        :style "flex:1;padding:.4rem .6rem;background:var(--bg);border:none;color:var(--text);font-family:inherit;font-size:inherit;outline:none")
+        :data-ssh ssh-url :data-https https-url :value ssh-url)
        (:button.clone-copy :type "button" :title "Copy URL"
-        :style "padding:.4rem .75rem;background:var(--surface);border:none;border-left:1px solid var(--border);color:var(--text);cursor:pointer;font-family:inherit;font-size:inherit"
         "Copy"))
       (:script (:raw "
 (function(){
@@ -209,53 +210,50 @@
     (page (:title (format nil "~A/~A — Cave" owner-name repo-name))
       (render-repo-tabs owner-name repo-name :overview :repo repo
                         :ref current-ref :default-branch default-branch)
-      (when (getf repo :description) (:p (getf repo :description)))
-      ;; Branch/tag switcher — picking a ref re-renders the README at that ref
-      ;; (stays on the overview, preserving the selection).
-      (unless empty
-        (:div.repo-info-bar
-         (:div.repo-info-left
-          (render-ref-switcher owner-name repo-name current-ref branches tags
-                               :can-write (current-user-repo-role repo)
-                               :href-fn (lambda (r)
-                                          (if (equal r default-branch)
-                                              (repo-url owner-name repo-name)
-                                              (format nil "/~A/~A?ref=~A" owner-name repo-name
-                                                      (hunchentoot:url-encode r)))))
-          ;; Match the Code tab's bar: don't leave this container empty.
-          (:span.repo-info-stat
-           (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
-          (when tags
+      (:div.repo-layout
+       (:div.repo-main
+        ;; Branch/tag switcher — picking a ref re-renders the README at that ref.
+        (unless empty
+          (:div.repo-info-bar
+           (:div.repo-info-left
+            (render-ref-switcher owner-name repo-name current-ref branches tags
+                                 :can-write (current-user-repo-role repo)
+                                 :href-fn (lambda (r)
+                                            (if (equal r default-branch)
+                                                (repo-url owner-name repo-name)
+                                                (format nil "/~A/~A?ref=~A" owner-name repo-name
+                                                        (hunchentoot:url-encode r)))))
             (:span.repo-info-stat
-             (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))))
-      ;; Clone widget — SSH/HTTPS toggle with copy button
-      (render-clone-widget owner-name repo-name)
-      ;; Watch / unwatch toggle — subscribe to in-app notifications
-      (when *current-user*
-        (:form :method "post" :style "display:inline-block;margin-bottom:var(--sp-4);margin-right:var(--sp-2)"
-         :action (format nil "/~A/~A/watch" owner-name repo-name)
-         (:button.btn :type "submit"
-          (if (watching-repo-p (getf repo :id) *current-user-id*)
-              "Unwatch" "Watch"))))
-      ;; Fork button (don't show on own repos)
-      (when (and *current-user*
-                 (not (equal (getf *current-user* :username) owner-name)))
-        (:form :method "post" :style "margin-bottom:var(--sp-4)"
-         :action (format nil "/~A/~A/fork" owner-name repo-name)
-         (:button.btn :type "submit"
-          (format nil "Fork to ~A/~A" (getf *current-user* :username) repo-name))))
-
-      (if empty
-          (:section
-           (:p.empty "This repository is empty. Push some code to get started:")
-           (:pre :style "background:var(--surface);padding:1rem;border-radius:var(--radius);border:1px solid var(--border);font-size:.85rem;overflow-x:auto"
-            (format nil "git remote add origin ~A~%git push -u origin main"
-                    (ssh-clone-url owner-name repo-name))))
-          ;; README
-          (when readme-html
-            (:section
-             (:h2 (or readme-filename "README"))
-             (:div.readme-content (:raw readme-html))))))))
+             (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
+            (when tags
+              (:span.repo-info-stat
+               (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))))
+        (if empty
+            (:section.repo-empty
+             (:p.empty "This repository is empty. Push some code to get started:")
+             (:pre
+              (format nil "git remote add origin ~A~%git push -u origin main"
+                      (ssh-clone-url owner-name repo-name))))
+            (when readme-html
+              (:section.repo-readme
+               (:h2 (or readme-filename "README"))
+               (:div.readme-content (:raw readme-html))))))
+       (:aside.repo-sidebar :aria-label "Repository details"
+        (:section.repo-sidebar-section
+         (:h2 "Clone")
+         (render-clone-widget owner-name repo-name))
+        (when *current-user*
+          (:section.repo-sidebar-section
+           (:h2 "Actions")
+           (:div.repo-actions
+            (:form :method "post" :action (format nil "/~A/~A/watch" owner-name repo-name)
+             (:button.btn :type "submit"
+              (if (watching-repo-p (getf repo :id) *current-user-id*)
+                  "Unwatch" "Watch")))
+            (when (not (equal (getf *current-user* :username) owner-name))
+              (:form :method "post" :action (format nil "/~A/~A/fork" owner-name repo-name)
+               (:button.btn :type "submit"
+                (format nil "Fork to ~A" (getf *current-user* :username)))))))))))))
 
 (defun render-verified-badge (sig)
   "Render the green Verified / amber Unverified pill if SIG is non-NIL."
@@ -312,22 +310,29 @@
             "Create branch “" (:span.ref-create-label) "” from " current-ref)))))
     (:style (:raw "
 .ref-switcher{position:relative;display:inline-block;vertical-align:middle}
-.ref-switcher-btn{cursor:pointer;font:inherit;background:#f6f6f6;border:1px solid #d0d0d0;border-radius:5px;padding:2px 10px}
-.ref-switcher-btn:hover{background:#efefef}
+.ref-switcher-btn{cursor:pointer;font:inherit;background:var(--surface);color:var(--text);
+  border:1px solid var(--border);border-radius:var(--radius);padding:5px 10px}
+.ref-switcher-btn:hover{background:var(--surface-hover)}
 .ref-switcher-name{font-weight:600}
-.ref-switcher-menu{position:absolute;left:0;z-index:30;margin-top:4px;min-width:260px;max-height:360px;overflow:auto;background:#fff;border:1px solid #d0d0d0;border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.14)}
-.ref-filter{display:block;width:calc(100% - 20px);margin:8px 10px;padding:5px 8px;border:1px solid #d0d0d0;border-radius:5px;font:inherit}
-.ref-switcher-tabs{display:flex;border-bottom:1px solid #eee}
-.ref-kind-tab{flex:1;cursor:pointer;background:none;border:none;padding:7px;font:inherit;color:#555}
-.ref-kind-tab.active{color:#c2410c;box-shadow:inset 0 -2px 0 #c2410c}
+.ref-switcher-menu{position:absolute;left:0;z-index:30;margin-top:4px;min-width:260px;
+  max-height:360px;overflow:auto;background:var(--surface);color:var(--text);
+  border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 12px 32px rgba(0,0,0,.28)}
+.ref-filter{display:block;width:calc(100% - 20px);margin:8px 10px;padding:6px 8px;
+  background:var(--bg);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--radius);font:inherit}
+.ref-switcher-tabs{display:flex;border-bottom:1px solid var(--border)}
+.ref-kind-tab{flex:1;cursor:pointer;background:none;border:none;padding:7px;font:inherit;color:var(--text-muted)}
+.ref-kind-tab.active{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
 .ref-list{list-style:none;margin:0;padding:4px 0}
 .ref-list li a{display:block;padding:5px 12px;color:inherit;text-decoration:none}
-.ref-list li a:hover{background:#f4f4f4}
+.ref-list li a:hover{background:var(--surface-hover)}
 .ref-list li a.current{font-weight:700}
-.ref-empty{padding:6px 12px;color:#888}
-.ref-create{padding:8px;border-top:1px solid #eee}
-.ref-create button{width:100%;cursor:pointer;font:inherit;text-align:left;background:#fff;border:1px solid #d0d0d0;border-radius:5px;padding:6px 8px}
-.ref-create button:hover{background:#f4f4f4}"))
+.ref-empty{padding:6px 12px;color:var(--text-muted)}
+.ref-create{padding:8px;border-top:1px solid var(--border)}
+.ref-create button{width:100%;cursor:pointer;font:inherit;text-align:left;
+  background:var(--surface);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--radius);padding:6px 8px}
+.ref-create button:hover{background:var(--surface-hover)}"))
     (:script (:raw "
 function caveToggleRefMenu(btn){var m=btn.parentNode.querySelector('.ref-switcher-menu');var open=m.hasAttribute('hidden');document.querySelectorAll('.ref-switcher-menu').forEach(function(x){x.setAttribute('hidden','')});if(open){m.removeAttribute('hidden');var f=m.querySelector('.ref-filter');if(f)f.focus();}}
 function caveShowRefKind(btn,kind){var m=btn.closest('.ref-switcher-menu');m.querySelectorAll('.ref-kind-tab').forEach(function(t){t.classList.toggle('active',t.dataset.kind===kind);});m.querySelectorAll('.ref-list').forEach(function(l){l.hidden=(l.dataset.kind!==kind);});caveFilterRefs(m.querySelector('.ref-filter'));}
@@ -343,63 +348,65 @@ document.addEventListener('click',function(e){if(!e.target.closest('.ref-switche
     (page (:title (format nil "Code — ~A/~A" owner-name repo-name))
       (render-repo-tabs owner-name repo-name :code :repo repo
                         :ref current-ref :default-branch default-branch)
-      (render-clone-widget owner-name repo-name)
-
-      ;; Branch/tag bar + last commit
-      (:div.repo-info-bar
-       (:div.repo-info-left
-        (render-ref-switcher owner-name repo-name current-ref branches tags
-                             :can-write (current-user-repo-role repo)
-                             :href-fn (lambda (r)
-                                        (if (equal r default-branch)
-                                            (format nil "/~A/~A/code" owner-name repo-name)
-                                            (format nil "/~A/~A/code?ref=~A" owner-name repo-name
-                                                    (hunchentoot:url-encode r)))))
-        (:span.repo-info-stat
-         (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
-        (when tags
+      (:div.repo-layout
+       (:div.repo-main
+        ;; Branch/tag bar + last commit
+        (:div.repo-info-bar
+         (:div.repo-info-left
+          (render-ref-switcher owner-name repo-name current-ref branches tags
+                               :can-write (current-user-repo-role repo)
+                               :href-fn (lambda (r)
+                                          (if (equal r default-branch)
+                                              (format nil "/~A/~A/code" owner-name repo-name)
+                                              (format nil "/~A/~A/code?ref=~A" owner-name repo-name
+                                                      (hunchentoot:url-encode r)))))
           (:span.repo-info-stat
-           (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))
-       (when commit-count
-         (:a.repo-info-stat :href (commits-url owner-name repo-name current-ref)
-          (format nil "~A ~:[commits~;commit~]" commit-count (= commit-count 1)))))
-      ;; Language breakdown bar
-      (render-language-bar language-stats)
-      ;; Last commit bar
-      (when recent-commits
-        (let ((last (first recent-commits)))
-          (:div.repo-last-commit
-           (:a :href (format nil "/~A/~A/commit/~A" owner-name repo-name
-                              (getf last :hash))
-            (:code.repo-last-hash (getf last :short-hash)))
-           (:span.repo-last-msg (getf last :subject))
-           (:span.repo-last-author (getf last :author))
-           (let ((rel (commit-relative-time last)))
-             (when rel
-               (:span.repo-last-time :title (getf last :date) rel))))))
-      ;; File tree
-      (when file-tree
-        (render-file-tree file-tree owner-name repo-name current-ref nil
-                          :last-commits last-commits))
-
-      ;; Recent commits
-      (when recent-commits
-        (:section
-         (:h2 "Recent commits "
-          (:a :style "font-size:.8rem;font-weight:normal"
-           :href (commits-url owner-name repo-name current-ref) "view all"))
-         (:ul.issue-list
-          (dolist (c recent-commits)
-            (let ((sig (when signatures (gethash (getf c :hash) signatures))))
-              (:li
-               (:a :href (format nil "/~A/~A/commit/~A" owner-name repo-name (getf c :hash))
-                (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
-               (:span (getf c :subject))
-               (render-verified-badge sig)
-               (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
-                :title (getf c :date)
-                (format nil "~A~@[ · ~A~]" (getf c :author)
-                        (commit-relative-time c))))))))))))
+           (format nil "~A ~:[branches~;branch~]" (length branches) (= (length branches) 1)))
+          (when tags
+            (:span.repo-info-stat
+             (format nil "~A ~:[tags~;tag~]" (length tags) (= (length tags) 1)))))
+         (when commit-count
+           (:a.repo-info-stat :href (commits-url owner-name repo-name current-ref)
+            (format nil "~A ~:[commits~;commit~]" commit-count (= commit-count 1)))))
+        (when recent-commits
+          (let ((last (first recent-commits)))
+            (:div.repo-last-commit
+             (:a :href (format nil "/~A/~A/commit/~A" owner-name repo-name
+                                (getf last :hash))
+              (:code.repo-last-hash (getf last :short-hash)))
+             (:span.repo-last-msg (getf last :subject))
+             (:span.repo-last-author (getf last :author))
+             (let ((rel (commit-relative-time last)))
+               (when rel
+                 (:span.repo-last-time :title (getf last :date) rel))))))
+        (when file-tree
+          (render-file-tree file-tree owner-name repo-name current-ref nil
+                            :last-commits last-commits))
+        (when recent-commits
+          (:section.repo-commits
+           (:div.section-heading
+            (:h2 "Recent commits")
+            (:a :href (commits-url owner-name repo-name current-ref) "View all"))
+           (:ul.issue-list
+            (dolist (c recent-commits)
+              (let ((sig (when signatures (gethash (getf c :hash) signatures))))
+                (:li
+                 (:a :href (format nil "/~A/~A/commit/~A" owner-name repo-name (getf c :hash))
+                  (:code :style "color:var(--link);font-size:.8rem" (getf c :short-hash)))
+                 (:span (getf c :subject))
+                 (render-verified-badge sig)
+                 (:span :style "margin-left:auto;color:var(--text-muted);font-size:.8rem"
+                  :title (getf c :date)
+                  (format nil "~A~@[ · ~A~]" (getf c :author)
+                          (commit-relative-time c))))))))))
+       (:aside.repo-sidebar :aria-label "Repository details"
+        (:section.repo-sidebar-section
+         (:h2 "Clone")
+         (render-clone-widget owner-name repo-name))
+        (when language-stats
+          (:section.repo-sidebar-section
+           (:h2 "Languages")
+           (render-language-bar language-stats))))))))
 
 ;;; ========================== TREE & BLOB PAGES ==========================
 
@@ -783,4 +790,3 @@ document.addEventListener('DOMContentLoaded', function() {
             (format nil "~A: ~A" (car tr) (cdr tr))))))
       (when diff-raw
         (render-diff2html diff-raw)))))
-

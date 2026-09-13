@@ -387,7 +387,7 @@
        (:h2 (format nil "Pending approval (~D)" (length pending-users)))
        (:p :style "color:var(--text-muted);font-size:.9rem;margin-bottom:var(--sp-2)"
         "Self-registered users waiting for you to let them in.")
-       (:table.data-table
+       (:table.data-table.admin-table :tabindex "0" :aria-label "Pending user approvals"
         (:thead (:tr (:th "Username") (:th "Email") (:th "Display name") (:th "Signed up") (:th "")))
         (:tbody
          (dolist (u pending-users)
@@ -395,7 +395,10 @@
             (:td (getf u :username))
             (:td (getf u :email))
             (:td (getf u :display-name))
-            (:td (princ-to-string (getf u :created-at)))
+            (:td
+             (let ((created-at (getf u :created-at)))
+               (:time :datetime (datetime-iso8601 created-at)
+                (format-datetime-utc created-at))))
             (:td
              (:form :method "post" :style "display:inline;margin-right:.5rem"
               :action (format nil "/-/admin/users/~A/approve" (getf u :id))
@@ -405,7 +408,7 @@
               (:button.btn.btn-sm :type "submit" "Reject")))))))))
     (:section
      (:h2 "Users")
-     (:table.data-table
+     (:table.data-table.admin-table :tabindex "0" :aria-label "Users"
       (:thead (:tr (:th "Username") (:th "Admin") (:th "Active") (:th "Approval") (:th "Created")))
       (:tbody
        (dolist (u users)
@@ -414,7 +417,10 @@
           (:td (if (getf u :is-admin) "yes" "no"))
           (:td (if (getf u :is-active) "yes" "no"))
           (:td (or (getf u :approval-status) "approved"))
-          (:td (princ-to-string (getf u :created-at))))))))
+          (:td
+           (let ((created-at (getf u :created-at)))
+             (:time :datetime (datetime-iso8601 created-at)
+              (format-datetime-utc created-at)))))))))
 
     (:section
      (:h2 "Runners")
@@ -546,8 +552,18 @@
   (let ((cli-path (cli-download-path)))
     (page (:title "Settings — Cave")
       (:h1 "Settings")
-
-      (:section
+      (:div.settings-layout
+       (:nav.settings-nav :aria-label "Settings sections"
+        (:span.settings-nav-title "Personal settings")
+        (:a :href "#appearance" "Appearance")
+        (:a :href "#security" "Security")
+        (:a :href "#cli" "CLI")
+        (:a :href "#ssh-keys" "SSH keys")
+        (:a :href "#gpg-keys" "GPG keys")
+        (:a :href "#runners" "Runners")
+        (:a :href "#api-tokens" "API tokens"))
+       (:div.settings-content
+      (:section.settings-section :id "appearance"
        (:h2 "Theme")
        (:form :method "post" :action "/-/settings/theme"
         (:div :style "display:flex;gap:var(--sp-2);align-items:end"
@@ -565,7 +581,7 @@
               (format nil "~A (custom)" (getf ct :name))))))
          (:button.btn.btn-primary :type "submit" "Apply"))))
 
-      (:section
+      (:section.settings-section :id "security"
        (:h2 "Security")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
         "Change your password or manage two-factor authentication. (Re-authentication is required.)")
@@ -573,7 +589,7 @@
        (:a.btn :href "/-/settings/totp" :style "margin-left:var(--sp-2)"
         "Two-factor authentication"))
 
-      (:section
+      (:section.settings-section :id "cli"
        (:h2 "CLI")
        (if cli-path
            (progn
@@ -589,7 +605,7 @@
 export CAVE_TOKEN=<your-api-token>
 ./cave --repo OWNER/REPO issue list"))
 
-      (:section
+      (:section.settings-section :id "ssh-keys"
        (:h2 "SSH keys")
        (if ssh-keys
            (:ul.data-list
@@ -638,7 +654,7 @@ export CAVE_TOKEN=<your-api-token>
                     :placeholder "ssh-ed25519 AAAA..."))
         (:button.btn :type "submit" "Add key")))
 
-      (:section
+      (:section.settings-section :id "gpg-keys"
        (:h2 "GPG keys")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
         "Register a GPG public key so your GPG-signed commits show as Verified.")
@@ -668,7 +684,7 @@ export CAVE_TOKEN=<your-api-token>
                     :placeholder "-----BEGIN PGP PUBLIC KEY BLOCK-----"))
         (:button.btn :type "submit" "Add key")))
 
-      (:section
+      (:section.settings-section :id "runners"
        (:h2 "Runners")
        (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:var(--sp-3)"
         "Runners scoped to your personal repositories.")
@@ -676,7 +692,7 @@ export CAVE_TOKEN=<your-api-token>
                                  "/-/settings/runners/token"
                                  "/-/settings/runners"))
 
-      (:section
+      (:section.settings-section :id "api-tokens"
        (:h2 "API tokens")
        (when new-token
          (:div.alert :style "border:1px solid var(--primary);padding:.75rem;margin-bottom:1rem"
@@ -698,7 +714,7 @@ export CAVE_TOKEN=<your-api-token>
          (:label :for "token_name" "Name")
          (:input :type "text" :id "token_name" :name "name" :required t
                  :placeholder "e.g. ci-bot"))
-        (:button.btn.btn-primary :type "submit" "Create token"))))))
+        (:button.btn.btn-primary :type "submit" "Create token"))))))))
 
 ;;; --- Search Results ---
 
