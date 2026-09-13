@@ -414,6 +414,17 @@ section { margin-bottom: var(--sp-8); }
 .repo-last-author { color: var(--text-muted); margin-left: auto; white-space: nowrap; }
 .repo-last-time { color: var(--text-muted); white-space: nowrap; font-size: .8rem; }
 
+/* Contribution heatmap */
+.heatmap-panel { border: 1px solid var(--border); border-radius: 6px;
+                 background: var(--surface); padding: .75rem .75rem .5rem;
+                 display: inline-block; max-width: 100%; }
+.heatmap-label { fill: var(--text-muted);
+                 font-family: var(--font-mono, monospace); font-size: 9px; }
+.heatmap-footer { display: flex; justify-content: space-between; align-items: center;
+                  gap: 1rem; margin-top: .4rem; color: var(--text-muted);
+                  font-size: .8rem; }
+.heatmap-legend { display: inline-flex; align-items: center; gap: .4rem; }
+
 /* Fuzzy file finder overlay */
 #ff-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 200;
               display: flex; align-items: flex-start; justify-content: center;

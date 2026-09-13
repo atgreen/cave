@@ -604,10 +604,20 @@ document.querySelectorAll('.repo-tab,.repo-tab-active').forEach(function(tab) {
     (declare (ignore s mi h))
     (format nil "~4,'0D-~2,'0D-~2,'0D" y mo d)))
 
+(defun %heat-cell-attrs (n)
+  "SVG fill + fill-opacity for a day with N events. Colors derive from the
+theme's --link via stepped opacity so every named theme gets a sane scale;
+empty days use a receded --border."
+  (if (zerop n)
+      (values "var(--border)" "0.4")
+      (values "var(--link)" (cond ((<= n 2) "0.3")
+                                  ((<= n 5) "0.55")
+                                  ((<= n 9) "0.75")
+                                  (t "1")))))
+
 (defun render-contribution-heatmap (day-counts)
-  "GitHub-style 53-week activity heatmap SVG. DAY-COUNTS: plists (:day :count).
-Colors derive from the theme's --link via stepped fill-opacity, so every
-theme (light, dark, nord, …) gets a sensible scale."
+  "GitHub-style 53-week activity heatmap. DAY-COUNTS: plists (:day :count).
+Month labels above, Mon/Wed/Fri gutter left, caption + level legend below."
   (let ((counts (make-hash-table :test 'equal))
         (total 0))
     (dolist (d day-counts)
@@ -619,32 +629,57 @@ theme (light, dark, nord, …) gets a sensible scale."
                       (declare (ignore s mi h d mo y))
                       (mod (1+ dow) 7)))   ; CL: 0=Mon … 6=Sun → 0=Sun
            (start (- now (* 86400 (+ sun-dow (* 52 7)))))
-           (cell 11) (gap 2))
+           (cell 10) (pitch 13) (left 30) (top 14)
+           (months #("Jan" "Feb" "Mar" "Apr" "May" "Jun"
+                     "Jul" "Aug" "Sep" "Oct" "Nov" "Dec")))
       (spinneret:with-html
-        (:div :style "overflow-x:auto"
-         (:p :style "color:var(--text-muted);font-size:.85rem;margin-bottom:.25rem"
-          (format nil "~D contribution~:P in the last year" total))
-         (:raw
-          (with-output-to-string (svg)
-            (format svg "<svg class=\"heatmap\" width=\"~D\" height=\"~D\" aria-label=\"activity heatmap\">"
-                    (* 53 (+ cell gap)) (* 7 (+ cell gap)))
-            (loop for w below 53
-                  do (loop for dow below 7
-                           for time = (+ start (* 86400 (+ (* w 7) dow)))
-                           while (<= time now)
-                           do (let* ((day (%day-string time))
-                                     (n (or (gethash day counts) 0))
-                                     (opacity (cond ((zerop n) nil)
-                                                    ((<= n 2) "0.25")
-                                                    ((<= n 5) "0.5")
-                                                    ((<= n 9) "0.75")
-                                                    (t "1"))))
-                                (format svg "<rect x=\"~D\" y=\"~D\" width=\"~D\" height=\"~D\" rx=\"2\" fill=\"~A\"~@[ fill-opacity=\"~A\"~]><title>~A: ~D event~:[s~;~]</title></rect>"
-                                        (* w (+ cell gap)) (* dow (+ cell gap))
-                                        cell cell
-                                        (if (zerop n) "var(--border)" "var(--link)")
-                                        opacity day n (= n 1)))))
-            (format svg "</svg>"))))))))
+        (:section
+         (:h2 "Activity")
+         (:div.heatmap-panel
+          (:div :style "overflow-x:auto"
+           (:raw
+            (with-output-to-string (svg)
+              (format svg "<svg class=\"heatmap\" width=\"~D\" height=\"~D\" role=\"img\" aria-label=\"activity heatmap\">"
+                      (+ left (* 53 pitch)) (+ top (* 7 pitch)))
+              (dolist (day '((1 . "Mon") (3 . "Wed") (5 . "Fri")))
+                (format svg "<text class=\"heatmap-label\" x=\"0\" y=\"~D\">~A</text>"
+                        (+ top (* (car day) pitch) 8) (cdr day)))
+              (let ((prev-month nil))
+                (loop for w below 53
+                      do (let ((m (multiple-value-bind (s mi h d mo)
+                                      (decode-universal-time
+                                       (+ start (* 86400 (* w 7))) 0)
+                                    (declare (ignore s mi h d))
+                                    mo)))
+                           (when (and prev-month (/= m prev-month) (< w 51))
+                             (format svg "<text class=\"heatmap-label\" x=\"~D\" y=\"9\">~A</text>"
+                                     (+ left (* w pitch)) (aref months (1- m))))
+                           (setf prev-month m))
+                         (loop for dow below 7
+                               for time = (+ start (* 86400 (+ (* w 7) dow)))
+                               while (<= time now)
+                               do (let* ((day (%day-string time))
+                                         (n (or (gethash day counts) 0)))
+                                    (multiple-value-bind (fill opacity) (%heat-cell-attrs n)
+                                      (format svg "<rect x=\"~D\" y=\"~D\" width=\"~D\" height=\"~D\" rx=\"2\" fill=\"~A\" fill-opacity=\"~A\"><title>~A: ~D event~:[s~;~]</title></rect>"
+                                              (+ left (* w pitch)) (+ top (* dow pitch))
+                                              cell cell fill opacity
+                                              day n (= n 1)))))))
+              (format svg "</svg>"))))
+          (:div.heatmap-footer
+           (:span (format nil "~:D contribution~:P in the last year" total))
+           (:span.heatmap-legend
+            "Less"
+            (:raw
+             (with-output-to-string (svg)
+               (format svg "<svg width=\"~D\" height=\"10\" aria-hidden=\"true\">" (* 5 13))
+               (loop for n in '(0 1 3 6 10)
+                     for i from 0
+                     do (multiple-value-bind (fill opacity) (%heat-cell-attrs n)
+                          (format svg "<rect x=\"~D\" y=\"0\" width=\"10\" height=\"10\" rx=\"2\" fill=\"~A\" fill-opacity=\"~A\"/>"
+                                  (* i 13) fill opacity)))
+               (format svg "</svg>")))
+            "More"))))))))
 
 (defun view-user-profile (&key user repos is-self activity)
   "Render a user's public profile / repo listing."
