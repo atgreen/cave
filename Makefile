@@ -27,7 +27,7 @@ zoekt-git-index: ## Build zoekt-git-index from sourcegraph/zoekt source
 	cd _zoekt && CGO_ENABLED=0 go build -o ../zoekt-git-index ./cmd/zoekt-git-index
 
 cave-server: src/*.lisp *.asd $(GIT_HEAD_STATE)
-	$(LISP) --eval '(asdf:make :cave)'
+	$(LISP) --eval '(asdf:make :cave :force t)'
 	chmod +x cave-server
 
 load: ## Load-test without building image

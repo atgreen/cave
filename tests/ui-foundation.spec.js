@@ -135,6 +135,7 @@ test("version-stamped Cave binaries depend on Git HEAD movement", () => {
   expect(makefile).toMatch(/GIT_HEAD_STATE\s*:?=.*git-path HEAD/);
   expect(makefile).toMatch(/GIT_HEAD_STATE[\s\S]*git-path logs\/HEAD/);
   expect(makefile).toMatch(/cave-server:[^\n]*\$\(GIT_HEAD_STATE\)/);
+  expect(makefile).toContain("(asdf:make :cave :force t)");
 });
 
 test("workflow recovery requeues work before deleting offline runners", () => {
