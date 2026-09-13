@@ -64,7 +64,48 @@
     (or (scan *language-by-ext*) (scan *language-by-name*))))
 
 
-(defun render-markdown (markdown-string &key raw-base-url)
+(defun autolink-issue-refs (html ref-base)
+  "Link #123 occurrences in HTML text to REF-BASE/issues/123, GitHub-style.
+Skips markup (inside tags), text already inside <a>/<code>/<pre>, numeric
+character entities (&#39;), and #123abc word-glued forms."
+  (let ((out (make-string-output-stream))
+        (i 0) (n (length html)) (skip 0))
+    (flet ((tag-name (tag)
+             (let* ((s (string-downcase tag))
+                    (end (or (position-if
+                              (lambda (c) (member c '(#\Space #\Tab #\Newline #\>)))
+                              s :start 1)
+                             (length s))))
+               (subseq s 1 end))))
+      (loop while (< i n)
+            do (let ((ch (char html i)))
+                 (cond
+                   ((char= ch #\<)
+                    (let* ((end (or (position #\> html :start i) (1- n)))
+                           (tag (subseq html i (1+ end)))
+                           (name (tag-name tag)))
+                      (write-string tag out)
+                      (cond ((member name '("a" "code" "pre") :test #'equal)
+                             (incf skip))
+                            ((member name '("/a" "/code" "/pre") :test #'equal)
+                             (setf skip (max 0 (1- skip)))))
+                      (setf i (1+ end))))
+                   ((and (char= ch #\#) (zerop skip)
+                         (< (1+ i) n) (digit-char-p (char html (1+ i)))
+                         (or (zerop i)
+                             (let ((prev (char html (1- i))))
+                               (not (or (alphanumericp prev) (char= prev #\&))))))
+                    (let ((end (or (position-if-not #'digit-char-p html :start (1+ i)) n)))
+                      (if (and (< end n) (alphanumericp (char html end)))
+                          (progn (write-char ch out) (incf i))
+                          (let ((num (subseq html (1+ i) end)))
+                            (format out "<a href=\"~A/issues/~A\">#~A</a>"
+                                    ref-base num num)
+                            (setf i end)))))
+                   (t (write-char ch out) (incf i))))))
+    (get-output-stream-string out)))
+
+(defun render-markdown (markdown-string &key raw-base-url issue-ref-base)
   "Render Markdown to sanitized HTML string.
    Uses cl-commonmark (CommonMark 0.31.2 + GFM tables), so the input is
    parsed exactly as GitHub renders it — no preprocessing workarounds needed.
@@ -78,7 +119,12 @@
                         raw-html)))
     ;; Proxy external images through camo so rendering never leaks the viewer's
     ;; IP to a third-party host (and mixed-content over HTTPS is fixed).
-    (camoify-img-src (sanitize-html:sanitize rewritten))))
+    (let ((final (camoify-img-src (sanitize-html:sanitize rewritten))))
+      ;; Issue-ref autolinking runs last, on sanitized HTML, so the links it
+      ;; injects (digits + our own path only) can't be stripped or abused.
+      (if issue-ref-base
+          (autolink-issue-refs final issue-ref-base)
+          final))))
 
 (defun rewrite-relative-img-src (html base-url)
   "Rewrite relative src= in <img> tags to use BASE-URL prefix."

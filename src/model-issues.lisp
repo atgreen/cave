@@ -86,6 +86,27 @@
           :set 'status status 'updated-at (:now)
           :where (:= 'id issue-id))))))
 
+(defun extract-issue-closers (text)
+  "Issue numbers referenced with a closing keyword — closes/fixes/resolves
+   (any tense) followed by #N — anywhere in TEXT, case-insensitive.
+   Returns a deduplicated list of integers in order of first mention."
+  (let ((keywords '("close" "closes" "closed" "fix" "fixes" "fixed"
+                    "resolve" "resolves" "resolved"))
+        (numbers nil)
+        (tokens (remove "" (uiop:split-string
+                            text :separator
+                            '(#\Space #\Tab #\Newline #\Return
+                              #\, #\. #\: #\; #\( #\) #\[ #\]))
+                        :test #'equal)))
+    (loop for (word next) on tokens
+          when (and next
+                    (member (string-downcase word) keywords :test #'equal)
+                    (> (length next) 1)
+                    (char= (char next 0) #\#))
+          do (let ((n (parse-integer next :start 1 :junk-allowed t)))
+               (when n (pushnew n numbers))))
+    (nreverse numbers)))
+
 ;;; ========================== ISSUE LABELS / ASSIGNEES / MILESTONES ====
 
 (defun issue-labels (issue-id)

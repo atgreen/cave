@@ -121,7 +121,13 @@
   (with-visible-repo (repo owner repo-name #'not-found)
     (let* ((num (parse-integer number :junk-allowed t))
            (issue (when num (find-issue (getf repo :id) num))))
-      (unless issue (return-from issue-page (not-found)))
+      (unless issue
+        ;; Gitea-style: #N autolinks always target /issues/N; when N is a
+        ;; pull request instead, bounce there.
+        (when (and num (find-pull-request (getf repo :id) num))
+          (return-from issue-page
+            (hunchentoot:redirect (format nil "/~A/~A/pulls/~A" owner repo-name num))))
+        (return-from issue-page (not-found)))
       (let* ((ms-id (getf issue :milestone-id))
              (comments (list-issue-comments (getf issue :id)))
              (comment-reactions (let ((h (make-hash-table)))
@@ -629,6 +635,10 @@ eligibility checks."
        (values nil "Merge reported success but the target branch did not advance — aborted (storage may be degraded). The source branch was left intact."))
       (t
        (merge-pull-request (getf pr :id))
+       ;; GitHub semantics: 'Closes #N' in landed commit messages auto-closes
+       ;; issues, but only when the merge target is the default branch.
+       (when (equal target (getf repo :default-branch))
+         (auto-close-issues-for-merge owner repo-name repo pr before after actor-id))
        (when (getf repo :auto-delete-branch)
          (chamber-delete-branch owner repo-name source))
        (log-event "pr.merged" :user-id actor-id :repo-id (getf repo :id)
@@ -645,6 +655,27 @@ eligibility checks."
        ;; so sync push mirrors ourselves — otherwise they fall behind (#18).
        (sync-repo-push-mirrors owner repo-name (getf repo :id))
        (values t "merged")))))
+
+(defun auto-close-issues-for-merge (owner repo-name repo pr before after actor-id)
+  "Close open issues referenced by closing keywords (closes/fixes/resolves #N)
+in the commit messages a PR merge just landed (BEFORE..AFTER on the target).
+Best-effort: never lets a failure disturb the merge that triggered it."
+  (ignore-errors
+   (when (and before after (not (string= before after)))
+     (let* ((disk (repo-disk-path owner repo-name))
+            (messages (nth-value 0 (git-run disk "log" "--format=%B"
+                                            (format nil "~A..~A" before after)))))
+       (dolist (n (extract-issue-closers (or messages "")))
+         (let ((issue (find-issue (getf repo :id) n)))
+           (when (and issue (equal (getf issue :status) "open"))
+             (update-issue (getf issue :id) :status "closed")
+             (create-issue-comment
+              :issue-id (getf issue :id)
+              :author-id (or actor-id (getf pr :author-id))
+              :body (format nil "Closed automatically by pull request #~A."
+                            (getf pr :number)))
+             (log-event "issue.closed" :user-id actor-id :repo-id (getf repo :id)
+                        :entity-type "issue" :entity-id (getf issue :id)))))))))
 
 (defun try-auto-merge (owner repo-name pr-id)
   "If PR-ID has auto-merge armed and is now eligible, merge it. Safe to call from

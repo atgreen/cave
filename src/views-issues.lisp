@@ -264,9 +264,10 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
                               (eql (getf m :id) (getf milestone :id)))
                (getf m :title)))))
           (:button.btn.btn-sm :type "submit" "Save"))))
-      (let ((ib (getf issue :body)))
+      (let ((ib (getf issue :body))
+            (ref-base (format nil "/~A/~A" owner-name repo-name)))
         (when (and ib (not (eq ib :null)))
-          (:div.issue-body (:raw (render-markdown ib)))))
+          (:div.issue-body (:raw (render-markdown ib :issue-ref-base ref-base)))))
       (render-reactions reactions owner-name repo-name issue-num)
 
       ;; Comments
@@ -279,7 +280,10 @@ the viewer's own and showing counts. Logged-in only; posts to the react route."
                (render-avatar (getf c :email) :size 16)
                (:strong (getf c :username))
                (:span.comment-date (princ-to-string (getf c :created-at))))
-              (:div.comment-body (:raw (render-markdown (getf c :body))))
+              (:div.comment-body
+               (:raw (render-markdown (getf c :body)
+                                      :issue-ref-base (format nil "/~A/~A"
+                                                              owner-name repo-name))))
               (render-reactions (and comment-reactions
                                      (gethash (getf c :id) comment-reactions))
                                 owner-name repo-name issue-num
