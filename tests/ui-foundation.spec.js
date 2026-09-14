@@ -94,6 +94,13 @@ test("repository pages have a clear identity and responsive metadata rail", () =
   expect(repoViews).not.toMatch(/\.ref-switcher[^\n]*background:\s*#(?:fff|f6f6f6)/i);
 });
 
+test("repository navigation only exposes Beads when an export exists", () => {
+  expect(repoViews).toContain("(defun repo-has-beads-p");
+  expect(repoViews).toMatch(
+    /\(when \(repo-has-beads-p owner-name repo-name\)[\s\S]*?:href \(format nil "\/~A\/~A\/beads" owner-name repo-name\) "Beads"\)/,
+  );
+});
+
 test("settings exposes scannable, deep-linkable categories", () => {
   expect(settingsViews).toContain("(:nav.settings-nav :aria-label \"Settings sections\"");
   for (const id of [

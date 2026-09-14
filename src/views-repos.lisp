@@ -10,6 +10,15 @@
        (:h1 (format nil "New repository in ~A" org-name))
        (render-new-repo-form (format nil "/o/~A/-/new-repo" org-name) :error error)))))
 
+(defun repo-has-beads-p (owner-name repo-name)
+  "Whether the repository's default branch has a committed Beads export."
+  (let ((ref (ignore-errors
+               (chamber-get-default-branch owner-name repo-name))))
+    (and ref
+         (ignore-errors
+           (chamber-get-blob-info owner-name repo-name ref
+                                  ".beads/issues.jsonl")))))
+
 (defun render-repo-tabs (owner-name repo-name &optional active-tab &key repo
                                                                         ref default-branch)
   "Render the repository identity and navigation. When REF is a non-default
@@ -49,8 +58,9 @@
       :href (format nil "/~A/~A/pulls" owner-name repo-name)
       (let ((n (and repo (count-open-pull-requests (getf repo :id)))))
         (if (and n (plusp n)) (format nil "Pull requests (~A)" n) "Pull requests")))
-     (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :beads))
-      :href (format nil "/~A/~A/beads" owner-name repo-name) "Beads")
+     (when (repo-has-beads-p owner-name repo-name)
+       (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :beads))
+        :href (format nil "/~A/~A/beads" owner-name repo-name) "Beads"))
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :runs))
       :href (format nil "/~A/~A/runs" owner-name repo-name) "Runs")
      (:a :class (format nil "repo-tab~@[ repo-tab-active~]" (eq active-tab :releases))
