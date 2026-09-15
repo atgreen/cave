@@ -19,7 +19,7 @@
   (setf *db-spec* (list name user password host :port port :pooled-p t))
   (postmodern:connect-toplevel name user password host :port port)
   (setf *db-connected* t)
-  (llog:info "Connected to database" :db name :host host :port port))
+  (llog:debug "Connected to database" :db name :host host :port port))
 
 (defun disconnect-db ()
   "Disconnect and clear the connection pool."
@@ -27,7 +27,7 @@
     (postmodern:disconnect-toplevel)
     (postmodern:clear-connection-pool)
     (setf *db-connected* nil)
-    (llog:info "Disconnected from database")))
+    (llog:debug "Disconnected from database")))
 
 ;;; --- Migrations ---
 

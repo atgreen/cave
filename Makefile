@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GIT_HEAD_STATE := $(wildcard $(shell git rev-parse --git-path HEAD 2>/dev/null) $(shell git rev-parse --git-path logs/HEAD 2>/dev/null))
 QUADLET_DIR = $(HOME)/.config/containers/systemd
 
-.PHONY: help build cave load lint clean test test-smoke test-workflow \
+.PHONY: help build cave load lint clean test test-unit test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
        runner-image tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
@@ -41,6 +41,9 @@ clean: ## Remove build artifacts
 
 test: ## Run all Playwright tests (requires running cave)
 	npx playwright test
+
+test-unit: ## Run fast Lisp unit tests (no services required)
+	XDG_CACHE_HOME=/tmp/cave-test-cache $(LISP) --load tests/db-logging.lisp
 
 test-smoke: ## Run smoke tests only
 	npx playwright test tests/smoke.spec.js
