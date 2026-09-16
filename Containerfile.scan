@@ -2,11 +2,13 @@
 #
 # The Cave runner creates the job container with `sleep infinity` and runs each
 # step via `bash -c`, so this image needs bash + sleep (busybox) + syft on PATH.
-# The runner clones the repo on the host and bind-mounts it at /workspace; the
-# scan step runs `syft -q dir:/workspace -o cyclonedx-json=...`.
+# The native `actions/checkout` runs git INSIDE this container (see
+# action-checkout in src/actions.lisp) to populate /workspace, so git must be on
+# PATH too; the scan step then runs
+# `syft -q dir:/workspace -o cyclonedx-json=...`.
 FROM docker.io/library/alpine:3.20
 
-RUN apk add --no-cache bash ca-certificates \
+RUN apk add --no-cache bash git ca-certificates \
  && apk add --no-cache --virtual .build curl \
  && curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
       | sh -s -- -b /usr/local/bin \
