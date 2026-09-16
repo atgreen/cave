@@ -925,7 +925,14 @@ CREATE TABLE cave_artifacts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_cave_artifacts_run ON cave_artifacts(workflow_run_id);
-CREATE UNIQUE INDEX idx_cave_artifacts_run_name ON cave_artifacts(workflow_run_id, name);"))
+CREATE UNIQUE INDEX idx_cave_artifacts_run_name ON cave_artifacts(workflow_run_id, name);")
+
+    (71 . "-- When a job was handed to a runner. The assigned-but-never-started grace
+-- window in reap-stale-workflow-jobs is measured from here rather than
+-- created_at, which a requeue cannot reset -- without it every retry after the
+-- first was eligible for reaping immediately and burned all its attempts in
+-- one grace window.
+ALTER TABLE cave_workflow_jobs ADD COLUMN assigned_at TIMESTAMPTZ;"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

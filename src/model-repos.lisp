@@ -584,7 +584,7 @@ a member. Truthy exactly when the current user has any membership."
   ;; Reset workflow jobs assigned to offline runners
   (postmodern:execute
    (:update 'cave-workflow-jobs
-    :set 'status "queued" 'runner-id :null
+    :set 'status "queued" 'runner-id :null 'assigned-at :null
     :where (:and (:= 'status "assigned")
                  (:in 'runner-id (:select 'id :from 'cave-runners
                                   :where (:= 'status "offline"))))))
@@ -649,13 +649,68 @@ a member. Truthy exactly when the current user has any membership."
    RETURNING w.id"
    :column))
 
+(defparameter *abandoned-workflow-job-sql*
+  "( NOT EXISTS (SELECT 1 FROM cave_runners r
+                  WHERE r.id = j.runner_id
+                    AND r.status = 'online'
+                    AND r.last_seen_at >= now() - interval '3 minutes')
+    OR ( j.status = 'assigned' AND j.started_at IS NULL
+         AND COALESCE(j.assigned_at, j.created_at) < now() - make_interval(mins => $3::int) ) )"
+  "SQL predicate: this job's runner can no longer be expected to finish it.
+
+   Either the runner is gone / offline / silent for 3 min, or the job has sat
+   'assigned' without ever starting past the grace window -- a runner that holds
+   a claim it cannot act on, e.g. one whose status callbacks fail while its task
+   stream stays up. Both reap branches interpolate THIS string so they cannot
+   drift apart: when only the requeue branch knew about the never-started case,
+   such a job exhausted its attempts and then matched neither branch, wedging
+   its runner until the hard timeout.
+
+   Correlates on `j` and takes the grace window as $3, so every query using it
+   must bind $3 to assigned-grace-minutes.")
+
+(defparameter *reap-requeue-sql*
+  (format nil
+          ;; The updated table j may not be referenced inside the FROM clause's
+          ;; join tree (Postgres: \"invalid reference to FROM-clause entry for
+          ;; table j\"), so the runner lookup is a correlated NOT EXISTS in
+          ;; WHERE — where j IS in scope. Clearing assigned_at hands the next
+          ;; attempt a full grace window instead of one shared with this try.
+          "UPDATE cave_workflow_jobs j
+              SET status='queued', runner_id=NULL, started_at=NULL,
+                  finished_at=NULL, assigned_at=NULL, attempts=attempts+1
+             FROM cave_workflow_runs w
+            WHERE w.id = j.workflow_run_id
+              AND j.status IN ('running','assigned')
+              AND j.attempts < $2
+              AND COALESCE(w.started_at, j.created_at) >= now() - make_interval(mins => $1::int)
+              AND ~A
+          RETURNING j.id"
+          *abandoned-workflow-job-sql*)
+  "Requeue abandoned jobs that still have attempts left and haven't hard-timed-out.")
+
+(defparameter *reap-fail-sql*
+  (format nil
+          ;; Same target-table-in-FROM restriction as the requeue statement.
+          "UPDATE cave_workflow_jobs j
+              SET status='failure', finished_at=now()
+             FROM cave_workflow_runs w
+            WHERE w.id = j.workflow_run_id
+              AND j.status IN ('running','assigned')
+              AND ( COALESCE(w.started_at, j.created_at) < now() - make_interval(mins => $1::int)
+                    OR ( j.attempts >= $2 AND ~A ) )
+          RETURNING j.workflow_run_id"
+          *abandoned-workflow-job-sql*)
+  "Fail jobs past the hard timeout, or abandoned ones with no attempts left.")
+
 (defun reap-stale-workflow-jobs (&key (max-minutes 120) (max-attempts 3)
                                       (assigned-grace-minutes 10))
-  "Recover wedged workflow jobs. A job is ABANDONED when its runner is gone /
-   offline / hasn't heartbeat in 3 min, or it has sat 'assigned' (never started)
-   past ASSIGNED-GRACE-MINUTES — typically a runner that died or restarted (e.g.
-   a cave deploy drops the gRPC streams). Such a job otherwise blocks its runner
-   forever via the one-task-per-runner check.
+  "Recover wedged workflow jobs. A job is ABANDONED per
+   *ABANDONED-WORKFLOW-JOB-SQL* — its runner is gone / offline / silent, or it
+   has sat 'assigned' (never started) past ASSIGNED-GRACE-MINUTES. That happens
+   when a runner dies or restarts (a cave deploy drops the gRPC streams), or
+   when it is connected but unable to run what it claimed. Such a job otherwise
+   blocks its runner via the one-task-per-runner check.
 
    Outcomes:
    - REQUEUE (retry) an abandoned job that still has attempts left and hasn't hit
@@ -663,49 +718,12 @@ a member. Truthy exactly when the current user has any membership."
    - FAIL (and finalize the run) a job past MAX-MINUTES, or an abandoned job that
      has exhausted MAX-ATTEMPTS. Failing finalizes required-check merge gating.
    Returns (values requeued-count failed-run-count)."
-  (let* ((requeued
-           ;; Recoverable: abandoned, retries left, not yet hard-timed-out.
-           (postmodern:query
-            ;; The updated table j may not be referenced inside the FROM
-            ;; clause's join tree (Postgres: \"invalid reference to FROM-clause
-            ;; entry for table j\"), so the runner lookup is a correlated
-            ;; NOT EXISTS in WHERE — where j IS in scope. NOT EXISTS(online &
-            ;; fresh runner) reproduces the old LEFT JOIN test
-            ;; (r.id IS NULL OR r.status <> 'online' OR r.last_seen_at stale).
-            "UPDATE cave_workflow_jobs j
-                SET status='queued', runner_id=NULL, started_at=NULL,
-                    finished_at=NULL, attempts=attempts+1
-               FROM cave_workflow_runs w
-              WHERE w.id = j.workflow_run_id
-                AND j.status IN ('running','assigned')
-                AND j.attempts < $2
-                AND COALESCE(w.started_at, j.created_at) >= now() - make_interval(mins => $1::int)
-                AND ( NOT EXISTS (SELECT 1 FROM cave_runners r
-                                   WHERE r.id = j.runner_id
-                                     AND r.status = 'online'
-                                     AND r.last_seen_at >= now() - interval '3 minutes')
-                      OR (j.status = 'assigned' AND j.started_at IS NULL
-                          AND j.created_at < now() - make_interval(mins => $3::int)) )
-            RETURNING j.id"
-            max-minutes max-attempts assigned-grace-minutes :column))
-         (failed-runs
-           ;; Unrecoverable: hard timeout, or abandoned with no attempts left.
-           (postmodern:query
-            ;; Same target-table-in-FROM restriction as the requeue query above:
-            ;; the runner-abandoned test is a correlated NOT EXISTS on j.
-            "UPDATE cave_workflow_jobs j
-                SET status='failure', finished_at=now()
-               FROM cave_workflow_runs w
-              WHERE w.id = j.workflow_run_id
-                AND j.status IN ('running','assigned')
-                AND ( COALESCE(w.started_at, j.created_at) < now() - make_interval(mins => $1::int)
-                      OR ( j.attempts >= $2
-                           AND NOT EXISTS (SELECT 1 FROM cave_runners r
-                                            WHERE r.id = j.runner_id
-                                              AND r.status = 'online'
-                                              AND r.last_seen_at >= now() - interval '3 minutes') ) )
-            RETURNING j.workflow_run_id"
-            max-minutes max-attempts :column)))
+  (let* ((requeued (postmodern:query *reap-requeue-sql*
+                                     max-minutes max-attempts assigned-grace-minutes
+                                     :column))
+         (failed-runs (postmodern:query *reap-fail-sql*
+                                        max-minutes max-attempts assigned-grace-minutes
+                                        :column)))
     (dolist (rid (remove-duplicates failed-runs))
       (update-workflow-run-status rid "failure"))
     (reconcile-running-workflow-runs)
@@ -936,10 +954,11 @@ UPDATE-JOB-STATUS-FOR-RUNNER, which also records the runner.)"
                          (t "")))
                :plist)))
     (when job
-      ;; Atomically assign
+      ;; Atomically assign. assigned_at starts the grace window that
+      ;; reap-stale-workflow-jobs uses to spot a job a runner never began.
       (postmodern:query
        (:update 'cave-workflow-jobs
-        :set 'status "assigned" 'runner-id runner-id
+        :set 'status "assigned" 'runner-id runner-id 'assigned-at (:now)
         :where (:and (:= 'id (getf job :id))
                      (:= 'status "queued"))
         :returning '*)
@@ -952,7 +971,7 @@ UPDATE-JOB-STATUS-FOR-RUNNER, which also records the runner.)"
    one-task-per-runner check."
   (postmodern:execute
    (:update 'cave-workflow-jobs
-    :set 'status "queued" 'runner-id :null
+    :set 'status "queued" 'runner-id :null 'assigned-at :null
     :where (:and (:= 'id job-id) (:= 'status "assigned")))))
 
 (defun requeue-automation-run (run-id)

@@ -45,6 +45,9 @@ test: ## Run all Playwright tests (requires running cave)
 test-unit: ## Run fast Lisp unit tests (no services required)
 	XDG_CACHE_HOME=/tmp/cave-test-cache $(LISP) --load tests/db-logging.lisp
 
+test-db: ## Run Lisp tests needing a throwaway PostgreSQL (see tests/reap-stale-jobs.lisp)
+	XDG_CACHE_HOME=/tmp/cave-test-cache $(LISP) --load tests/reap-stale-jobs.lisp
+
 test-smoke: ## Run smoke tests only
 	npx playwright test tests/smoke.spec.js
 
