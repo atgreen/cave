@@ -1,0 +1,11 @@
+[Unit]
+Description=Reclaim superseded container images on a Cave runner host, daily
+
+[Timer]
+OnCalendar=daily
+# A host that was off at the scheduled time still gets cleaned when it returns.
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

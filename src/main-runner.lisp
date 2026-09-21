@@ -303,8 +303,33 @@
          ;; Ensure the (native-volume) workdir base exists before cloning.
          (ignore-errors
           (ensure-directories-exist (concatenate 'string workdir-base "/")))
+         ;; A host that has filled up fails every job at the pull, and podman
+         ;; reports that as a pull failure - which points at the registry
+         ;; rather than the disk. Check first and say which it is (cave-pav).
+         (let ((shortfall (insufficient-disk-message
+                           workdir-base
+                           (or (ignore-errors
+                                (parse-integer (or (uiop:getenv "CAVE_RUNNER_MIN_FREE_MB") "")
+                                               :junk-allowed t))
+                               2048))))
+           (when shortfall
+             (format *error-output* "  ~A~%" shortfall)
+             ;; Put it in the job's own log too, so the person reading a failed
+             ;; run sees the reason rather than an unexplained failure.
+             (let ((first-step (first steps)))
+               (when first-step
+                 (ignore-errors
+                  (ag-grpc:grpc-call channel
+                                     "/cave.runner.RunnerService/AppendStepLog"
+                                     (make-instance 'cave::append-step-log-request
+                                                    :step-id (slot-value first-step 'cave::step-id)
+                                                    :chunk (format nil "~A~%" shortfall))
+                                     :response-type 'cave::append-step-log-response
+                                     :metadata (make-auth-metadata auth-token)))))
+             (setf overall-success nil)))
          ;; Pull image
-         (format t "  Pulling ~A...~%" image)
+         (when overall-success
+           (format t "  Pulling ~A...~%" image))
          (multiple-value-bind (_out _err exit)
              (uiop:run-program (list "podman" "pull" image)
                                :output '(:string :stripped t)
@@ -679,6 +704,47 @@
                                           :status (format nil "job:~A:~A" job-id status))
                            :response-type 'cave::update-task-status-response
                            :metadata (make-auth-metadata auth-token)))))
+
+(defun %df-available-kb (df-output)
+  "Available 1K blocks from POSIX `df -Pk` output, or NIL if it cannot be read.
+
+   -P guarantees one header line, then one line per filesystem with Available
+   in the fourth field, and no wrapping of long device names."
+  (let ((lines (remove-if (lambda (l) (zerop (length (string-trim " " l))))
+                          (uiop:split-string (or df-output "") :separator '(#\Newline)))))
+    (when (>= (length lines) 2)
+      (let ((fields (remove-if (lambda (f) (zerop (length f)))
+                               (uiop:split-string (second lines) :separator '(#\Space #\Tab)))))
+        (when (>= (length fields) 4)
+          (parse-integer (fourth fields) :junk-allowed t))))))
+
+(defun %available-kb (path)
+  "Free kilobytes on the filesystem holding PATH, or NIL if it cannot be read."
+  (handler-case
+      (multiple-value-bind (out err exit)
+          (uiop:run-program (list "df" "-Pk" path)
+                            :output '(:string :stripped t)
+                            :error-output '(:string :stripped t)
+                            :ignore-error-status t)
+        (declare (ignore err))
+        (when (zerop exit) (%df-available-kb out)))
+    (error () nil)))
+
+(defun insufficient-disk-message (path min-mb &key (available-kb :unset))
+  "A message naming the shortfall when PATH has less than MIN-MB free, else NIL.
+
+   A runner host that has filled up fails every job at the image pull, and
+   podman reports that as a pull failure - which reads like a registry or
+   network problem and sends whoever is debugging it to the wrong place
+   entirely (cave-pav). Say it plainly instead, before the job starts.
+
+   Unknown free space is not a failure: a df that cannot be read must not take
+   a runner out of service."
+  (let ((kb (if (eq available-kb :unset) (%available-kb path) available-kb)))
+    (when (and kb (< kb (* min-mb 1024)))
+      (format nil "runner has ~D MB free on ~A, below the ~D MB it needs; ~
+                   free disk space on this host before it can run jobs"
+              (floor kb 1024) path min-mb))))
 
 (defun run-watch-loop (channel auth-token runner-labels ephemeral)
     "Open a WatchTasks server stream and process tasks as they arrive.

@@ -1,0 +1,19 @@
+[Unit]
+Description=Reclaim superseded container images on a Cave runner host
+
+# Every update of the runner image leaves the previous one untagged, and nothing
+# removes it. At roughly 900MB each that fills a host in a handful of deploys -
+# h3 reached 100% with 42MB free, at which point every job failed at the image
+# pull with an error naming the registry rather than the disk (cave-pav).
+#
+# Only dangling images are touched: they are untagged and re-pullable, so the
+# worst case of an over-eager prune is one slower pull. Volumes are deliberately
+# left alone - the per-repo job caches live there and podman cannot tell a cache
+# that is between jobs from one that is abandoned.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/podman image prune -f
+# Exited containers from finished jobs, older than a day. Keeps recent ones
+# around for post-mortems.
+ExecStart=/usr/bin/podman container prune -f --filter until=24h
