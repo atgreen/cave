@@ -135,6 +135,12 @@ HostKey /var/lib/cave/ssh/ssh_host_ed25519_key
 HostKey /var/lib/cave/ssh/ssh_host_rsa_key
 AuthorizedKeysFile /var/lib/cave/ssh/authorized_keys
 SSHD
+  # sshd hands the forced command a sanitised environment - none of this
+  # container's variables survive - so where cave lives has to be stated here
+  # for cave-shell.sh and the post-receive hook to find it.
+  if [ -n "${CAVE_INTERNAL_URL:-}" ]; then
+    echo "SetEnv CAVE_INTERNAL_URL=${CAVE_INTERNAL_URL}" >> /etc/ssh/sshd_config.d/10-cave.conf
+  fi
 }
 
 setup_ssh_identity
