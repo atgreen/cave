@@ -19,6 +19,11 @@ func TestGeneratesSSHFrontEnd(t *testing.T) {
 		"Environment=CAVE_ROLE=ssh",
 		"PublishPort=127.0.0.1:9222:22",
 		"Environment=CAVE_DB_HOST=169.254.1.3",
+		// git-shell authenticates against the database, so the front end
+		// needs the credentials too - without them it silently falls back to
+		// the default password and every push fails authentication.
+		"Environment=CAVE_DB_USER=cave",
+		"Environment=CAVE_DB_PASSWORD=cave",
 		"Environment=CAVE_INTERNAL_URL=http://169.254.1.3:9080",
 	} {
 		if !strings.Contains(ssh, want) {

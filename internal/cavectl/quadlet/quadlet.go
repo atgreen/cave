@@ -283,6 +283,9 @@ Volume=%s-data.volume:/var/lib/cave
 Environment=CAVE_ROLE=ssh
 Environment=CAVE_DB_HOST=%s
 Environment=CAVE_DB_PORT=%d
+Environment=CAVE_DB_NAME=%s
+Environment=CAVE_DB_USER=%s
+Environment=CAVE_DB_PASSWORD=%s
 Environment=CAVE_INTERNAL_URL=http://%s:%d
 Label=cave.managed-by=cavectl
 Label=cave.instance=%s
@@ -296,6 +299,7 @@ WantedBy=default.target
 		cfg.ContainerName("ssh"), cfg.Cave.Image, hostLoopbackAddr,
 		sshBind, cfg.Ports.SSH, prefix,
 		hostLoopbackAddr, postgresPort(cfg),
+		cfg.DBName(), cfg.DBUser(), cfg.DBPassword(),
 		hostLoopbackAddr, cfg.Ports.HTTP, prefix)
 
 	// Zoekt
