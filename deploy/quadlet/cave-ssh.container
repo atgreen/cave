@@ -1,0 +1,40 @@
+[Unit]
+Description=Cave git-SSH front end
+After=cave.service
+Requires=cave.service
+
+# Git over SSH, served from its own network namespace so sshd sees real client
+# addresses.
+#
+# The bridge network's rootless port forwarding rewrites the source of every
+# inbound connection to the container's own address. sshd then cannot tell one
+# client from another: OpenSSH's PerSourcePenalties charges every failed probe
+# from the internet to the single address all legitimate users also arrive on,
+# so a few hours of scanner traffic locks out everybody until sshd is restarted.
+# Nothing can attribute a push to a real source address either.
+#
+# pasta preserves the client address, but cannot be combined with a bridge
+# network - so the front end takes pasta and reaches the server and database
+# through the host, while cave itself keeps the bridge and its service names.
+# --map-host-loopback makes the host's loopback reachable at 169.254.1.3, which
+# is where cave and postgres publish.
+[Container]
+ContainerName=cave-ssh
+Image=localhost/cave:prod
+Network=pasta:--map-host-loopback,169.254.1.3
+PublishPort=0.0.0.0:22:22
+# The repos it serves, plus the host keys and the authorized_keys that the main
+# server writes. This is the only state the front end touches.
+Volume=cave-data.volume:/var/lib/cave
+Environment=CAVE_ROLE=ssh
+# git-shell authenticates against the database directly; both it and cave's
+# internal endpoints are reached over the mapped host loopback.
+Environment=CAVE_DB_HOST=169.254.1.3
+Environment=CAVE_DB_PORT=5432
+Environment=CAVE_INTERNAL_URL=http://169.254.1.3:9080
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -28,7 +28,7 @@ if [ ! -f "$CONFIG" ]; then
  :secret-key "${CAVE_SECRET_KEY:-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
  :base-url "${CAVE_BASE_URL:-http://localhost:8080}"
  :runner-clone-base-url "${CAVE_RUNNER_CLONE_BASE_URL:-}"
- :authorized-keys-path "/home/cave/.ssh/authorized_keys"
+ :authorized-keys-path "${CAVE_AUTHORIZED_KEYS_PATH:-/var/lib/cave/ssh/authorized_keys}"
  :cave-shell "/usr/bin/cave-shell.sh"
  :oidc-issuer "${CAVE_OIDC_ISSUER:-}"
  :oidc-issuer-internal "${CAVE_OIDC_ISSUER_INTERNAL:-}"
@@ -54,6 +54,14 @@ if [ ! -f "$CONFIG" ]; then
 CONF
 fi
 
+# CAVE_ROLE=ssh runs this container as a git-SSH front end only: sshd, the shared
+# repos, and nothing else. It exists so the internet-facing listener can sit on a
+# network mode that preserves client source addresses (pasta), which the bridge's
+# rootless port forwarding cannot - every client arrives at sshd as the container's
+# own address there, so per-source decisions (OpenSSH PerSourcePenalties) and any
+# audit of who pushed are both meaningless. The main server keeps the bridge.
+CAVE_ROLE="${CAVE_ROLE:-server}"
+
 # Wait for PostgreSQL to accept connections
 DB_HOST="${CAVE_DB_HOST:-localhost}"
 DB_PORT="${CAVE_DB_PORT:-5432}"
@@ -70,19 +78,23 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# Run migrations
-cave-server migrate --config "$CONFIG"
+# Schema and authorized_keys belong to the server; the front end only reads what
+# the server wrote into the shared volume.
+if [ "$CAVE_ROLE" != "ssh" ]; then
+  # Run migrations
+  cave-server migrate --config "$CONFIG"
 
-# Generate initial authorized_keys
-cave-server update-keys \
-  --config "$CONFIG" \
-  --output /home/cave/.ssh/authorized_keys \
-  --cave-shell /usr/bin/cave-shell.sh || true
+  # Generate initial authorized_keys
+  cave-server update-keys \
+    --config "$CONFIG" \
+    --output "${CAVE_AUTHORIZED_KEYS_PATH:-/var/lib/cave/ssh/authorized_keys}" \
+    --cave-shell /usr/bin/cave-shell.sh || true
 
-chown cave:cave /home/cave/.ssh/authorized_keys 2>/dev/null || true
+  chown cave:cave "${CAVE_AUTHORIZED_KEYS_PATH:-/var/lib/cave/ssh/authorized_keys}" 2>/dev/null || true
 
-# Ensure cave user owns data dirs and repos
-chown -R cave:cave /var/lib/cave
+  # Ensure cave user owns data dirs and repos
+  chown -R cave:cave /var/lib/cave
+fi
 
 # serve runs as the cave user (see below), so the zoekt index dir must be
 # cave-writable. A freshly-mounted volume can come up root-owned — chown the
@@ -98,17 +110,41 @@ su -c "git config --global --add safe.directory '*'" cave
 su -c "git config --global user.email 'cave@localhost'" cave
 su -c "git config --global user.name 'Cave'" cave
 
-# Persist SSH host keys across restarts
-if [ ! -f /var/lib/cave/ssh_host_ed25519_key ]; then
-  ssh-keygen -A
-  cp /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub /var/lib/cave/ 2>/dev/null || true
-else
-  cp /var/lib/cave/ssh_host_*_key /var/lib/cave/ssh_host_*_key.pub /etc/ssh/ 2>/dev/null || true
-  chmod 600 /etc/ssh/ssh_host_*_key
-fi
+# This instance's SSH identity and the keys it trusts, both in the data volume
+# so they survive redeploys and so a separate SSH front-end container serves the
+# same endpoint identity from the same files.
+#
+# Generated here rather than baked into the image on purpose: image-time keys
+# are shared by every instance built from it, and their private halves ship to
+# anyone who can pull it, which makes a client's known_hosts pin worthless.
+# Instances that adopted those shared keys (under the old /var/lib/cave/ paths)
+# get a fresh identity here - a one-time known_hosts change for their users.
+setup_ssh_identity() {
+  install -d -m 700 -o cave -g cave /var/lib/cave/ssh
+  if [ ! -f /var/lib/cave/ssh/ssh_host_ed25519_key ]; then
+    echo "Generating this instance's SSH host keys..."
+    ssh-keygen -q -t ed25519 -N '' -f /var/lib/cave/ssh/ssh_host_ed25519_key
+    ssh-keygen -q -t rsa -b 4096 -N '' -f /var/lib/cave/ssh/ssh_host_rsa_key
+  fi
+  chmod 600 /var/lib/cave/ssh/ssh_host_*_key
+  touch /var/lib/cave/ssh/authorized_keys
+  chown cave:cave /var/lib/cave/ssh/authorized_keys
+  chmod 600 /var/lib/cave/ssh/authorized_keys
+  cat > /etc/ssh/sshd_config.d/10-cave.conf <<SSHD
+HostKey /var/lib/cave/ssh/ssh_host_ed25519_key
+HostKey /var/lib/cave/ssh/ssh_host_rsa_key
+AuthorizedKeysFile /var/lib/cave/ssh/authorized_keys
+SSHD
+}
 
-# Start sshd
-/usr/sbin/sshd
+setup_ssh_identity
+
+# -D -e keeps sshd in the foreground with its log on stderr, so auth failures,
+# refusals and penalties land in `podman logs` instead of nowhere at all. The ssh
+# role execs it as pid 1 further down instead of backgrounding it here.
+if [ "$CAVE_ROLE" != "ssh" ]; then
+  /usr/sbin/sshd -D -e &
+fi
 
 # Start Cave (foreground) — run from /opt/cave so static/ is found.
 #
@@ -128,6 +164,13 @@ fi
 # adopted zombies, so those defunct entries accumulate until the container's PID
 # budget is spent and it stops forking git-SSH handlers. catatonit reaps them and
 # forwards SIGTERM for a clean shutdown.
+if [ "$CAVE_ROLE" = "ssh" ]; then
+  # The front end owns no state: the main server writes authorized_keys into the
+  # shared volume, and git-shell reads permissions straight from the database.
+  echo "Cave git-SSH front end ready (role=ssh)."
+  exec /usr/libexec/catatonit/catatonit -- /usr/sbin/sshd -D -e
+fi
+
 cd /opt/cave
 exec /usr/libexec/catatonit/catatonit -- \
   /usr/sbin/runuser -u cave -- env HOME=/home/cave cave-server serve --config "$CONFIG"

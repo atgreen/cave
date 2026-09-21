@@ -12,6 +12,11 @@ CONFIG="$1"
 KEY_ID="$2"
 HTTP_PORT="${3:-8080}"
 
+# Where cave's internal endpoints live. Same namespace by default; the git-SSH
+# front end runs in its own network namespace and points this at the server.
+# Exported so the post-receive hook, which git runs for us, agrees.
+export CAVE_INTERNAL_URL="${CAVE_INTERNAL_URL:-http://localhost:${HTTP_PORT}}"
+
 if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
     echo "cave: interactive shell access is not supported" >&2
     exit 1
@@ -56,7 +61,7 @@ if [ "$GIT_CMD" = "git-receive-pack" ]; then
     # -w appends the HTTP status on its own line; the acquire endpoint
     # answers 200 + token, or 503 when another push holds the lock.
     RESPONSE=$(curl -s -w '\n%{http_code}' -X POST \
-        "http://localhost:${HTTP_PORT}/-/internal/push/acquire/${REPO_PATH}") || RESPONSE=""
+        "${CAVE_INTERNAL_URL}/-/internal/push/acquire/${REPO_PATH}") || RESPONSE=""
     HTTP_CODE="${RESPONSE##*$'\n'}"
     PUSH_TOKEN="${RESPONSE%$'\n'*}"
     if [ "$HTTP_CODE" = "503" ]; then
@@ -72,7 +77,7 @@ if [ "$GIT_CMD" = "git-receive-pack" ]; then
     EXIT_CODE=0
     $GIT_CMD "$DISK_PATH" || EXIT_CODE=$?
     curl -sf -X POST -d "$PUSH_TOKEN" \
-         "http://localhost:${HTTP_PORT}/-/internal/push/release/${REPO_PATH}" >/dev/null 2>&1 || true
+         "${CAVE_INTERNAL_URL}/-/internal/push/release/${REPO_PATH}" >/dev/null 2>&1 || true
     exit $EXIT_CODE
 else
     exec $GIT_CMD "$DISK_PATH"

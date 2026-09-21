@@ -8,8 +8,9 @@ ContainerName=cave-prod
 Image=localhost/cave:prod
 Network=cave.network
 PublishPort=127.0.0.1:9080:8080
-PublishPort=127.0.0.1:9222:22
 PublishPort=127.0.0.1:9443:9443
+# Git over SSH is served by cave-ssh.container, which runs on a network mode
+# that preserves client addresses. See the comment there.
 Volume=cave-data.volume:/var/lib/cave
 Volume=cave-zoekt.volume:/data/zoekt-index
 Environment=CAVE_DB_HOST=cave-prod-pg

@@ -62,7 +62,7 @@ func Install(cfg *config.Config) error {
 // Enable starts the Cave service via systemd.
 func Enable(cfg *config.Config) error {
 	prefix := cfg.Runtime.Prefix
-	services := []string{prefix + "-pg", prefix}
+	services := []string{prefix + "-pg", prefix, prefix + "-ssh"}
 	if cfg.Zoekt.Enabled {
 		services = append(services, prefix+"-zoekt-web")
 	}
@@ -98,6 +98,20 @@ func Uninstall(cfg *config.Config) error {
 	exec.Command("systemctl", "--user", "daemon-reload").Run()
 	return nil
 }
+
+// postgresPort is the host loopback port the database is published on, so the
+// git-SSH front end - which runs off the bridge and reaches the host instead -
+// can connect to it.
+func postgresPort(cfg *config.Config) int {
+	if cfg.Ports.Postgres > 0 {
+		return cfg.Ports.Postgres
+	}
+	return 9432
+}
+
+// hostLoopbackAddr is the address pasta maps to the host's loopback inside the
+// front-end container, so it can reach cave and postgres where they publish.
+const hostLoopbackAddr = "169.254.1.3"
 
 func generate(cfg *config.Config) map[string]string {
 	prefix := cfg.Runtime.Prefix
@@ -135,6 +149,7 @@ ContainerName=%s
 Image=%s
 Network=%s.network
 PodmanArgs=--no-hosts
+PublishPort=127.0.0.1:%d:5432
 Volume=%s-pgdata.volume:/var/lib/postgresql/data
 Environment=POSTGRES_USER=cave
 Environment=POSTGRES_PASSWORD=%s
@@ -150,7 +165,7 @@ Restart=always
 [Install]
 WantedBy=default.target
 `, prefix, cfg.ContainerName("pg"), cfg.Database.Image,
-			prefix, prefix, cfg.Database.Password, prefix)
+			prefix, postgresPort(cfg), prefix, cfg.Database.Password, prefix)
 	}
 
 	// Cave
@@ -228,7 +243,6 @@ Image=%s
 Network=%s.network
 PodmanArgs=--no-hosts
 PublishPort=127.0.0.1:%d:8080
-PublishPort=%s:%d:22
 %s%s%sLabel=cave.managed-by=cavectl
 Label=cave.instance=%s
 
@@ -239,8 +253,50 @@ Restart=always
 WantedBy=default.target
 `, prefix, caveAfter, caveRequires,
 		cfg.ContainerName("cave"), cfg.Cave.Image, prefix,
-		cfg.Ports.HTTP, sshBind, cfg.Ports.SSH,
+		cfg.Ports.HTTP,
 		grpcPublishLine, envLines.String(), volumeLines.String(), prefix)
+
+	// Git-SSH front end.
+	//
+	// Runs the same image with CAVE_ROLE=ssh: sshd and the shared repos, no
+	// web or gRPC. It exists so the internet-facing listener can use pasta,
+	// which preserves client source addresses. The bridge's rootless port
+	// forwarding does not: every client reaches sshd as the container's own
+	// address, so OpenSSH's PerSourcePenalties charges scanner traffic to the
+	// address legitimate users share (locking everyone out until sshd
+	// restarts), and no push can be attributed to a real client.
+	//
+	// pasta cannot be combined with a bridge network, so this container leaves
+	// cave.network and reaches cave and postgres through the host loopback,
+	// which pasta maps to hostLoopbackAddr.
+	units[prefix+"-ssh.container"] = fmt.Sprintf(`[Unit]
+Description=Cave git-SSH front end (%s)
+After=%s.service
+Requires=%s.service
+
+[Container]
+ContainerName=%s
+Image=%s
+Network=pasta:--map-host-loopback,%s
+PublishPort=%s:%d:22
+Volume=%s-data.volume:/var/lib/cave
+Environment=CAVE_ROLE=ssh
+Environment=CAVE_DB_HOST=%s
+Environment=CAVE_DB_PORT=%d
+Environment=CAVE_INTERNAL_URL=http://%s:%d
+Label=cave.managed-by=cavectl
+Label=cave.instance=%s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
+`, prefix, prefix, prefix,
+		cfg.ContainerName("ssh"), cfg.Cave.Image, hostLoopbackAddr,
+		sshBind, cfg.Ports.SSH, prefix,
+		hostLoopbackAddr, postgresPort(cfg),
+		hostLoopbackAddr, cfg.Ports.HTTP, prefix)
 
 	// Zoekt
 	if cfg.Zoekt.Enabled {

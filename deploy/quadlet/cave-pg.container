@@ -3,6 +3,9 @@ Description=Cave PostgreSQL
 Before=cave.service
 
 [Container]
+# Reachable from the git-SSH front end, which is off the bridge (pasta) and so
+# resolves the database through the host loopback. Loopback-only: not exposed.
+PublishPort=127.0.0.1:5432:5432
 ContainerName=cave-prod-pg
 Image=docker.io/postgres:16-alpine
 Network=cave.network

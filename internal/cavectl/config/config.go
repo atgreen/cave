@@ -45,6 +45,12 @@ type PortsConfig struct {
 	// (e.g. on a laptop) to connect over the internet — note that runner
 	// auth is currently plaintext, so keep that to trusted networks.
 	GRPCBind string `yaml:"grpc_bind,omitempty"`
+	// Postgres is the host loopback port the database is published on. The
+	// git-SSH front end runs off the bridge (pasta, so that sshd sees real
+	// client addresses) and reaches the database through the host, which
+	// means it needs a published port. Loopback only; per instance so two
+	// instances on one host do not collide.
+	Postgres int `yaml:"postgres,omitempty"`
 }
 
 type SMTPConfig struct {
@@ -122,6 +128,7 @@ func Default() *Config {
 			GRPC:     9443,
 			SSHBind:  "127.0.0.1",
 			GRPCBind: "127.0.0.1",
+			Postgres: 9432,
 		},
 		Database: DatabaseConfig{
 			Mode:     "local",
