@@ -1,7 +1,12 @@
 [Unit]
 Description=Cave git-SSH front end
 After=cave.service
-Requires=cave.service
+# Wants, not Requires: a Requires= dependency makes systemd stop this unit
+# whenever cave restarts, and coop restarts cave on every published image - so
+# git over SSH went down on each deploy and stayed down. The front end only
+# needs cave per-push (the lock and the hook), which fails gracefully during a
+# restart, so ordering is all that is wanted here.
+Wants=cave.service
 
 # Git over SSH, served from its own network namespace so sshd sees real client
 # addresses.

@@ -25,6 +25,9 @@ func TestGeneratesSSHFrontEnd(t *testing.T) {
 		"Environment=CAVE_DB_USER=cave",
 		"Environment=CAVE_DB_PASSWORD=cave",
 		"Environment=CAVE_INTERNAL_URL=http://169.254.1.3:9080",
+		// Requires= would stop the front end on every cave restart, taking
+		// git over SSH down with each deploy.
+		"Wants=cave.service",
 	} {
 		if !strings.Contains(ssh, want) {
 			t.Errorf("ssh unit missing %q:\n%s", want, ssh)

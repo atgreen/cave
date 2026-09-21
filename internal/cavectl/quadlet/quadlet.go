@@ -273,7 +273,10 @@ WantedBy=default.target
 	units[prefix+"-ssh.container"] = fmt.Sprintf(`[Unit]
 Description=Cave git-SSH front end (%s)
 After=%s.service
-Requires=%s.service
+# Wants, not Requires: Requires= would make systemd stop the front end every
+# time cave restarts - and a host that redeploys on each published image would
+# lose git over SSH on every deploy. The front end needs cave only per-push.
+Wants=%s.service
 
 [Container]
 ContainerName=%s
