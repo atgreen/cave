@@ -892,12 +892,15 @@ UPDATE-JOB-STATUS-FOR-RUNNER, which also records the runner.)"
        :returning '*)
       :plist))
     ((member status '("success" "failure" "cancelled" "skipped") :test #'equal)
-     (postmodern:query
-      (:update 'cave-workflow-jobs
-       :set 'status status 'finished-at (:now)
-       :where (:and (:= 'id job-id) (:= 'runner-id runner-id))
-       :returning '*)
-      :plist))
+     (prog1
+         (postmodern:query
+          (:update 'cave-workflow-jobs
+           :set 'status status 'finished-at (:now)
+           :where (:and (:= 'id job-id) (:= 'runner-id runner-id))
+           :returning '*)
+          :plist)
+       ;; The job is over, so its git credential is too.
+       (revoke-job-tokens job-id)))
     (t
      (postmodern:query
       (:update 'cave-workflow-jobs
@@ -973,6 +976,52 @@ UPDATE-JOB-STATUS-FOR-RUNNER, which also records the runner.)"
    (:update 'cave-workflow-jobs
     :set 'status "queued" 'runner-id :null 'assigned-at :null
     :where (:and (:= 'id job-id) (:= 'status "assigned")))))
+
+;;; --- Per-job git credentials ---
+;;;
+;;; A job that checks out its own repo authenticates like any other client, and
+;;; a private repo answers an anonymous fetch with 404. These tokens are what
+;;; the runner presents: read-only, scoped to the single repo the job belongs
+;;; to, and revoked when the job ends — deliberately not a user API token,
+;;; which would hand every job a standing key to the whole instance.
+
+(defun create-job-token (job-id repo-id &key (ttl-seconds nil))
+  "Mint a git credential for JOB-ID scoped to REPO-ID and return it in the
+   clear. Only its hash is stored, so the token exists in exactly two places:
+   the task event on its way to the runner, and the clone URL it authenticates."
+  (let* ((ttl (or ttl-seconds (config-value :job-token-ttl-seconds 21600)))
+         (token (format nil "cavjt_~A"
+                        (ironclad:byte-array-to-hex-string (ironclad:random-data 16)))))
+    (postmodern:execute
+     (:insert-into 'cave-job-tokens
+      :set 'job-id job-id
+           'repo-id repo-id
+           'token-hash (sha256-hex token)
+           'expires-at (:+ (:now) (:raw (format nil "make_interval(secs => ~D)" ttl)))))
+    token))
+
+(defun validate-job-token (token-string)
+  "Return (:job-id J :repo-id R) for a live job token, or NIL. An empty or
+   missing token is NIL rather than an error: the runner used to send exactly
+   that, and it must never authenticate anything."
+  (when (and (stringp token-string) (plusp (length token-string)))
+    (let ((row (postmodern:query
+                (:select 'job-id 'repo-id :from 'cave-job-tokens
+                 :where (:and (:= 'token-hash (sha256-hex token-string))
+                              (:> 'expires-at (:now))))
+                :row)))
+      (when row
+        (list :job-id (first row) :repo-id (second row))))))
+
+(defun job-token-grants-repo-p (claim repo-id)
+  "True when CLAIM (from VALIDATE-JOB-TOKEN) is for REPO-ID."
+  (and claim repo-id (eql (getf claim :repo-id) repo-id)))
+
+(defun revoke-job-tokens (job-id)
+  "Drop every credential minted for JOB-ID. Called when the job reaches a
+   terminal state, so a token cannot outlive the work it was issued for."
+  (postmodern:execute
+   (:delete-from 'cave-job-tokens :where (:= 'job-id job-id))))
 
 (defun requeue-automation-run (run-id)
   "Return an ASSIGNED automation run to the queue on failed task delivery."

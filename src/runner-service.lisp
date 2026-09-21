@@ -315,6 +315,12 @@ RUNNER_*/file-protocol vars)."
                    ;; every timeout-less job.
                    :timeout-seconds (let ((t-s (getf job :timeout-seconds 0)))
                                       (if (and (integerp t-s) (plusp t-s)) t-s 0))
+                   ;; The job's git credential. Without it a checkout of a
+                   ;; private repo goes out anonymous and cave answers 404 —
+                   ;; the clone fails as "repository not found".
+                   :job-token (if repo
+                                  (create-job-token (getf job :id) (getf repo :id))
+                                  "")
                    :secrets-env (if repo
                                     (secrets-env-string (secrets-for-repo repo))
                                     "")

@@ -84,6 +84,7 @@ message TaskEvent {
   string matrix_json = 16;  // strategy.matrix combo for this job as a JSON object (for ${{ matrix.* }})
   string output_defs = 17;  // newline-joined NAME=<expr>: job-level outputs: to resolve after the steps run
   string needs_json = 18;   // {jobname: {outputs:{...}, result: "success"}} for ${{ needs.* }}
+  string job_token = 19;    // per-job git credential, scoped to this job's repo
 }
 
 message StepSpec {

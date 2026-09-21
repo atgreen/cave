@@ -427,6 +427,17 @@ Returns the merged PR on success."
 ;; ----------------------------------------------------------------------------
 ;; Git smart HTTP transport (read-only, for runner clones)
 
+(defun git-http-job-token-repo-p (repo auth-header)
+  "True when AUTH-HEADER carries a live job token minted for REPO.
+
+   This is how a workflow job fetches its own private repo: the runner embeds
+   the token in the clone URL, so it arrives as HTTP Basic credentials. The
+   grant is deliberately narrow — read-only (this handler only ever runs
+   upload-pack), one repo, and only until the job ends."
+  (when repo
+    (let ((claim (validate-job-token (request-job-token-string auth-header))))
+      (job-token-grants-repo-p claim (getf repo :id)))))
+
 (defun handle-git-http (owner repo-name)
   "Handle git smart HTTP for a repo. Dispatches based on URL suffix."
   (let* ((repo (find-repo owner repo-name))
@@ -434,7 +445,9 @@ Returns the merged PR on success."
     (unless (and repo (probe-file disk-path))
       (setf (hunchentoot:return-code*) 404)
       (return-from handle-git-http "Not found"))
-    (unless (repo-visible-p repo)
+    (unless (or (repo-visible-p repo)
+                (git-http-job-token-repo-p
+                 repo (hunchentoot:header-in* "authorization")))
       (setf (hunchentoot:return-code*) 404)
       (return-from handle-git-http "Not found"))
     (let ((uri (hunchentoot:script-name*)))

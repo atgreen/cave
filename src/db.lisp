@@ -932,7 +932,24 @@ CREATE UNIQUE INDEX idx_cave_artifacts_run_name ON cave_artifacts(workflow_run_i
 -- created_at, which a requeue cannot reset -- without it every retry after the
 -- first was eligible for reaping immediately and burned all its attempts in
 -- one grace window.
-ALTER TABLE cave_workflow_jobs ADD COLUMN assigned_at TIMESTAMPTZ;"))
+ALTER TABLE cave_workflow_jobs ADD COLUMN assigned_at TIMESTAMPTZ;")
+
+    (72 . "-- Per-job git credentials. A job that checks out a private repo has to
+-- authenticate like any other client, and cave answers an anonymous fetch for a
+-- private repo with 404 -- so without this the runner's checkout failed with
+-- 'repository not found'. The token is read-only, scoped to the one repo the
+-- job belongs to, and dies with the job, so it is not a standing key to the
+-- instance the way a user API token would be. Only the hash is stored.
+CREATE TABLE cave_job_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  job_id BIGINT NOT NULL REFERENCES cave_workflow_jobs(id) ON DELETE CASCADE,
+  repo_id BIGINT NOT NULL REFERENCES cave_repos(id) ON DELETE CASCADE,
+  token_hash VARCHAR(64) NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX idx_job_tokens_hash ON cave_job_tokens (token_hash);
+CREATE INDEX idx_job_tokens_job ON cave_job_tokens (job_id);"))
   "Ordered list of (version . sql) migration pairs.")
 
 (defun current-schema-version ()

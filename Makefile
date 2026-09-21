@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GIT_HEAD_STATE := $(wildcard $(shell git rev-parse --git-path HEAD 2>/dev/null) $(shell git rev-parse --git-path logs/HEAD 2>/dev/null))
 QUADLET_DIR = $(HOME)/.config/containers/systemd
 
-.PHONY: help build cave load lint clean test test-unit test-smoke test-workflow \
+.PHONY: help build cave load lint clean test test-unit test-db test-job-tokens test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
        runner-image tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
@@ -47,6 +47,9 @@ test-unit: ## Run fast Lisp unit tests (no services required)
 
 test-db: ## Run Lisp tests needing a throwaway PostgreSQL (see tests/reap-stale-jobs.lisp)
 	XDG_CACHE_HOME=/tmp/cave-test-cache $(LISP) --load tests/reap-stale-jobs.lisp
+
+test-job-tokens: ## Run per-job git credential tests (throwaway PostgreSQL, see tests/job-tokens.lisp)
+	XDG_CACHE_HOME=/tmp/cave-test-cache $(LISP) --load tests/job-tokens.lisp
 
 test-smoke: ## Run smoke tests only
 	npx playwright test tests/smoke.spec.js

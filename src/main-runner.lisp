@@ -231,6 +231,11 @@
            ;; plus RUNNER_*; injected as container env at create time.
            (context-env (handler-case (slot-value task 'cave::context-env)
                           (error () "")))
+           ;; The job's git credential, scoped to this job's repo. Older
+           ;; servers do not send one; an empty token means an anonymous
+           ;; clone, which only works for public repos.
+           (job-token (handler-case (slot-value task 'cave::job-token)
+                        (error () "")))
            ;; strategy.matrix combo for ${{ matrix.* }} (JSON object).
            (matrix-map (handler-case
                            (let ((mj (slot-value task 'cave::matrix-json)))
@@ -459,7 +464,7 @@
                                                  (list :workdir workdir :gh-dir gh-dir
                                                        :clone-url clone-url
                                                        :commit-sha commit-sha
-                                                       :job-token ""
+                                                       :job-token job-token
                                                        :store (%object-store-descriptor store-root)
                                                        :repo-owner repo-owner :repo-name repo-name
                                                        :run-id

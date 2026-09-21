@@ -471,6 +471,47 @@
           :where (:= 'token-hash hash)))
         (first row)))))
 
+;;; --- Job tokens on the wire ---
+
+(defparameter *basic-auth-placeholders*
+  '("x-access-token" "token" "oauth2" "git" "cave")
+  "Usernames that carry no meaning: hosts conventionally pair them with the
+   real credential in the password field.")
+
+(defun request-job-token-string (auth-header)
+  "Extract a job token from AUTH-HEADER, or NIL.
+
+   Cave embeds a job token in the clone URL as the userinfo
+   (https://TOKEN@host/owner/repo.git), so git presents it as the HTTP Basic
+   username with an empty password. A hand-written https://x-access-token:TOKEN@
+   URL puts it in the password instead, so accept either side. Bearer headers
+   are API tokens and are handled by AUTHENTICATE-REQUEST, not here.
+
+   Declines rather than signals on anything malformed: this runs on an
+   unauthenticated request path."
+  (when (and auth-header
+             (>= (length auth-header) 6)
+             (string-equal "Basic " (subseq auth-header 0 6))
+             ;; cl-base64 decodes outside its alphabet rather than complaining,
+             ;; so junk would otherwise arrive as a "token" made of junk bytes.
+             (let ((payload (string-trim " " (subseq auth-header 6))))
+               (and (plusp (length payload))
+                    (every (lambda (c)
+                             (or (alphanumericp c) (member c '(#\+ #\/ #\=))))
+                           payload))))
+    (ignore-errors
+     (let* ((decoded (cl-base64:base64-string-to-string
+                      (string-trim " " (subseq auth-header 6))))
+            (colon (position #\: decoded))
+            (user (if colon (subseq decoded 0 colon) decoded))
+            (password (when colon (subseq decoded (1+ colon)))))
+       (find-if (lambda (candidate)
+                  (and candidate
+                       (plusp (length candidate))
+                       (not (member candidate *basic-auth-placeholders*
+                                    :test #'string-equal))))
+                (list user password))))))
+
 ;;; --- Current user (request context) ---
 
 (defvar *current-user* nil
