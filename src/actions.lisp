@@ -467,6 +467,16 @@
          (own-repo-p (or (null repo-in) (zerop (length repo-in))))
          (token (let ((tk (gethash "token" inputs)))
                   (if (and tk (plusp (length tk))) tk job-token)))
+         ;; Cave hides a private repo from an anonymous fetch with 404 rather
+         ;; than a 401 challenge, and git only sends credentials after a
+         ;; challenge - so a token in the URL alone never leaves the runner and
+         ;; the clone dies as "repository not found". Offer it up front instead.
+         ;; These -c options have to precede the git subcommand.
+         (auth-args (when (and token (plusp (length token)))
+                      (list "-c"
+                            (format nil "http.extraHeader=Authorization: Basic ~A"
+                                    (cl-base64:string-to-base64-string
+                                     (format nil "~A:" token))))))
          (persist (not (equal (gethash "persist-credentials" inputs) "false")))
          (ref-in (gethash "ref" inputs))
          (path-in (gethash "path" inputs))
@@ -490,12 +500,12 @@
          (outputs (make-hash-table :test 'equal))
          (ok t))
     (flet ((git (&rest args)
-             (multiple-value-bind (code out) (funcall exec (cons "git" args))
+             (multiple-value-bind (code out) (funcall exec (append (list "git") auth-args args))
                (when (and out (plusp (length out))) (format log "~A~%" out))
                code))
-           (git-q (&rest args) (funcall exec (cons "git" args)))
+           (git-q (&rest args) (funcall exec (append (list "git") auth-args args)))
            (git-out (&rest args)
-             (multiple-value-bind (code out) (funcall exec (cons "git" args))
+             (multiple-value-bind (code out) (funcall exec (append (list "git") auth-args args))
                (declare (ignore code))
                (string-trim '(#\Newline #\Space #\Return) (or out "")))))
       (when (null exec)

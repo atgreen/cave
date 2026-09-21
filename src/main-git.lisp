@@ -519,8 +519,13 @@ object string. Empty list -> \"\"."
    sandboxed in the container (see %run-fetched-action). Streams the log, fills
    STEP-OUTPUTS, returns an exit code (0 ok, 1 failure / unsupported)."
   ;; Mask the job-scoped token: actions may embed it in a clone URL / git output.
+  ;; Both forms it travels in - bare, and base64'd inside a Basic credential.
   (let ((masks (let ((jt (getf ctx :job-token)))
-                 (if (and jt (plusp (length jt))) (cons jt masks) masks))))
+                 (if (and jt (plusp (length jt)))
+                     (list* jt
+                            (cl-base64:string-to-base64-string (format nil "~A:" jt))
+                            masks)
+                     masks))))
    (flet ((emit (text)
            (ignore-errors
             (ag-grpc:grpc-call channel
