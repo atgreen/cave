@@ -181,6 +181,7 @@ WantedBy=default.target
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_DB_NAME=%s\n", cfg.DBName()))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_DB_USER=%s\n", cfg.DBUser()))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_DB_PASSWORD=%s\n", cfg.DBPassword()))
+	envLines.WriteString(fmt.Sprintf("Environment=CAVE_INTERNAL_TOKEN=%s\n", cfg.Cave.InternalToken))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_BASE_URL=%s\n", cfg.Cave.BaseURL))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_SECRET_KEY=%s\n", cfg.Cave.SecretKey))
 	envLines.WriteString("Environment=CAVE_CHAMBER_ENABLED=t\n")
@@ -287,6 +288,7 @@ Environment=CAVE_DB_NAME=%s
 Environment=CAVE_DB_USER=%s
 Environment=CAVE_DB_PASSWORD=%s
 Environment=CAVE_INTERNAL_URL=http://%s:%d
+Environment=CAVE_INTERNAL_TOKEN=%s
 Label=cave.managed-by=cavectl
 Label=cave.instance=%s
 
@@ -300,7 +302,7 @@ WantedBy=default.target
 		sshBind, cfg.Ports.SSH, prefix,
 		hostLoopbackAddr, postgresPort(cfg),
 		cfg.DBName(), cfg.DBUser(), cfg.DBPassword(),
-		hostLoopbackAddr, cfg.Ports.HTTP, prefix)
+		hostLoopbackAddr, cfg.Ports.HTTP, cfg.Cave.InternalToken, prefix)
 
 	// Zoekt
 	if cfg.Zoekt.Enabled {

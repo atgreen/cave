@@ -540,7 +540,7 @@ Returns the merged PR on success."
   ;; namespace, where the server is not on localhost.
   (let ((hook-path (merge-pathnames "hooks/post-receive" path)))
     (with-open-file (out hook-path :direction :output :if-exists :supersede)
-      (format out "#!/bin/bash~%# Forward ref updates to Cave; relay push-time hints (and -o push options) to the pusher.~%opts=\"\"~%if [ -n \"$GIT_PUSH_OPTION_COUNT\" ]; then i=0; while [ \"$i\" -lt \"$GIT_PUSH_OPTION_COUNT\" ]; do eval \"v=\\$GIT_PUSH_OPTION_$i\"; opts=\"$opts${opts:+,}$v\"; i=$((i+1)); done; fi~%hint=$(curl -sf -X POST --data-binary @- -H \"X-Cave-Push-Options: $opts\" \"${CAVE_INTERNAL_URL:-http://localhost:~A}/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\" 2>/dev/null)~%[ -n \"$hint\" ] && echo \"$hint\" >&2~%"
+      (format out "#!/bin/bash~%# Forward ref updates to Cave; relay push-time hints (and -o push options) to the pusher.~%opts=\"\"~%if [ -n \"$GIT_PUSH_OPTION_COUNT\" ]; then i=0; while [ \"$i\" -lt \"$GIT_PUSH_OPTION_COUNT\" ]; do eval \"v=\\$GIT_PUSH_OPTION_$i\"; opts=\"$opts${opts:+,}$v\"; i=$((i+1)); done; fi~%hint=$(curl -sf -X POST --data-binary @- -H \"X-Cave-Push-Options: $opts\" -H \"X-Cave-Internal-Token: ${CAVE_INTERNAL_TOKEN:-}\" \"${CAVE_INTERNAL_URL:-http://localhost:~A}/-/internal/hook/post-receive/~A/~A?actor=${CAVE_PUSH_USER_ID:-}\" 2>/dev/null)~%[ -n \"$hint\" ] && echo \"$hint\" >&2~%"
               (config-value :http-port 8080) owner repo-name)
       (format out "cave-server sync-mirrors --config /etc/cave.conf --repo ~A/~A &~%"
               owner repo-name)

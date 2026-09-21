@@ -29,6 +29,7 @@ if [ ! -f "$CONFIG" ]; then
  :base-url "${CAVE_BASE_URL:-http://localhost:8080}"
  :runner-clone-base-url "${CAVE_RUNNER_CLONE_BASE_URL:-}"
  :authorized-keys-path "${CAVE_AUTHORIZED_KEYS_PATH:-/var/lib/cave/ssh/authorized_keys}"
+ :internal-token "${CAVE_INTERNAL_TOKEN:-}"
  :cave-shell "/usr/bin/cave-shell.sh"
  :oidc-issuer "${CAVE_OIDC_ISSUER:-}"
  :oidc-issuer-internal "${CAVE_OIDC_ISSUER_INTERNAL:-}"
@@ -140,6 +141,9 @@ SSHD
   # for cave-shell.sh and the post-receive hook to find it.
   if [ -n "${CAVE_INTERNAL_URL:-}" ]; then
     echo "SetEnv CAVE_INTERNAL_URL=${CAVE_INTERNAL_URL}" >> /etc/ssh/sshd_config.d/10-cave.conf
+  fi
+  if [ -n "${CAVE_INTERNAL_TOKEN:-}" ]; then
+    echo "SetEnv CAVE_INTERNAL_TOKEN=${CAVE_INTERNAL_TOKEN}" >> /etc/ssh/sshd_config.d/10-cave.conf
   fi
 }
 

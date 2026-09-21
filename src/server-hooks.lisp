@@ -233,10 +233,33 @@ number of commits re-verified."
     (when (zerop code)
       (remove-if #'uiop:emptyp (uiop:split-string out :separator '(#\Newline))))))
 
+(defun internal-caller-allowed-p (remote-addr presented-token)
+  "True when a /-/internal/ request may proceed.
+
+   Loopback is trusted because it can only come from inside this container.
+   A caller outside it - the git-SSH front end, which runs in its own network
+   namespace so sshd can see real client addresses - reaches cave through the
+   host and so never appears as loopback; it authenticates with the shared
+   internal token instead. With no token configured, position is the only
+   credential and behaviour is exactly as before."
+  (let ((expected (config-value :internal-token)))
+    (or (member remote-addr '("127.0.0.1" "::1") :test #'equal)
+        (and expected
+             (stringp expected)
+             (plusp (length expected))
+             (stringp presented-token)
+             (string= presented-token expected))
+        nil)))
+
+(defun internal-request-allowed-p ()
+  "INTERNAL-CALLER-ALLOWED-P for the request in flight."
+  (internal-caller-allowed-p (hunchentoot:remote-addr*)
+                             (hunchentoot:header-in* "x-cave-internal-token")))
+
 (easy-routes:defroute internal-post-receive
     ("/-/internal/hook/post-receive/:owner/:repo-name" :method :post) ()
-  ;; Only accept from localhost
-  (unless (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+  ;; Only accept from inside the deployment
+  (unless (internal-request-allowed-p)
     (setf (hunchentoot:return-code*) 403)
     (return-from internal-post-receive "Forbidden"))
   (let ((repo (find-repo owner repo-name)))
@@ -390,7 +413,7 @@ number of commits re-verified."
     ("/-/internal/repos/:owner/:repo-name/deps" :method :post) (&get ref)
   "Ingest a CycloneDX SBOM into the dependency graph. Accepts localhost (the
    host-side scan) or a valid runner bearer token."
-  (unless (or (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+  (unless (or (internal-request-allowed-p)
               (valid-runner-request-p))
     (setf (hunchentoot:return-code*) 403)
     (return-from internal-repo-deps "Forbidden"))
@@ -444,7 +467,7 @@ number of commits re-verified."
 
 (easy-routes:defroute internal-push-acquire
     ("/-/internal/push/acquire/:owner/:repo-name" :method :post) ()
-  (unless (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+  (unless (internal-request-allowed-p)
     (setf (hunchentoot:return-code*) 403)
     (return-from internal-push-acquire "Forbidden"))
   (ensure-chamber-semaphore)
@@ -466,7 +489,7 @@ number of commits re-verified."
 
 (easy-routes:defroute internal-push-release
     ("/-/internal/push/release/:owner/:repo-name" :method :post) ()
-  (unless (member (hunchentoot:remote-addr*) '("127.0.0.1" "::1") :test #'equal)
+  (unless (internal-request-allowed-p)
     (setf (hunchentoot:return-code*) 403)
     (return-from internal-push-release "Forbidden"))
   (let* ((token (string-trim '(#\Space #\Newline #\Return)

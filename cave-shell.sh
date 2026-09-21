@@ -16,6 +16,13 @@ HTTP_PORT="${3:-8080}"
 # front end runs in its own network namespace and points this at the server.
 # Exported so the post-receive hook, which git runs for us, agrees.
 export CAVE_INTERNAL_URL="${CAVE_INTERNAL_URL:-http://localhost:${HTTP_PORT}}"
+# Those endpoints trust loopback; a caller from another network namespace has to
+# authenticate instead. Empty when cave and sshd share one namespace.
+export CAVE_INTERNAL_TOKEN="${CAVE_INTERNAL_TOKEN:-}"
+INTERNAL_AUTH=()
+if [ -n "$CAVE_INTERNAL_TOKEN" ]; then
+    INTERNAL_AUTH=(-H "X-Cave-Internal-Token: ${CAVE_INTERNAL_TOKEN}")
+fi
 
 if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
     echo "cave: interactive shell access is not supported" >&2
@@ -60,7 +67,7 @@ export CAVE_PUSH_USER_ID="$USER_ID"
 if [ "$GIT_CMD" = "git-receive-pack" ]; then
     # -w appends the HTTP status on its own line; the acquire endpoint
     # answers 200 + token, or 503 when another push holds the lock.
-    RESPONSE=$(curl -s -w '\n%{http_code}' -X POST \
+    RESPONSE=$(curl -s -w '\n%{http_code}' -X POST "${INTERNAL_AUTH[@]}" \
         "${CAVE_INTERNAL_URL}/-/internal/push/acquire/${REPO_PATH}") || RESPONSE=""
     HTTP_CODE="${RESPONSE##*$'\n'}"
     PUSH_TOKEN="${RESPONSE%$'\n'*}"
@@ -76,7 +83,7 @@ if [ "$GIT_CMD" = "git-receive-pack" ]; then
     # git failure here or set -e would skip the release and leak the lock.
     EXIT_CODE=0
     $GIT_CMD "$DISK_PATH" || EXIT_CODE=$?
-    curl -sf -X POST -d "$PUSH_TOKEN" \
+    curl -sf -X POST -d "$PUSH_TOKEN" "${INTERNAL_AUTH[@]}" \
          "${CAVE_INTERNAL_URL}/-/internal/push/release/${REPO_PATH}" >/dev/null 2>&1 || true
     exit $EXIT_CODE
 else

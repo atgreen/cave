@@ -29,6 +29,11 @@ type CaveConfig struct {
 	Image     string `yaml:"image"`
 	BaseURL   string `yaml:"base_url"`
 	SecretKey string `yaml:"secret_key"`
+	// InternalToken authenticates callers of cave's /-/internal/ endpoints
+	// that are not on loopback - specifically the git-SSH front end, which
+	// runs in its own network namespace so sshd can see real client
+	// addresses, and so reaches cave through the host.
+	InternalToken string `yaml:"internal_token,omitempty"`
 }
 
 type PortsConfig struct {
@@ -190,6 +195,14 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("generating secret key: %w", err)
 		}
 		cfg.Cave.SecretKey = hex.EncodeToString(key)
+	}
+
+	if cfg.Cave.InternalToken == "" {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, fmt.Errorf("generating internal token: %w", err)
+		}
+		cfg.Cave.InternalToken = hex.EncodeToString(key)
 	}
 
 	// Local mode runs Cave's embedded Usher OIDC provider. It needs a stable
