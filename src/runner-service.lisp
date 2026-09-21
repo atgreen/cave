@@ -425,7 +425,19 @@ should end so the runner reconnects."
                            (error () ""))))
       (handler-case
           (postmodern:with-connection *db-spec*
-            (update-runner-heartbeat runner-id :labels runner-labels))
+            (update-runner-heartbeat runner-id :labels runner-labels)
+            ;; A fresh stream means this runner is not running anything: it
+            ;; executes a job inside its watch loop, so anything still claimed
+            ;; by it was abandoned when the old stream dropped. Release it now
+            ;; rather than leaving the runner blocked by its own dead claim
+            ;; until the reaper comes round (cave-oxt).
+            (let ((jobs (requeue-jobs-for-reconnected-runner runner-id))
+                  (runs (requeue-automation-runs-for-reconnected-runner runner-id)))
+              (when (or jobs runs)
+                (llog:info "Released work from a reconnecting runner"
+                           :runner-id runner-id
+                           :jobs (length jobs)
+                           :automation-runs (length runs)))))
         (error () nil))
       (unwind-protect
            (loop

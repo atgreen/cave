@@ -1048,6 +1048,44 @@ UPDATE-JOB-STATUS-FOR-RUNNER, which also records the runner.)"
   (postmodern:execute
    (:delete-from 'cave-job-tokens :where (:= 'job-id job-id))))
 
+(defun requeue-jobs-for-reconnected-runner (runner-id &key (max-attempts 3))
+  "Release work still attached to RUNNER-ID when it opens a fresh task stream.
+
+   A runner executes a job inside its watch loop, so opening a new stream means
+   it is not running anything: whatever is still 'assigned' or 'running' to it
+   was abandoned - typically because its status callbacks failed mid-job and the
+   stream dropped underneath it. Left alone, that job blocks the runner through
+   the one-task-per-runner check until the 120-minute reaper notices, which is
+   how one spell of upstream trouble became a fleet-wide outage that had to be
+   cleared with hand-written SQL (cave-oxt).
+
+   Requeues on the same terms as the reaper - the attempt counts, and the claim
+   and its timestamps are cleared so the retry gets a full grace window. A job
+   that has exhausted MAX-ATTEMPTS is left for the reaper to fail, since failing
+   a run is its job and not something to do on a reconnect.
+
+   Returns the ids released."
+  (postmodern:query
+   "UPDATE cave_workflow_jobs
+       SET status='queued', runner_id=NULL, started_at=NULL,
+           finished_at=NULL, assigned_at=NULL, attempts=attempts+1
+     WHERE runner_id = $1
+       AND status IN ('assigned','running')
+       AND attempts < $2
+   RETURNING id"
+   runner-id max-attempts :column))
+
+(defun requeue-automation-runs-for-reconnected-runner (runner-id)
+  "The automation-run counterpart of REQUEUE-JOBS-FOR-RECONNECTED-RUNNER.
+   A stale automation run blocks its runner through the same
+   one-task-per-runner check."
+  (postmodern:query
+   "UPDATE cave_automation_runs
+       SET status='queued', runner_id=NULL
+     WHERE runner_id = $1 AND status = 'assigned'
+   RETURNING id"
+   runner-id :column))
+
 (defun requeue-automation-run (run-id)
   "Return an ASSIGNED automation run to the queue on failed task delivery."
   (postmodern:execute

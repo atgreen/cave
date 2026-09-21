@@ -139,5 +139,72 @@
                 should be retired - registration inserts a fresh row each time a ~
                 runner process starts, so something has to bound the table")
 
+       ;; --- Work left attached to a runner is released when it reconnects ---
+       ;;
+       ;; A runner runs a job inside its watch loop, so opening a fresh stream
+       ;; means it is not running anything. Whatever is still assigned to it was
+       ;; abandoned - and until this, it blocked that runner via the
+       ;; one-task-per-runner check until the 120-minute reaper noticed (cave-oxt).
+       (seed-runner :seen-seconds-ago 1)
+       (seed-assigned-job)
+       (let ((released (cave::requeue-jobs-for-reconnected-runner +runner-id+)))
+         (assert (member +job-id+ released) ()
+                 "a job still assigned to a reconnecting runner should be released, ~
+                  got ~S" released))
+       (destructuring-bind (status runner-id attempts assigned-at)
+           (postmodern:query
+            "SELECT status, runner_id, attempts, assigned_at FROM cave_workflow_jobs
+              WHERE id = $1" +job-id+ :row)
+         (assert (equal status "queued") () "should be requeued, got ~S" status)
+         (assert (member runner-id '(nil :null)) ()
+                 "the claim must be released or the runner stays blocked, got ~S"
+                 runner-id)
+         (assert (= attempts 1) ()
+                 "the abandoned try should count, or a job that kills its runner ~
+                  would bounce forever, got ~S" attempts)
+         (assert (member assigned-at '(nil :null)) ()
+                 "clearing assigned_at gives the next attempt a full grace window, ~
+                  got ~S" assigned-at))
+
+       ;; --- Another runner's work is left alone ---
+       (seed-assigned-job)
+       (postmodern:execute "UPDATE cave_workflow_jobs SET runner_id = $1 WHERE id = $2"
+                           (1+ +runner-id+) +job-id+)
+       (postmodern:execute
+        "INSERT INTO cave_runners (id, name, scope, auth_token, status, last_seen_at)
+         VALUES ($1, 'other-runner', 'instance', 'other-token', 'online', now())
+         ON CONFLICT (id) DO NOTHING"
+        (1+ +runner-id+))
+       (cave::requeue-jobs-for-reconnected-runner +runner-id+)
+       (assert (equal "assigned"
+                      (postmodern:query
+                       "SELECT status FROM cave_workflow_jobs WHERE id = $1"
+                       +job-id+ :single))
+               () "a job belonging to a different runner must not be touched")
+       (postmodern:execute "DELETE FROM cave_runners WHERE id = $1" (1+ +runner-id+))
+
+       ;; --- A job out of attempts is left for the reaper to fail ---
+       (seed-assigned-job)
+       (postmodern:execute "UPDATE cave_workflow_jobs SET attempts = 3 WHERE id = $1"
+                           +job-id+)
+       (cave::requeue-jobs-for-reconnected-runner +runner-id+ :max-attempts 3)
+       (assert (equal "assigned"
+                      (postmodern:query
+                       "SELECT status FROM cave_workflow_jobs WHERE id = $1"
+                       +job-id+ :single))
+               () "an exhausted job should not be requeued again - the reaper fails it")
+
+       ;; --- Finished work is not disturbed ---
+       (seed-assigned-job)
+       (postmodern:execute
+        "UPDATE cave_workflow_jobs SET status = 'success', finished_at = now()
+          WHERE id = $1" +job-id+)
+       (cave::requeue-jobs-for-reconnected-runner +runner-id+)
+       (assert (equal "success"
+                      (postmodern:query
+                       "SELECT status FROM cave_workflow_jobs WHERE id = $1"
+                       +job-id+ :single))
+               () "a finished job must stay finished")
+
        (format t "~&Runner cleanup tests passed.~%"))
   (cleanup-fixture))

@@ -711,7 +711,16 @@
                   (format t "~&Ephemeral runner — exiting.~%")
                   (uiop:quit 0)))
             (error (e)
-              (format *error-output* "~&Task execution error: ~A~%" e)))))))
+              ;; The task blew up - typically because the status callbacks could
+              ;; not reach cave, which means cave still has this job marked as
+              ;; ours. Give the stream up so the reconnect releases the claim;
+              ;; carrying on would leave us holding a job we are not running,
+              ;; blocked from taking any other, until the reaper noticed
+              ;; (cave-oxt).
+              (format *error-output* "~&Task execution error: ~A~%" e)
+              (format *error-output*
+                      "  Reconnecting so cave can hand this job to someone else.~%")
+              (return-from run-watch-loop :ended)))))))
 
 (defun handle-runner (cmd)
   (let* ((url (clingon:getopt cmd :url))
