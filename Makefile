@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GIT_HEAD_STATE := $(wildcard $(shell git rev-parse --git-path HEAD 2>/dev/null) $(shell git rev-parse --git-path logs/HEAD 2>/dev/null))
 QUADLET_DIR = $(HOME)/.config/containers/systemd
 
-.PHONY: help build cave load lint clean test test-unit test-db test-job-tokens test-checkout-auth test-internal-auth test-smoke test-workflow \
+.PHONY: help build cave load lint clean test test-unit test-db test-job-tokens test-checkout-auth test-internal-auth test-runner-cleanup test-smoke test-workflow \
        podman-up podman-down podman-rebuild podman-logs \
        observability-up observability-down \
        runner-image tag release prod-install prod-uninstall prod-start prod-stop prod-logs prod-status \
@@ -56,6 +56,9 @@ test-checkout-auth: ## Run checkout credential-presentation tests (no services n
 
 test-internal-auth: ## Run /-/internal/ caller authorization tests (no services needed)
 	XDG_CACHE_HOME=/tmp/cave-test-cache $(LISP) --load tests/internal-auth.lisp
+
+test-runner-cleanup: ## Run runner heartbeat/cleanup tests (throwaway PostgreSQL)
+	XDG_CACHE_HOME=/tmp/cave-test-cache $(LISP) --load tests/runner-cleanup.lisp
 
 test-smoke: ## Run smoke tests only
 	npx playwright test tests/smoke.spec.js

@@ -573,8 +573,34 @@ a member. Truthy exactly when the current user has any membership."
                       (:<= 'last-seen-at
                            (:- (:now) (:raw "INTERVAL '2 minutes'"))))))))
 
+(defun retire-long-dead-runners ()
+  "Delete runners that have been offline past the retention window.
+
+   Registration inserts a fresh row every time a runner process starts, so
+   without this the table would grow by one row per restart. The window is
+   generous on purpose: inside it, a runner that comes back still finds its own
+   row and its auth token still works."
+  (let ((days (config-value :runner-retention-days 30)))
+    (postmodern:execute
+     (:delete-from 'cave-runners
+      :where (:and (:= 'status "offline")
+                   (:not (:is-null 'last-seen-at))
+                   (:<= 'last-seen-at
+                        (:- (:now) (:raw (format nil "INTERVAL '~D days'" days)))))))))
+
 (defun cleanup-offline-runners ()
-  "Mark runners as offline if no heartbeat in 60 seconds. Delete stale ephemeral ones."
+  "Mark runners as offline if no heartbeat in 60 seconds, then reclaim their work.
+
+   Offline runners keep their rows. A runner authenticates with the token it was
+   given at registration and only registers once, at process start, so deleting
+   the row destroys an identity the runner is still using: every later call is
+   rejected and the client - which has no re-registration path - can never
+   recover. That turned any 60-second gap, a server restart included, into a
+   fleet-wide outage needing a human to restart every runner (cave-wb4).
+
+   Ephemeral runners are the exception: they exist for a single job and are
+   reaped by CLEANUP-STALE-EPHEMERAL-RUNNERS. Long-dead rows are retired by
+   RETIRE-LONG-DEAD-RUNNERS so the table stays bounded."
   (postmodern:execute
    (:update 'cave-runners
     :set 'status "offline"
@@ -595,11 +621,10 @@ a member. Truthy exactly when the current user has any membership."
     :where (:and (:= 'status "assigned")
                  (:in 'runner-id (:select 'id :from 'cave-runners
                                   :where (:= 'status "offline"))))))
+  ;; Both of these delete rows, so they run after the requeues above: deleting
+  ;; first would make the runner-id subqueries empty and strand the work.
   (cleanup-stale-ephemeral-runners)
-  ;; Delete offline runners only after their assigned work has been recovered;
-  ;; deleting first makes both runner-id subqueries empty.
-  (postmodern:execute
-   (:delete-from 'cave-runners :where (:= 'status "offline"))))
+  (retire-long-dead-runners))
 
 (defun create-registration-token (&key scope scope-id created-by-id)
   "Create a runner registration token."

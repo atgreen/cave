@@ -26,10 +26,20 @@
       (postmodern:with-connection *db-spec*
         (authenticate-runner token)))))
 
+(defun fail-unauthenticated-runner ()
+  "Reject an RPC from a runner cave does not recognise.
+
+   A real UNAUTHENTICATED status rather than a bare error, so the runner can
+   tell 'cave does not know me' from a dropped stream and stop retrying a
+   credential that will never work again."
+  (error 'ag-grpc:grpc-status-error
+         :code ag-grpc:+grpc-status-unauthenticated+
+         :message "unknown or revoked runner credential"))
+
 (defun require-runner-from-ctx (ctx)
   "Authenticate runner metadata, or fail the RPC."
   (or (get-runner-from-ctx ctx)
-      (error "unauthenticated runner")))
+      (fail-unauthenticated-runner)))
 
 ;;; --- RPC Handlers ---
 
@@ -409,7 +419,7 @@ should end so the runner reconnects."
    Checks both simple automations and workflow jobs."
   (let ((runner (get-runner-from-ctx ctx)))
     (unless runner
-      (error "unauthenticated"))
+      (fail-unauthenticated-runner))
     (let ((runner-id (getf runner :id))
           (runner-labels (handler-case (slot-value request 'cave::runner-labels)
                            (error () ""))))

@@ -681,7 +681,11 @@
                            :metadata (make-auth-metadata auth-token)))))
 
 (defun run-watch-loop (channel auth-token runner-labels ephemeral)
-    "Open a WatchTasks server stream and process tasks as they arrive."
+    "Open a WatchTasks server stream and process tasks as they arrive.
+
+   Returns :unauthenticated when cave says it does not know this runner, and
+   :ended for an ordinary stream close. The caller decides what to do about
+   each: one is fatal to this process, the other is worth retrying."
     (format t "~&Watching for tasks...~%")
     (let ((stream (ag-grpc:call-server-stream
                    channel
@@ -692,7 +696,14 @@
                    :metadata (make-auth-metadata auth-token))))
       (loop
         (let ((task (ag-grpc:stream-receive-message stream)))
-          (unless task (return)) ; stream ended
+          (unless task
+            ;; Stream ended. Why matters: an UNAUTHENTICATED close means the
+            ;; credential is dead and reopening will fail exactly the same way.
+            (return-from run-watch-loop
+              (if (eql (ignore-errors (ag-grpc::stream-call-status stream))
+                       ag-grpc:+grpc-status-unauthenticated+)
+                  :unauthenticated
+                  :ended)))
           (handler-case
               (progn
                 (execute-task channel auth-token task)
@@ -743,24 +754,53 @@
               (let ((auth-token (slot-value resp 'cave::auth-token))
                     (runner-id (slot-value resp 'cave::runner-id)))
                 (format t "  Registered as runner #~A~%" runner-id)
-                ;; Main loop: watch for tasks with auto-reconnect
-                (loop
-                  (handler-case
-                      (let ((ch (ag-grpc:make-channel host port
-                                  :timeout nil
-                                  :tls tls-p
-                                  :keepalive (ag-grpc:make-keepalive-config
-                                              :ping-interval 15
-                                              :ping-timeout 5
-                                              :permit-without-calls t))))
-                        (run-watch-loop ch auth-token runner-labels ephemeral))
-                    (error (e)
-                      (format *error-output* "~&Stream disconnected: ~A~%" e)
-                      (format *error-output* "  Reconnecting in 5s...~%")
-                      (sleep 5)))))))
+                ;; Main loop: watch for tasks with auto-reconnect.
+                ;;
+                ;; Backs off rather than reopening flat out. A stream that ends
+                ;; the instant it opens - which is what a rejected runner sees -
+                ;; used to be retried about once a second, indefinitely, filling
+                ;; the log with "Watching for tasks..." and telling the operator
+                ;; nothing about why.
+                (let ((backoff 1))
+                  (loop
+                    (let* ((started-at (get-universal-time))
+                           (outcome
+                            (handler-case
+                                (let ((ch (ag-grpc:make-channel host port
+                                            :timeout nil
+                                            :tls tls-p
+                                            :keepalive (ag-grpc:make-keepalive-config
+                                                        :ping-interval 15
+                                                        :ping-timeout 5
+                                                        :permit-without-calls t))))
+                                  (run-watch-loop ch auth-token runner-labels ephemeral))
+                              (error (e)
+                                (format *error-output* "~&Stream disconnected: ~A~%" e)
+                                :ended))))
+                      (when (eql outcome :unauthenticated)
+                        ;; The credential is gone, not the connection. Registration
+                        ;; tokens are single-use, so this runner cannot re-register
+                        ;; itself - say so plainly and stop rather than hammering
+                        ;; the server with a credential that will never work.
+                        (format *error-output*
+                                "~&Cave no longer recognises this runner (~A).~%~
+                                 Its registration was removed, so this process cannot ~
+                                 re-register itself: registration tokens are single-use.~%~
+                                 Start it again with a fresh token from ~
+                                 'cave-server runner-token'.~%"
+                                name)
+                        (uiop:quit 1))
+                      ;; A stream that actually ran is evidence the server is
+                      ;; healthy, so start the next backoff from scratch; only a
+                      ;; run of instant failures escalates.
+                      (when (> (- (get-universal-time) started-at) 60)
+                        (setf backoff 1))
+                      (format *error-output* "  Reconnecting in ~As...~%" backoff)
+                      (sleep backoff)
+                      (setf backoff (min 60 (* 2 backoff))))))))))
         (error (e)
           (format *error-output* "~&Runner error: ~A~%" e)
-          (uiop:quit 1))))))
+          (uiop:quit 1)))))
 
 ;;; --- POST-RECEIVE subcommand ---
 
