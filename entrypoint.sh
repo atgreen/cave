@@ -137,13 +137,15 @@ HostKey /var/lib/cave/ssh/ssh_host_rsa_key
 AuthorizedKeysFile /var/lib/cave/ssh/authorized_keys
 SSHD
   # sshd hands the forced command a sanitised environment - none of this
-  # container's variables survive - so where cave lives has to be stated here
-  # for cave-shell.sh and the post-receive hook to find it.
-  if [ -n "${CAVE_INTERNAL_URL:-}" ]; then
-    echo "SetEnv CAVE_INTERNAL_URL=${CAVE_INTERNAL_URL}" >> /etc/ssh/sshd_config.d/10-cave.conf
-  fi
-  if [ -n "${CAVE_INTERNAL_TOKEN:-}" ]; then
-    echo "SetEnv CAVE_INTERNAL_TOKEN=${CAVE_INTERNAL_TOKEN}" >> /etc/ssh/sshd_config.d/10-cave.conf
+  # container's variables survive - so what cave-shell.sh and the post-receive
+  # hook need has to be stated here. One line, several pairs: sshd keeps the
+  # first value it obtains for a keyword, so a second SetEnv line is silently
+  # ignored.
+  setenv_pairs=""
+  [ -n "${CAVE_INTERNAL_URL:-}" ] && setenv_pairs="${setenv_pairs} CAVE_INTERNAL_URL=${CAVE_INTERNAL_URL}"
+  [ -n "${CAVE_INTERNAL_TOKEN:-}" ] && setenv_pairs="${setenv_pairs} CAVE_INTERNAL_TOKEN=${CAVE_INTERNAL_TOKEN}"
+  if [ -n "$setenv_pairs" ]; then
+    echo "SetEnv${setenv_pairs}" >> /etc/ssh/sshd_config.d/10-cave.conf
   fi
 }
 
