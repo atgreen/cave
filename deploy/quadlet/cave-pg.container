@@ -11,7 +11,9 @@ Image=docker.io/postgres:16-alpine
 Network=cave.network
 Volume=cave-pg.volume:/var/lib/postgresql/data
 Environment=POSTGRES_USER=cave
-Environment=POSTGRES_PASSWORD=cave
+# See the note in cave.container: create ~/.config/cave/cave-pg.env (chmod 600)
+# holding POSTGRES_PASSWORD=...
+EnvironmentFile=%h/.config/cave/cave-pg.env
 Environment=POSTGRES_DB=cave
 HealthCmd=pg_isready -U cave
 HealthInterval=5s

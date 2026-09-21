@@ -23,7 +23,12 @@ Environment=CAVE_OIDC_ISSUER_INTERNAL=http://localhost:8080
 Environment=CAVE_OIDC_CLIENT_ID=cave
 # Self-referential client secret (Cave is both provider and relying party).
 # Change this to a unique per-instance value.
-Environment=CAVE_OIDC_CLIENT_SECRET=cave-local-secret
+# Credentials belong in a 0600 environment file, not in a unit that anyone with
+# shell can read via systemctl cat. cavectl writes these per instance; for a
+# hand-rolled deployment, create ~/.config/cave/cave-cave.env (chmod 600) with
+# CAVE_OIDC_CLIENT_SECRET=..., CAVE_SECRET_KEY=..., CAVE_DB_PASSWORD=...,
+# CAVE_INTERNAL_TOKEN=... and reference it here.
+EnvironmentFile=%h/.config/cave/cave-cave.env
 Environment=CAVE_BASE_URL=http://localhost:9080
 # CAVE_SECRET_KEY is auto-generated on first start if not set
 Environment=CAVE_ZOEKT_ENABLED=t

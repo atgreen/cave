@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"moxielogic.com/cave/internal/cavectl/config"
@@ -27,10 +28,85 @@ func QuadletDir() string {
 }
 
 // Install generates and writes quadlet unit files, then reloads systemd.
+// SecretsDir holds the per-instance environment files that carry credentials.
+// Kept out of the quadlet directory so a unit can be read - systemctl cat,
+// podman inspect, a support paste - without reading the secrets in it.
+func SecretsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.Getenv("HOME"), ".config", "cave")
+	}
+	return filepath.Join(home, ".config", "cave")
+}
+
+// secretsPath is the environment file for one container of an instance.
+func secretsPath(cfg *config.Config, container string) string {
+	return filepath.Join(SecretsDir(), fmt.Sprintf("%s-%s.env", cfg.Runtime.Prefix, container))
+}
+
+// secretEnv returns the credential-bearing variables for a container, which go
+// into its environment file rather than its unit.
+func secretEnv(cfg *config.Config, container string) map[string]string {
+	switch container {
+	case "pg":
+		return map[string]string{"POSTGRES_PASSWORD": cfg.Database.Password}
+	case "cave":
+		env := map[string]string{
+			"CAVE_DB_PASSWORD":        cfg.DBPassword(),
+			"CAVE_SECRET_KEY":         cfg.Cave.SecretKey,
+			"CAVE_INTERNAL_TOKEN":     cfg.Cave.InternalToken,
+			"CAVE_OIDC_CLIENT_SECRET": cfg.Auth.OIDC.ClientSecret,
+		}
+		if cfg.SMTP.Password != "" {
+			env["CAVE_SMTP_PASSWORD"] = cfg.SMTP.Password
+		}
+		return env
+	case "ssh":
+		return map[string]string{
+			"CAVE_DB_PASSWORD":    cfg.DBPassword(),
+			"CAVE_INTERNAL_TOKEN": cfg.Cave.InternalToken,
+		}
+	}
+	return nil
+}
+
+// writeSecretFiles renders each container's environment file, owner-readable only.
+func writeSecretFiles(cfg *config.Config) error {
+	if err := os.MkdirAll(SecretsDir(), 0700); err != nil {
+		return fmt.Errorf("creating secrets dir: %w", err)
+	}
+	for _, container := range []string{"pg", "cave", "ssh"} {
+		env := secretEnv(cfg, container)
+		if len(env) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(env))
+		for k := range env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteString("# Written by cavectl. Credentials for this instance.\n")
+		b.WriteString("# Kept out of the systemd unit so the unit can be read safely.\n")
+		for _, k := range keys {
+			b.WriteString(fmt.Sprintf("%s=%s\n", k, env[k]))
+		}
+		path := secretsPath(cfg, container)
+		if err := os.WriteFile(path, []byte(b.String()), 0600); err != nil {
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 func Install(cfg *config.Config) error {
 	dir := QuadletDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("creating quadlet dir: %w", err)
+	}
+
+	if err := writeSecretFiles(cfg); err != nil {
+		return err
 	}
 
 	units := generate(cfg)
@@ -152,8 +228,8 @@ PodmanArgs=--no-hosts
 PublishPort=127.0.0.1:%d:5432
 Volume=%s-pgdata.volume:/var/lib/postgresql/data
 Environment=POSTGRES_USER=cave
-Environment=POSTGRES_PASSWORD=%s
 Environment=POSTGRES_DB=cave
+EnvironmentFile=%s
 HealthCmd=pg_isready -U cave
 HealthInterval=2s
 Label=cave.managed-by=cavectl
@@ -165,7 +241,7 @@ Restart=always
 [Install]
 WantedBy=default.target
 `, prefix, cfg.ContainerName("pg"), cfg.Database.Image,
-			prefix, postgresPort(cfg), prefix, cfg.Database.Password, prefix)
+			prefix, postgresPort(cfg), prefix, secretsPath(cfg, "pg"), prefix)
 	}
 
 	// Cave
@@ -180,10 +256,11 @@ WantedBy=default.target
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_DB_PORT=%s\n", cfg.DBPort()))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_DB_NAME=%s\n", cfg.DBName()))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_DB_USER=%s\n", cfg.DBUser()))
-	envLines.WriteString(fmt.Sprintf("Environment=CAVE_DB_PASSWORD=%s\n", cfg.DBPassword()))
-	envLines.WriteString(fmt.Sprintf("Environment=CAVE_INTERNAL_TOKEN=%s\n", cfg.Cave.InternalToken))
 	envLines.WriteString(fmt.Sprintf("Environment=CAVE_BASE_URL=%s\n", cfg.Cave.BaseURL))
-	envLines.WriteString(fmt.Sprintf("Environment=CAVE_SECRET_KEY=%s\n", cfg.Cave.SecretKey))
+	// Credentials live in a 0600 file, not here: a unit is read by anyone who
+	// can run systemctl cat or podman inspect, and gets pasted into support
+	// threads (cave-npw).
+	envLines.WriteString(fmt.Sprintf("EnvironmentFile=%s\n", secretsPath(cfg, "cave")))
 	envLines.WriteString("Environment=CAVE_CHAMBER_ENABLED=t\n")
 	if cfg.Runner.Enabled {
 		// Runners clone over the container network, where the public base_url
@@ -204,14 +281,13 @@ WantedBy=default.target
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=%s\n", cfg.Cave.BaseURL))
 		envLines.WriteString("Environment=CAVE_OIDC_ISSUER_INTERNAL=http://localhost:8080\n")
 		envLines.WriteString("Environment=CAVE_OIDC_CLIENT_ID=cave\n")
-		if cfg.Auth.OIDC.ClientSecret != "" {
-			envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_CLIENT_SECRET=%s\n", cfg.Auth.OIDC.ClientSecret))
-		}
+		// The client secret is a credential: it travels in the instance's
+		// environment file, written above, not in the unit.
 	} else if cfg.Auth.Mode == "oidc" {
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER=%s\n", cfg.Auth.OIDC.Issuer))
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_ISSUER_INTERNAL=%s\n", cfg.Auth.OIDC.Issuer))
 		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_CLIENT_ID=%s\n", cfg.Auth.OIDC.ClientID))
-		envLines.WriteString(fmt.Sprintf("Environment=CAVE_OIDC_CLIENT_SECRET=%s\n", cfg.Auth.OIDC.ClientSecret))
+		// Client secret comes from the environment file (see secretEnv).
 	}
 
 	var volumeLines strings.Builder
@@ -289,9 +365,8 @@ Environment=CAVE_DB_HOST=%s
 Environment=CAVE_DB_PORT=%d
 Environment=CAVE_DB_NAME=%s
 Environment=CAVE_DB_USER=%s
-Environment=CAVE_DB_PASSWORD=%s
 Environment=CAVE_INTERNAL_URL=http://%s:%d
-Environment=CAVE_INTERNAL_TOKEN=%s
+EnvironmentFile=%s
 Label=cave.managed-by=cavectl
 Label=cave.instance=%s
 
@@ -304,8 +379,8 @@ WantedBy=default.target
 		cfg.ContainerName("ssh"), cfg.Cave.Image, hostLoopbackAddr,
 		sshBind, cfg.Ports.SSH, prefix,
 		hostLoopbackAddr, postgresPort(cfg),
-		cfg.DBName(), cfg.DBUser(), cfg.DBPassword(),
-		hostLoopbackAddr, cfg.Ports.HTTP, cfg.Cave.InternalToken, prefix)
+		cfg.DBName(), cfg.DBUser(),
+		hostLoopbackAddr, cfg.Ports.HTTP, secretsPath(cfg, "ssh"), prefix)
 
 	// Zoekt
 	if cfg.Zoekt.Enabled {
