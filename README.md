@@ -45,6 +45,7 @@ are not built yet.
 
 - **Automation runners + workflows** — `.cave/workflows/*.yml` jobs are scheduled across self-hosted gRPC runners and report status back, with a partial **GitHub-Actions-compatible** syntax: `push`/`pull_request`/`tag` triggers, workflow/job/step `env:`, multi-line `run: |` blocks, the standard `GITHUB_*` env (each with a `CAVE_*` twin) plus `RUNNER_*`/`CI`, and the `$GITHUB_OUTPUT`/`$GITHUB_ENV`/`$GITHUB_PATH`/`$GITHUB_STEP_SUMMARY` file-command protocol, `${{ }}` expressions (in `run:`/`env:`/`if:`, across the `github`/`steps`/`matrix`/`needs`/… contexts), `strategy.matrix`, job `outputs:`/`needs.*`, and `uses:` actions (GitHub model: empty workspace + cave-local, Lisp-native built-ins like `actions/checkout`). Admin policy gates repo-supplied jobs: `privileged` is denied by default and images can be pinned to an allowlist (`:workflows-allow-privileged`, `:workflows-image-allowlist`); job dependencies without an explicit image resolve to a [Nixery](https://nixery.dev) image. Encrypted per-repo secrets are injected as env vars and masked in logs (as is anything a step emits via `::add-mask::`). A reaper requeues jobs orphaned by a dead/restarted runner (bounded retries) so the queue self-heals. Still missing for a fully untrusted multi-tenant setup: per-repo policy overrides and stronger runner-side isolation — so prefer trusted repos
 - **Multi-chamber storage** — Praefect-style routing across git storage nodes (read/write split, health checks, async replication). Opt-in; single-chamber is the default and the well-exercised path
+- **Ingot git backend** — repositories read and written in-process through [Ingot](https://gitlab.common-lisp.net/clo/ingot), Git in Common Lisp, instead of a sandboxed `git` subprocess per operation: the code browser, logs, diffs, merges, tags, branches and anonymous HTTPS clones with no fork and no temp files. Opt-in twice (`make INGOT=1`, then `:git-backend :ingot`); operations Ingot lacks — blame, range-diff, signature verification, mirroring — still run `git`. `make test-git-ingot` checks the two backends agree
 
 ### Planned
 
@@ -175,8 +176,11 @@ src/
 │                         issues/PRs, activity (events, releases, deps)
 ├── markup.lisp         — Markdown rendering + camo image proxy, CODEOWNERS,
 │                         Linguist language tables
-├── git.lisp            — Git CLI integration (branch, log, tree, diff, merge,
-│                         tag, signature verification, trailers)
+├── git.lisp            — Git operations (branch, log, tree, diff, merge, tag,
+│                         signature verification, trailers): git CLI bodies,
+│                         each a define-git-operation a backend can answer
+├── git-ingot.lisp      — The Ingot backend: the same operations in-process
+│                         (make INGOT=1; (:git-backend :ingot) in cave.conf)
 ├── views-*.lisp        — All HTML views via Spinneret, split by area: base,
 │                         repos, issues/PRs, runs, settings
 ├── notify.lisp         — Email notifications, webhooks, automation scheduling
@@ -253,7 +257,10 @@ Two configs live side-by-side:
     :checks-memory-mb nil                     ; integer = per-process address-space cap
     :checks-timeout-seconds 120               ; fallback wall-clock per check
     ;; Landlock filesystem sandbox for git + check subprocesses:
-    :sandbox-landlock t)                      ; t = confine (cross-repo isolation); no-op without Landlock
+    :sandbox-landlock t                       ; t = confine (cross-repo isolation); no-op without Landlock
+    ;; How repositories are read and written: :cli (the git binary, sandboxed)
+    ;; or :ingot (in-process, no subprocess; needs a build made with INGOT=1):
+    :git-backend :cli)
    ```
 
    `:workflows-allow-privileged` defaults to `nil` — a repo workflow that
@@ -274,6 +281,18 @@ Two configs live side-by-side:
    `CAVE_CHECKS_ALLOW_NETWORK`, `CAVE_CHECKS_REQUIRE_NETWORK_ISOLATION`,
    `CAVE_CHECKS_MEMORY_MB`, `CAVE_CHECKS_TIMEOUT_SECONDS`, and
    `CAVE_SANDBOX_LANDLOCK`.
+
+   `:git-backend` (experimental) picks how Cave reads and writes repositories.
+   `:cli`, the default, runs the git binary for every operation. `:ingot`
+   answers in-process through [Ingot](https://gitlab.common-lisp.net/clo/ingot),
+   Git in Common Lisp: branch and tag lists, logs, trees, blobs, diffs and
+   patches, merge bases, merges of every strategy, conflict detection, the web
+   editor's commits, release notes, and the anonymous HTTPS clone (refs
+   advertisement and upload-pack), with no subprocess and no temp files.
+   Blame, range-diff, signature verification and anything that reaches a remote
+   (mirrors, imports) still run git. It needs a build made with `make INGOT=1`,
+   which adds the `ingot` system; the default build does not load it.
+   `make test-git-ingot` compares the two backends on a scratch repository.
 
 2. **`cave.yaml`** — declarative deployment manifest consumed by `cavectl`:
 

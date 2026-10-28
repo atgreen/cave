@@ -46,7 +46,10 @@
                 ;; Date/time
                 :local-time
                 ;; GitHub-Actions ${{ }} expression grammar (instaparse port)
-                :iparse)
+                :iparse
+                ;; Git in Lisp, the in-process backend for git.lisp's operations;
+                ;; only in a build made with the :cave-ingot feature (make INGOT=1)
+                #+cave-ingot :ingot)
   :serial      t
   :components  ((:file "src/package")
                 (:file "src/config")
@@ -62,6 +65,7 @@
                 (:file "src/model-activity")
                 (:file "src/markup")
                 (:file "src/git")
+                (:file "src/git-ingot" :if-feature :cave-ingot)
                 (:file "src/chamber")
                 (:file "src/chamber-router")
                 (:file "src/chamber-client")

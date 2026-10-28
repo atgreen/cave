@@ -439,7 +439,9 @@ Returns the merged PR on success."
       (job-token-grants-repo-p claim (getf repo :id)))))
 
 (defun handle-git-http (owner repo-name)
-  "Handle git smart HTTP for a repo. Dispatches based on URL suffix."
+  "Handle git smart HTTP for a repo. Dispatches based on URL suffix. The
+   protocol itself is answered by the git-advertise-refs and git-upload-pack
+   operations of git.lisp, so it goes through whichever backend is selected."
   (let* ((repo (find-repo owner repo-name))
          (disk-path (when repo (repo-disk-path owner repo-name))))
     (unless (and repo (probe-file disk-path))
@@ -458,57 +460,26 @@ Returns the merged PR on success."
          (unless (equal (hunchentoot:get-parameter "service") "git-upload-pack")
            (setf (hunchentoot:return-code*) 403)
            (return-from handle-git-http "Forbidden"))
-         (multiple-value-bind (output _err exit-code)
-             (uiop:run-program (sandbox-wrap disk-path
-                                (list "git" "upload-pack" "--stateless-rpc"
-                                     "--advertise-refs" (namestring disk-path)))
-                               :output :string
-                               :error-output :string
-                               :ignore-error-status t)
-           (declare (ignore _err))
-           (unless (zerop exit-code)
+         (let ((advertisement (git-advertise-refs disk-path)))
+           (unless advertisement
              (setf (hunchentoot:return-code*) 500)
              (return-from handle-git-http "Internal error"))
            (setf (hunchentoot:content-type*)
                  "application/x-git-upload-pack-advertisement")
-           (concatenate 'string
-                     "001e# service=git-upload-pack" (string #\Newline)
-                     "0000" output)))
+           advertisement))
         ;; POST /owner/repo.git/git-upload-pack
         ((and (search "/git-upload-pack" uri)
               (equal (hunchentoot:request-method*) :post))
          ;; Counted as a clone for Pulse stats. Anon HTTP clones have no user-id.
          (log-event "git.clone" :user-id *current-user-id* :repo-id (getf repo :id))
-         (let* ((request-body (hunchentoot:raw-post-data :force-binary t))
-                (in-path (format nil "/tmp/cave-git-in-~A"
-                                 (ironclad:byte-array-to-hex-string (ironclad:random-data 8))))
-                (out-path (format nil "/tmp/cave-git-out-~A"
-                                  (ironclad:byte-array-to-hex-string (ironclad:random-data 8)))))
-           (unwind-protect
-            (progn
-              (with-open-file (s in-path :direction :output :element-type '(unsigned-byte 8)
-                                         :if-exists :supersede)
-                (write-sequence request-body s))
-              (let ((exit-code (nth-value 2
-                                (uiop:run-program
-                                 (sandbox-wrap disk-path
-                                  (list "git" "upload-pack" "--stateless-rpc"
-                                       (namestring disk-path)))
-                                 :input in-path
-                                 :output out-path
-                                 :error-output :string
-                                 :ignore-error-status t))))
-                (unless (zerop exit-code)
-                  (setf (hunchentoot:return-code*) 500)
-                  (return-from handle-git-http "Internal error"))
-                (setf (hunchentoot:content-type*)
-                      "application/x-git-upload-pack-result")
-                (with-open-file (s out-path :element-type '(unsigned-byte 8))
-                  (let ((buf (make-array (file-length s) :element-type '(unsigned-byte 8))))
-                    (read-sequence buf s)
-                    buf))))
-            (ignore-errors (delete-file in-path))
-            (ignore-errors (delete-file out-path)))))
+         (let ((response (git-upload-pack disk-path
+                                          (hunchentoot:raw-post-data :force-binary t))))
+           (unless response
+             (setf (hunchentoot:return-code*) 500)
+             (return-from handle-git-http "Internal error"))
+           (setf (hunchentoot:content-type*)
+                 "application/x-git-upload-pack-result")
+           response))
         (t
          (setf (hunchentoot:return-code*) 404)
          "Not found")))))

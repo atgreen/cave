@@ -2,6 +2,28 @@
 
 ## v0.4.0 — unreleased
 
+### Git backend (new, experimental)
+- The operations of `src/git.lisp` are now defined with `define-git-operation`:
+  the git-CLI body stays the default, and a second backend can answer the same
+  operation in-process.
+- `src/git-ingot.lisp` is that backend, on [Ingot](https://gitlab.common-lisp.net/clo/ingot),
+  Git in Common Lisp: branches, tags, log, trees, blobs, diffs, stats, patches,
+  merge bases, three-way merges (merge, squash, fast-forward-only), merge-conflict
+  detection, tag and branch creation, the web editor's commit, trailers,
+  signature detection, release notes, and the smart-HTTP read side (the refs
+  advertisement and `upload-pack` for anonymous HTTPS clones) — all without a
+  git subprocess. Blame, range-diff, signature verification and every operation
+  that reaches a remote still run the git binary.
+- Opt-in twice: build with `make INGOT=1` (adds the `ingot` system under the
+  `:cave-ingot` feature; the default build is unchanged) and set
+  `(:git-backend :ingot)` in cave.conf. `make test-git-ingot` compares the two
+  backends on a scratch repository.
+- Known differences from the CLI, by design: no rename detection in diffs (a
+  rename shows as a delete and an add), no function context after a hunk's
+  `@@` header, `--stat` graphs unscaled, `.patch` of a merge commit is empty
+  rather than the nearest non-merge ancestor's patch, and a binary change in a
+  `.patch` is "Binary files differ" rather than a git binary patch.
+
 ### Auth (Keycloak retired)
 - Cave now authenticates entirely through its embedded in-process Usher OpenID Provider (`auth.mode: local`): every OIDC endpoint (`/authorize`, `/token`, `/userinfo`, `/.well-known/*`) is served at cave's own root, so no external IdP is required.
 - Removed the external Keycloak container, the `cave-keycloak` image, the `keycloak/` realm + theme directory, `Containerfile.keycloak`, and cavectl's keycloak provisioning (no more `ports.keycloak` / port 9180).

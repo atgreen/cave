@@ -21,6 +21,13 @@
  :smtp-from nil
  ;; Public URL (used in clone URLs and links)
  :base-url "http://localhost:8080"
+ ;; How repositories are read and written: :cli runs the git binary (under
+ ;; the Landlock sandbox) for every operation; :ingot answers in-process
+ ;; through the Ingot library, with no git subprocess for reads, merges,
+ ;; tags, branches and anonymous HTTPS clones (needs a build made with
+ ;; `make INGOT=1`; operations Ingot lacks — blame, signature verification,
+ ;; mirroring — still run the binary).
+ :git-backend :cli
  ;; Usernames granted cave-admin during `usher-migrate-users`, in addition to
  ;; accounts already marked is_admin — e.g. :migrate-force-admins ("alice")
  :migrate-force-admins nil

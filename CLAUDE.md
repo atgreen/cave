@@ -62,8 +62,14 @@ federate to an external OIDC provider by setting a different `oidc-issuer`.
   events/releases/deps
 - **src/markup.lisp** — Markdown rendering + camo image proxy, CODEOWNERS
   parsing, Linguist language tables
-- **src/git.lisp** — Git CLI integration (branch listing, log, file tree, diff,
-  merge, tags, signature verification, commit trailers)
+- **src/git.lisp** — Git operations (branch listing, log, file tree, diff,
+  merge, tags, signature verification, commit trailers); each is a
+  `define-git-operation` whose body runs the git CLI under the Landlock sandbox
+- **src/git-ingot.lisp** — The Ingot backend: the same operations answered
+  in-process by the Ingot library (no git subprocess). Compiled only with the
+  `:cave-ingot` feature (`make INGOT=1`), selected by `(:git-backend :ingot)`
+  in cave.conf; operations it lacks (blame, range-diff, signature verification,
+  mirroring) fall through to the CLI
 - **src/views-{base,repos,issues,runs,settings}.lisp** — All HTML via Spinneret
   (s-expression HTML, no template files), split by page area
 - **src/notify.lisp** — Email notifications, webhooks, automation scheduling

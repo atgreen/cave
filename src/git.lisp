@@ -81,6 +81,60 @@
    *GIT-NET-TIMEOUT* so a hung remote can't leak the git subprocess (issue #23)."
   (%git-run repo-path args :network t :timeout *git-net-timeout*))
 
+;;; ---------------------------------------------------------------------------
+;;; Backends
+;;;
+;;; Every operation below that reads or writes a repository is defined with
+;;; DEFINE-GIT-OPERATION, which keeps the git-CLI body here as the default and
+;;; lets git-ingot.lisp supply an in-process form of the same operation. The
+;;; backend is chosen in cave.conf: (:git-backend :cli) — the default, git under
+;;; the Landlock sandbox — or (:git-backend :ingot), honored only in a build made
+;;; with the :cave-ingot feature (make INGOT=1). An operation Ingot does not
+;;; implement runs its CLI body whichever backend is selected.
+
+(defvar *git-backend-warned* nil
+  "Set once :git-backend has asked for a backend this build cannot provide, so
+   the warning is logged once rather than on every call.")
+
+(defun git-backend ()
+  "The backend the git-* operations dispatch to: :ingot when cave.conf asks for
+   it and this build carries git-ingot.lisp, else :cli."
+  (let ((wanted (config-value :git-backend :cli)))
+    (cond ((eq wanted :cli) :cli)
+          ((and (eq wanted :ingot) (member :cave-ingot *features*)) :ingot)
+          (t (unless *git-backend-warned*
+               (setf *git-backend-warned* t)
+               (llog:warn "Unknown or unavailable :git-backend; using the git CLI"
+                          :wanted wanted
+                          :hint (if (eq wanted :ingot)
+                                    "build with make INGOT=1 for the Ingot backend"
+                                    "use :cli or :ingot")))
+             :cli))))
+
+(defmacro define-git-operation (name lambda-list &body body)
+  "Define NAME as a git operation. BODY is its git-CLI implementation, written
+   as a DEFUN body (docstring first) and kept as the function %CLI-NAME. NAME
+   itself dispatches: when the backend is :ingot and git-ingot.lisp defines
+   %INGOT-NAME, that answers, otherwise the CLI body does. RETURN-FROM NAME in
+   BODY keeps working."
+  (let* ((cli (intern (format nil "%CLI-~A" (symbol-name name))))
+         (ingot (intern (format nil "%INGOT-~A" (symbol-name name))))
+         (doc (when (and (stringp (first body)) (rest body)) (first body)))
+         (forms (if doc (rest body) body))
+         (declarations (loop while (and (consp (first forms)) (eq (car (first forms)) 'declare))
+                             collect (pop forms))))
+    `(progn
+       (defun ,cli ,lambda-list
+         ,@(when doc (list doc))
+         ,@declarations
+         (block ,name ,@forms))
+       (defun ,name (&rest args)
+         ,@(when doc (list doc))
+         (if (and (eq (git-backend) :ingot) (fboundp ',ingot))
+             (apply ',ingot args)
+             (apply #',cli args)))
+       ',name)))
+
 (defun %resolve-exe (prog)
   "Resolve a bare program name to an absolute path. landrun execs ARGV[0]
    verbatim with no PATH search, so the program handed to it must be absolute.
@@ -147,7 +201,7 @@
        (cons (%resolve-exe (first argv)) (rest argv)))
       argv))
 
-(defun git-branches (repo-path)
+(define-git-operation git-branches (repo-path)
   "List branches in a bare repo. Returns list of branch name strings."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "branch" "--format=%(refname:short)")
@@ -156,7 +210,7 @@
       (remove-if #'uiop:emptyp
                  (uiop:split-string output :separator '(#\Newline))))))
 
-(defun git-commit-signature-info (repo-path commit-sha)
+(define-git-operation git-commit-signature-info (repo-path commit-sha)
   "Return (values has-signature scheme) for COMMIT-SHA.
 SCHEME is :ssh, :gpg, or NIL when unsigned.
 
@@ -242,7 +296,7 @@ against the keyring in GNUPGHOME, or NIL. Matches the key_id stored for a key."
       (format s "~A ~A~%" (first e)
               (string-trim '(#\Space #\Newline #\Tab) (second e))))))
 
-(defun git-commit-trailers (repo-path commit-sha)
+(define-git-operation git-commit-trailers (repo-path commit-sha)
   "Return (((token . value) ...) ...) — the trailers of COMMIT-SHA's message.
 Each trailer is a cons (token . value); the result is a list of those."
   (multiple-value-bind (out _err exit)
@@ -255,7 +309,7 @@ Each trailer is a cons (token . value); the result is a list of those."
               collect (cons (string-trim " " (subseq line 0 colon))
                             (string-trim " " (subseq line (1+ colon))))))))
 
-(defun git-create-tag (repo-path tag-name target &key message)
+(define-git-operation git-create-tag (repo-path tag-name target &key message)
   "Create a lightweight (or annotated, if MESSAGE) git tag pointing at TARGET.
 Returns T on success, NIL otherwise."
   (let ((args (if message
@@ -266,7 +320,7 @@ Returns T on success, NIL otherwise."
       (declare (ignore _o _e))
       (zerop exit-code))))
 
-(defun git-tag-exists-p (repo-path tag-name)
+(define-git-operation git-tag-exists-p (repo-path tag-name)
   "Return T when TAG-NAME exists in REPO-PATH."
   (multiple-value-bind (_o _e exit-code)
       (git-run repo-path "rev-parse" "--verify"
@@ -274,7 +328,7 @@ Returns T on success, NIL otherwise."
     (declare (ignore _o _e))
     (zerop exit-code)))
 
-(defun git-release-notes (repo-path tag)
+(define-git-operation git-release-notes (repo-path tag)
   "Generate markdown release notes for TAG: a bulleted list of commit subjects
 since the previous tag reachable from TAG (or all history if there is none).
 Returns a markdown string, or NIL when there is nothing to report."
@@ -296,7 +350,7 @@ Returns a markdown string, or NIL when there is nothing to report."
                 (format nil "### Changes since ~A~%~%~A~%" prev body)
                 (format nil "### Changes~%~%~A~%" body))))))))
 
-(defun git-tags (repo-path)
+(define-git-operation git-tags (repo-path)
   "List tags in a bare repo. Returns list of tag name strings, newest first."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "tag" "--sort=-creatordate")
@@ -305,14 +359,14 @@ Returns a markdown string, or NIL when there is nothing to report."
       (remove-if #'uiop:emptyp
                  (uiop:split-string output :separator '(#\Newline))))))
 
-(defun git-default-branch (repo-path)
+(define-git-operation git-default-branch (repo-path)
   "Get the default branch (HEAD target) of a bare repo."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "symbolic-ref" "--short" "HEAD")
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-log (repo-path &key (branch nil) (limit 20) path)
+(define-git-operation git-log (repo-path &key (branch nil) (limit 20) path)
   "Get recent commits, optionally only those touching PATH.
 Returns list of plists (:hash :short-hash :author :date :subject)."
   (let* ((format-str "%H%n%h%n%an%n%ai%n%s%n---")
@@ -347,7 +401,7 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
                      entries)))
     (nreverse entries)))
 
-(defun git-list-files (repo-path ref &key (limit 20000))
+(define-git-operation git-list-files (repo-path ref &key (limit 20000))
   "All file paths under REF (recursive), capped at LIMIT."
   (multiple-value-bind (output _err code)
       (git-run repo-path "ls-tree" "-r" "--name-only" ref)
@@ -387,7 +441,7 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
              (setf hash (subseq l 0 40)))))
         (nreverse entries)))))
 
-(defun git-show-commit (repo-path hash)
+(define-git-operation git-show-commit (repo-path hash)
   "Get a single commit's metadata. Returns plist or NIL."
   (let ((format-str "%H%n%h%n%an%n%ae%n%ai%n%s%n%b"))
     (multiple-value-bind (output _err exit-code)
@@ -405,21 +459,21 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
                   :body (string-trim '(#\Newline #\Space)
                                      (format nil "~{~A~^~%~}" lines)))))))))
 
-(defun git-format-patch (repo-path hash)
+(define-git-operation git-format-patch (repo-path hash)
   "Get a single commit as a git format-patch (email-style patch). Returns string."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "format-patch" "--stdout" "-1" hash)
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-commit-diff (repo-path hash)
+(define-git-operation git-commit-diff (repo-path hash)
   "Get the diff for a single commit. Returns raw diff text."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "diff-tree" "-p" "--root" hash)
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-commit-stat (repo-path hash)
+(define-git-operation git-commit-stat (repo-path hash)
   "Get the diff stat for a single commit."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "diff-tree" "--stat" "--root" hash)
@@ -439,7 +493,7 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
               (values a "cave-bot@localhost")))
         (values "cave-bot" "cave-bot@localhost"))))
 
-(defun git-merge-branch (repo-path source-branch target-branch &key strategy author message)
+(define-git-operation git-merge-branch (repo-path source-branch target-branch &key strategy author message)
   "Merge SOURCE-BRANCH into TARGET-BRANCH in a bare repo using STRATEGY:
      \"merge\"             — always create a merge commit (git merge --no-ff), so
                           every merge is an auditable point in TARGET's history;
@@ -508,7 +562,7 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
       (when (probe-file tmpdir)
         (uiop:delete-directory-tree (pathname tmpdir) :validate t :if-does-not-exist :ignore)))))
 
-(defun git-merge-conflicts (repo-path target-branch source-branch)
+(define-git-operation git-merge-conflicts (repo-path target-branch source-branch)
   "Test-merge SOURCE-BRANCH into TARGET-BRANCH entirely in memory — no worktree,
    no checkout — with `git merge-tree`. Returns (values conflict-p files):
    CONFLICT-P is T when the merge would conflict, and FILES is the list of
@@ -529,14 +583,14 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
           (values t (rest fields)))
         (values nil nil))))
 
-(defun git-commit-ancestor-p (repo-path commit branch)
+(define-git-operation git-commit-ancestor-p (repo-path commit branch)
   "Return T iff COMMIT exists and is an ancestor of BRANCH (i.e. already on it).
    Used to validate a 'mark as manually merged' commit id."
   (and (stringp commit) (plusp (length (string-trim " " commit)))
        (eql 0 (nth-value 2 (git-run repo-path "merge-base" "--is-ancestor"
                                     commit branch)))))
 
-(defun git-commit-file-on-branch (repo-path base-branch new-branch path content message
+(define-git-operation git-commit-file-on-branch (repo-path base-branch new-branch path content message
                                   &key (author-name "cave-bot")
                                        (author-email "cave-bot@localhost"))
   "In bare REPO-PATH, branch NEW-BRANCH off BASE-BRANCH, overwrite PATH with
@@ -734,7 +788,7 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
     (declare (ignore output))
     (values (zerop exit-code) err)))
 
-(defun git-has-commit-p (repo-path commit)
+(define-git-operation git-has-commit-p (repo-path commit)
   "True if COMMIT resolves to a commit object in REPO-PATH."
   (multiple-value-bind (_o _e exit)
       (git-run repo-path "cat-file" "-e" (format nil "~A^{commit}" commit))
@@ -749,7 +803,7 @@ Returns list of plists (:hash :short-hash :author :date :subject)."
     (declare (ignore _o _e))
     (zerop exit)))
 
-(defun git-is-ancestor-p (repo-path ancestor descendant)
+(define-git-operation git-is-ancestor-p (repo-path ancestor descendant)
   "Whether ANCESTOR is an ancestor of (or equal to) DESCENDANT: T, NIL, or
    :unknown when either commit can't be resolved in REPO-PATH."
   (if (and (git-has-commit-p repo-path ancestor)
@@ -821,14 +875,14 @@ deleted on cave is no longer deleted on the mirror."
                              (format nil "refs/heads/~A" branch)))))))))
       (values (zerop exit-code) err))))
 
-(defun git-delete-branch (repo-path branch)
+(define-git-operation git-delete-branch (repo-path branch)
   "Delete a branch in a bare repo."
   (multiple-value-bind (_out _err exit-code)
       (git-run repo-path "branch" "-D" branch)
     (declare (ignore _out _err))
     (zerop exit-code)))
 
-(defun git-create-branch (repo-path new-branch from-ref)
+(define-git-operation git-create-branch (repo-path new-branch from-ref)
   "Create NEW-BRANCH pointing at FROM-REF in a bare repo. `--` guards against a
    name beginning with a dash being read as a flag. Returns (VALUES ok err)."
   (multiple-value-bind (_out err exit-code)
@@ -836,7 +890,7 @@ deleted on cave is no longer deleted on the mirror."
     (declare (ignore _out))
     (values (zerop exit-code) err)))
 
-(defun git-diff-merge-base (repo-path target-ref source-ref)
+(define-git-operation git-diff-merge-base (repo-path target-ref source-ref)
   "Get diff of changes introduced by source-ref relative to its merge-base with target-ref.
    Uses three-dot notation: target...source."
   (multiple-value-bind (output _err exit-code)
@@ -844,7 +898,7 @@ deleted on cave is no longer deleted on the mirror."
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-merge-base (repo-path a b)
+(define-git-operation git-merge-base (repo-path a b)
   "Return the merge-base commit of A and B, or NIL."
   (multiple-value-bind (out _err code) (git-run repo-path "merge-base" a b)
     (declare (ignore _err))
@@ -862,7 +916,7 @@ PR rounds. NIL on error or when a commit is missing."
     (declare (ignore _err))
     (when (zerop code) out)))
 
-(defun git-commit-count (repo-path &key (branch nil))
+(define-git-operation git-commit-count (repo-path &key (branch nil))
   "Count commits on a branch (or all if nil)."
   (let ((args (if branch
                   (list "rev-list" "--count" branch)
@@ -873,14 +927,14 @@ PR rounds. NIL on error or when a commit is missing."
       (when (zerop exit-code)
         (parse-integer output :junk-allowed t)))))
 
-(defun git-repo-empty-p (repo-path)
+(define-git-operation git-repo-empty-p (repo-path)
   "Check if a repo has any commits."
   (multiple-value-bind (_out _err exit-code)
       (git-run repo-path "rev-parse" "HEAD")
     (declare (ignore _out _err))
     (/= exit-code 0)))
 
-(defun git-tree (repo-path &key (ref "HEAD") (path ""))
+(define-git-operation git-tree (repo-path &key (ref "HEAD") (path ""))
   "Get structured directory listing at PATH under REF.
    Returns list of (:mode :type :hash :name) plists, directories first."
   (let ((target (if (uiop:emptyp path) ref (format nil "~A:~A" ref path))))
@@ -912,7 +966,7 @@ PR rounds. NIL on error or when a commit is missing."
                         (string< (getf a :name) (getf b :name))
                         a-dir)))))))))
 
-(defun git-rev-parse (repo-path ref)
+(define-git-operation git-rev-parse (repo-path ref)
   "Resolve REF (branch, tag, or sha) to a full commit SHA. Returns the SHA
    string, or NIL if REF does not resolve to a commit."
   (multiple-value-bind (out _err code)
@@ -933,7 +987,7 @@ PR rounds. NIL on error or when a commit is missing."
            (slash (position #\/ rest)))
       (if slash (subseq rest 0 slash) rest))))
 
-(defun git-tree-last-commits (repo-path ref dir entry-names)
+(define-git-operation git-tree-last-commits (repo-path ref dir entry-names)
   "For each immediate child NAME in ENTRY-NAMES of DIR at REF, find the most
    recent commit that touched it. DIR is \"\" for the repo root. Returns a
    hash-table mapping name -> plist (:hash :short-hash :subject :author :time),
@@ -995,7 +1049,7 @@ PR rounds. NIL on error or when a commit is missing."
         (some (lambda (seg) (search (format nil "/~A/" seg) p))
               *vendor-path-segments*))))
 
-(defun git-language-stats (repo-path ref)
+(define-git-operation git-language-stats (repo-path ref)
   "Sum blob bytes per recognized language at REF, excluding vendored/generated
    files. Returns a list of (name color bytes) sorted largest first, via a
    single `ls-tree -r -l`."
@@ -1024,21 +1078,21 @@ PR rounds. NIL on error or when a commit is missing."
           (maphash (lambda (lang cc) (push (list lang (car cc) (cdr cc)) rows)) totals)
           (sort rows #'> :key #'third))))))
 
-(defun git-blob-hash (repo-path ref path)
+(define-git-operation git-blob-hash (repo-path ref path)
   "Get the git object hash for a blob at PATH under REF. Returns SHA string or NIL."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "rev-parse" (format nil "~A:~A" ref path))
     (declare (ignore _err))
     (when (zerop exit-code) (string-trim '(#\Newline #\Space) output))))
 
-(defun git-blob (repo-path ref path)
+(define-git-operation git-blob (repo-path ref path)
   "Read file content at PATH under REF. Returns string or NIL."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "cat-file" "blob" (format nil "~A:~A" ref path))
     (declare (ignore _err))
     (when (zerop exit-code) output)))
 
-(defun git-blob-bytes (repo-path ref path)
+(define-git-operation git-blob-bytes (repo-path ref path)
   "Read file content at PATH under REF as raw octets. Returns byte vector or NIL."
   (let* ((cmd (sandbox-wrap repo-path
                             (list "git" "-c" "safe.directory=*"
@@ -1060,7 +1114,7 @@ PR rounds. NIL on error or when a commit is missing."
              (when (zerop exit) bytes)))
       (close stream))))
 
-(defun git-blob-size (repo-path ref path)
+(define-git-operation git-blob-size (repo-path ref path)
   "Get file size in bytes at PATH under REF. Returns integer or NIL."
   (multiple-value-bind (output _err exit-code)
       (git-run repo-path "cat-file" "-s" (format nil "~A:~A" ref path))
@@ -1101,4 +1155,54 @@ Otherwise checks for null bytes."
             (find "readme" candidates
                   :key (lambda (e) (string-downcase (getf e :name))) :test #'string=)
             (first candidates))))))
+
+;;; ---------------------------------------------------------------------------
+;;; The smart HTTP protocol, read side: what /:owner/:repo.git serves to an
+;;; anonymous `git clone` over HTTPS (server-api.lisp calls these).
+
+(define-git-operation git-advertise-refs (repo-path)
+  "The refs advertisement a smart-HTTP fetch of REPO-PATH begins with — the
+   answer to GET /info/refs?service=git-upload-pack, service header included —
+   as a string or an octet vector. NIL when git fails."
+  (multiple-value-bind (output _err exit-code)
+      (uiop:run-program (sandbox-wrap repo-path
+                                      (list "git" "upload-pack" "--stateless-rpc"
+                                            "--advertise-refs" (namestring repo-path)))
+                        :output :string :error-output :string :ignore-error-status t)
+    (declare (ignore _err))
+    (when (zerop exit-code)
+      (concatenate 'string
+                   "001e# service=git-upload-pack" (string #\Newline)
+                   "0000" output))))
+
+(define-git-operation git-upload-pack (repo-path request-body)
+  "Answer one stateless-RPC upload-pack request for REPO-PATH: REQUEST-BODY is
+   the client's octets (wants, haves, done), the answer the octets git sends
+   back (ACK/NAK and the pack). NIL when git fails. The body and the answer go
+   through files so that the sandboxed subprocess can read and write them."
+  (let ((in-path (format nil "/tmp/cave-git-in-~A"
+                         (ironclad:byte-array-to-hex-string (ironclad:random-data 8))))
+        (out-path (format nil "/tmp/cave-git-out-~A"
+                          (ironclad:byte-array-to-hex-string (ironclad:random-data 8)))))
+    (unwind-protect
+         (progn
+           (with-open-file (s in-path :direction :output :element-type '(unsigned-byte 8)
+                                      :if-exists :supersede)
+             (when request-body (write-sequence request-body s)))
+           (let ((exit-code (nth-value 2
+                                       (uiop:run-program
+                                        (sandbox-wrap repo-path
+                                                      (list "git" "upload-pack" "--stateless-rpc"
+                                                            (namestring repo-path)))
+                                        :input in-path
+                                        :output out-path
+                                        :error-output :string
+                                        :ignore-error-status t))))
+             (when (zerop exit-code)
+               (with-open-file (s out-path :element-type '(unsigned-byte 8))
+                 (let ((buf (make-array (file-length s) :element-type '(unsigned-byte 8))))
+                   (read-sequence buf s)
+                   buf)))))
+      (ignore-errors (delete-file in-path))
+      (ignore-errors (delete-file out-path)))))
 
